@@ -97,7 +97,7 @@ final class OverlayModel: ObservableObject {
     @Published var levels: [Float] = Array(repeating: 0, count: barCount)
 
     func pushLevel(_ level: Float) {
-        let shaped = min(1.0, sqrt(max(0, level)) * 2.2)
+        let shaped = min(1.0, sqrt(max(0, level)) * 3.4)
         var next = [Float]()
         next.reserveCapacity(Self.barCount)
         for i in 0..<Self.barCount {
