@@ -11,15 +11,12 @@ permissions:
 
 jobs:
   build:
-    name: build universal macOS binary
-    runs-on: macos-14
+    name: build arm64 macOS binary
+    runs-on: macos-15
     timeout-minutes: 30
 
     steps:
       - uses: actions/checkout@v4
-
-      - name: select Xcode
-        run: sudo xcode-select -s /Applications/Xcode_15.4.app/Contents/Developer || true
 
       - name: swift version
         run: swift --version
@@ -33,21 +30,15 @@ jobs:
           key: spm-${{ runner.os }}-${{ hashFiles('Package.resolved') }}
           restore-keys: spm-${{ runner.os }}-
 
-      - name: build arm64
+      - name: build
         run: swift build -c release --arch arm64
 
-      - name: build x86_64
-        run: swift build -c release --arch x86_64
-
-      - name: lipo into universal
+      - name: stage
         run: |
+          BIN=.build/arm64-apple-macosx/release/parrot
+          file "$BIN"
           mkdir -p dist
-          lipo -create \
-            .build/arm64-apple-macosx/release/parrot \
-            .build/x86_64-apple-macosx/release/parrot \
-            -output dist/parrot
-          lipo -info dist/parrot
-          file dist/parrot
+          cp "$BIN" dist/parrot
 
       - name: strip
         run: strip -x dist/parrot
@@ -55,8 +46,8 @@ jobs:
       - name: package
         run: |
           cd dist
-          tar -czf parrot-macos-universal.tar.gz parrot
-          shasum -a 256 parrot-macos-universal.tar.gz > parrot-macos-universal.tar.gz.sha256
+          tar -czf parrot-macos-arm64.tar.gz parrot
+          shasum -a 256 parrot-macos-arm64.tar.gz > parrot-macos-arm64.tar.gz.sha256
           ls -lh
 
       - name: release
@@ -64,7 +55,7 @@ jobs:
         if: startsWith(github.ref, 'refs/tags/')
         with:
           files: |
-            dist/parrot-macos-universal.tar.gz
-            dist/parrot-macos-universal.tar.gz.sha256
+            dist/parrot-macos-arm64.tar.gz
+            dist/parrot-macos-arm64.tar.gz.sha256
           generate_release_notes: true
           fail_on_unmatched_files: true
