@@ -4,7 +4,7 @@ A minimal macOS dictation daemon. CLI-launched, push-to-talk, on-device transcri
 
 ```sh
 $ parrot
-listening on fn hold · model: whisper-large-v3-turbo · ^C to quit
+listening on fn hold · model: whisper-base.en · ^C to quit
 ```
 
 That's it. Hold Fn, speak, release. Text appears at the cursor in whatever app is focused. A small pill at the bottom of the screen shows when the mic is hot.
@@ -36,7 +36,8 @@ No menubar, no dock icon, no app bundle, no settings window, no launch-at-login.
 ## Usage 
 
 ```sh
-parrot                              # run with defaults (fn hold, whisper-large-v3-turbo)
+parrot                              # run with defaults (fn hold, whisper-base.en)
+parrot --model whisper-large-v3-turbo  # bigger, multilingual, slower first-run
 parrot --model parakeet-tdt-0.6b    # pick a model
 parrot --hotkey right-option        # change hotkey
 parrot --no-overlay                 # disable bottom-of-screen pill

@@ -14,7 +14,7 @@ enum ModelRegistry {
             whisperKitID: "openai_whisper-base.en",
             sizeMB: 145,
             languages: ["en"],
-            recommended: false
+            recommended: true
         ),
         TranscriptionModel(
             id: "whisper-large-v3-turbo",
@@ -23,7 +23,7 @@ enum ModelRegistry {
             whisperKitID: "openai_whisper-large-v3-v20240930_turbo",
             sizeMB: 1620,
             languages: ["multi"],
-            recommended: true
+            recommended: false
         ),
         TranscriptionModel(
             id: "whisper-small.en",
