@@ -28,6 +28,9 @@ struct Run: ParsableCommand {
     @Flag(name: .long, help: "Write each capture to /tmp/parrot-last.wav for inspection.")
     var dumpWav: Bool = false
 
+    @Flag(name: .long, help: "Disable the on-screen recording overlay.")
+    var noOverlay: Bool = false
+
     @Option(name: .long, help: "Model id to use. Defaults to the recommended model.")
     var model: String?
 
@@ -81,6 +84,10 @@ struct Run: ParsableCommand {
         let monitor = HotkeyMonitor(debug: debugHotkey)
         let capture = AudioCapture()
         let dumpWav = self.dumpWav
+        let overlay: RecordingOverlay? = noOverlay ? nil : MainActor.assumeIsolated { RecordingOverlay() }
+        if let overlay {
+            capture.onLevel = { level in overlay.pushLevel(level) }
+        }
 
         do {
             try monitor.start { event in
@@ -89,11 +96,17 @@ struct Run: ParsableCommand {
                     do {
                         try capture.start()
                         FileHandle.standardError.write(Data("● recording\n".utf8))
+                        if let overlay {
+                            MainActor.assumeIsolated { overlay.show(.recording) }
+                        }
                     } catch {
                         FileHandle.standardError.write(Data("capture failed: \(error)\n".utf8))
                     }
                 case .released:
                     let samples = capture.stop()
+                    if let overlay {
+                        MainActor.assumeIsolated { overlay.show(.transcribing) }
+                    }
                     let seconds = Double(samples.count) / AudioCapture.targetSampleRate
                     let rms = computeRMS(samples)
                     FileHandle.standardError.write(Data(
@@ -108,7 +121,10 @@ struct Run: ParsableCommand {
                             FileHandle.standardError.write(Data("  wav write failed: \(error)\n".utf8))
                         }
                     }
-                    guard !samples.isEmpty else { return }
+                    guard !samples.isEmpty else {
+                        if let overlay { MainActor.assumeIsolated { overlay.hide() } }
+                        return
+                    }
                     Task {
                         let started = Date()
                         do {
@@ -119,9 +135,11 @@ struct Run: ParsableCommand {
                             ))
                             await MainActor.run {
                                 TextInjector.inject(text)
+                                overlay?.hide()
                             }
                         } catch {
                             FileHandle.standardError.write(Data("transcription failed: \(error)\n".utf8))
+                            await MainActor.run { overlay?.hide() }
                         }
                     }
                 }

@@ -18,6 +18,10 @@ final class AudioCapture {
     private var isRecording = false
     private let lock = NSLock()
 
+    /// Called for every audio buffer with the buffer's RMS level (0…~1).
+    /// Invoked on an arbitrary thread; hop to main if you touch UI.
+    var onLevel: ((Float) -> Void)?
+
     /// Begin recording. Idempotent — calling while already recording is a no-op.
     func start() throws {
         guard !isRecording else { return }
@@ -108,6 +112,10 @@ final class AudioCapture {
         lock.lock()
         samples.append(contentsOf: chunk)
         lock.unlock()
+
+        if let onLevel {
+            onLevel(computeRMS(chunk))
+        }
     }
 }
 

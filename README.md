@@ -21,7 +21,7 @@ That's it. Hold Fn, speak, release. Text appears at the cursor in whatever app i
 
 No menubar, no dock icon, no app bundle, no settings window, no launch-at-login. If you want it always running, run it under `launchd` yourself or leave a terminal tab open.
 
-## Usage (planned)
+## Usage 
 
 ```sh
 parrot                              # run with defaults (fn hold, whisper-large-v3-turbo)
