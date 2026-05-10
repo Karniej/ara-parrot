@@ -126,7 +126,7 @@ private struct OverlayPill: View {
             )
             .scaleEffect(model.state == .hidden ? 0 : 1)
             .animation(
-                .timingCurve(0.16, 1, 0.3, 1, duration: 0.36),
+                .timingCurve(0.16, 1, 0.3, 1, duration: 0.3),
                 value: model.state
             )
     }
