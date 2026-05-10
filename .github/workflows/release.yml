@@ -1,0 +1,70 @@
+name: release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: build universal macOS binary
+    runs-on: macos-14
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: select Xcode
+        run: sudo xcode-select -s /Applications/Xcode_15.4.app/Contents/Developer || true
+
+      - name: swift version
+        run: swift --version
+
+      - name: cache SwiftPM
+        uses: actions/cache@v4
+        with:
+          path: |
+            .build
+            ~/Library/Caches/org.swift.swiftpm
+          key: spm-${{ runner.os }}-${{ hashFiles('Package.resolved') }}
+          restore-keys: spm-${{ runner.os }}-
+
+      - name: build arm64
+        run: swift build -c release --arch arm64
+
+      - name: build x86_64
+        run: swift build -c release --arch x86_64
+
+      - name: lipo into universal
+        run: |
+          mkdir -p dist
+          lipo -create \
+            .build/arm64-apple-macosx/release/parrot \
+            .build/x86_64-apple-macosx/release/parrot \
+            -output dist/parrot
+          lipo -info dist/parrot
+          file dist/parrot
+
+      - name: strip
+        run: strip -x dist/parrot
+
+      - name: package
+        run: |
+          cd dist
+          tar -czf parrot-macos-universal.tar.gz parrot
+          shasum -a 256 parrot-macos-universal.tar.gz > parrot-macos-universal.tar.gz.sha256
+          ls -lh
+
+      - name: release
+        uses: softprops/action-gh-release@v2
+        if: startsWith(github.ref, 'refs/tags/')
+        with:
+          files: |
+            dist/parrot-macos-universal.tar.gz
+            dist/parrot-macos-universal.tar.gz.sha256
+          generate_release_notes: true
+          fail_on_unmatched_files: true

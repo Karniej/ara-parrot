@@ -9,6 +9,16 @@ listening on fn hold · model: whisper-large-v3-turbo · ^C to quit
 
 That's it. Hold Fn, speak, release. Text appears at the cursor in whatever app is focused. A small pill at the bottom of the screen shows when the mic is hot.
 
+## Install
+
+```sh
+curl -fsSL https://digimata.github.io/parrot/install.sh | sh
+parrot setup
+parrot install --launch-at-login   # optional
+```
+
+The installer drops a universal binary in `/usr/local/bin/parrot`. Builds are unsigned for now, so the installer strips the quarantine xattr — once you've inspected the script you'll see exactly what it does.
+
 ## Stack
 
 - **Swift** — single SPM executable target
@@ -31,6 +41,8 @@ parrot --no-overlay                 # disable bottom-of-screen pill
 parrot models list                  # list available models
 parrot models download <id>         # pre-download a model
 parrot doctor                       # check permissions + Fn key setting
+parrot install --launch-at-login    # register a LaunchAgent
+parrot install --uninstall          # remove the LaunchAgent
 ```
 
 ## Status
