@@ -21,6 +21,13 @@
                 --muted-strong: #404040;
                 --border: #f0f0f0;
                 --pill-bg: rgba(0, 0, 0, 0.05);
+                --font-sans:
+                    -apple-system, BlinkMacSystemFont, "SF Pro Text", "Inter",
+                    "Segoe UI", system-ui, sans-serif;
+                --font-rounded:
+                    ui-rounded, "SF Pro Rounded", "Hiragino Maru Gothic ProN",
+                    "Quicksand", "Comfortaa", "Arial Rounded MT Bold",
+                    var(--font-sans);
             }
 
             * {
@@ -32,11 +39,16 @@
                 margin: 0;
                 background: var(--bg);
                 color: var(--text);
-                font-family:
-                    -apple-system, BlinkMacSystemFont, "SF Pro Rounded",
-                    "SF Pro Text", "Inter", "Segoe UI", system-ui, sans-serif;
+                font-family: var(--font-sans);
                 -webkit-font-smoothing: antialiased;
                 -moz-osx-font-smoothing: grayscale;
+            }
+
+            /* Headings + brand wordmark get SF Pro Rounded (ui-rounded). */
+            h1,
+            .philosophy h2,
+            nav .brand span {
+                font-family: var(--font-rounded);
             }
 
             nav {

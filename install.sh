@@ -2,16 +2,19 @@
 # parrot installer.
 #   curl -fsSL https://digimata.github.io/parrot/install.sh | sh
 #
-# Fetches the latest universal macOS binary from GitHub Releases, drops it
+# Fetches the latest arm64 macOS binary from GitHub Releases, drops it
 # in /usr/local/bin, and strips the quarantine xattr so Gatekeeper doesn't
 # block the unsigned binary.
+#
+# Apple Silicon only — WhisperKit uses the Apple Neural Engine via CoreML,
+# which only ships on M-series chips.
 
 set -euo pipefail
 
 REPO="digimata/parrot"
 BIN_NAME="parrot"
 INSTALL_DIR="/usr/local/bin"
-ASSET="parrot-macos-universal.tar.gz"
+ASSET="parrot-macos-arm64.tar.gz"
 
 red()    { printf "\033[31m%s\033[0m\n" "$*" >&2; }
 green()  { printf "\033[32m%s\033[0m\n" "$*"; }
@@ -20,6 +23,13 @@ dim()    { printf "\033[2m%s\033[0m\n" "$*"; }
 # 1. sanity
 if [ "$(uname -s)" != "Darwin" ]; then
     red "parrot is macOS-only (detected $(uname -s))"
+    exit 1
+fi
+
+ARCH=$(uname -m)
+if [ "$ARCH" != "arm64" ]; then
+    red "parrot requires Apple Silicon (detected $ARCH)"
+    red "the on-device inference engine uses the Apple Neural Engine, which Intel Macs don't have."
     exit 1
 fi
 
