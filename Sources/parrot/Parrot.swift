@@ -88,6 +88,7 @@ struct Run: ParsableCommand {
         if let overlay {
             capture.onLevel = { level in overlay.pushLevel(level) }
         }
+        let menuBar = MainActor.assumeIsolated { MenuBarController(modelID: chosenModel.id) }
 
         do {
             try monitor.start { event in
@@ -96,16 +97,18 @@ struct Run: ParsableCommand {
                     do {
                         try capture.start()
                         FileHandle.standardError.write(Data("● recording\n".utf8))
-                        if let overlay {
-                            MainActor.assumeIsolated { overlay.show(.recording) }
+                        MainActor.assumeIsolated {
+                            overlay?.show(.recording)
+                            menuBar.setRecording(true)
                         }
                     } catch {
                         FileHandle.standardError.write(Data("capture failed: \(error)\n".utf8))
                     }
                 case .released:
                     let samples = capture.stop()
-                    if let overlay {
-                        MainActor.assumeIsolated { overlay.show(.transcribing) }
+                    MainActor.assumeIsolated {
+                        overlay?.show(.transcribing)
+                        menuBar.setTranscribing()
                     }
                     let seconds = Double(samples.count) / AudioCapture.targetSampleRate
                     let rms = computeRMS(samples)
@@ -122,7 +125,10 @@ struct Run: ParsableCommand {
                         }
                     }
                     guard !samples.isEmpty else {
-                        if let overlay { MainActor.assumeIsolated { overlay.hide() } }
+                        MainActor.assumeIsolated {
+                            overlay?.hide()
+                            menuBar.setRecording(false)
+                        }
                         return
                     }
                     Task {
@@ -136,10 +142,14 @@ struct Run: ParsableCommand {
                             await MainActor.run {
                                 TextInjector.inject(text)
                                 overlay?.hide()
+                                menuBar.setRecording(false)
                             }
                         } catch {
                             FileHandle.standardError.write(Data("transcription failed: \(error)\n".utf8))
-                            await MainActor.run { overlay?.hide() }
+                            await MainActor.run {
+                                overlay?.hide()
+                                menuBar.setRecording(false)
+                            }
                         }
                     }
                 }
