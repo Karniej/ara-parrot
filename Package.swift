@@ -14,9 +14,6 @@ let package = Package(
             dependencies: [
                 .product(name: "ArgumentParser", package: "swift-argument-parser"),
                 .product(name: "WhisperKit", package: "WhisperKit"),
-            ],
-            resources: [
-                .process("Resources"),
             ]
         ),
     ]
