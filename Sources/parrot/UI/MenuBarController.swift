@@ -40,7 +40,6 @@ final class MenuBarController {
     }
 
     func setRecording(_ recording: Bool) {
-        configureButton(recording: recording)
         stateLabel.title = recording ? "● recording" : "idle · hold fn to dictate"
     }
 
@@ -51,9 +50,8 @@ final class MenuBarController {
     private func configureButton(recording: Bool) {
         guard let button = statusItem.button else { return }
         let image = Self.birdImage()
-        image?.isTemplate = !recording
+        image?.isTemplate = true
         button.image = image
-        button.contentTintColor = recording ? NSColor.systemRed : nil
     }
 
     // Inlined Lucide bird SVG. Keeping it in source means the executable has
