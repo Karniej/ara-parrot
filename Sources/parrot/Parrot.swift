@@ -40,6 +40,9 @@ struct Run: ParsableCommand {
     )
     var hotkey: Hotkey = .fn
 
+    @Option(name: .long, help: "Output mode. One of: verbatim, default, email, chat, code.")
+    var mode: String?
+
     func run() throws {
         if !skipDoctor {
             let checks = DoctorReport.run()
@@ -49,6 +52,17 @@ struct Run: ParsableCommand {
                 FileHandle.standardError.write(Data("\nfix the above or pass --skip-doctor\n".utf8))
                 throw ExitCode(1)
             }
+        }
+
+        // Configuration and argument validation ahead of the model warm-up, so
+        // `--mode typo` fails in milliseconds rather than after a model download.
+        let config = Config.load()
+        let registry = ModeRegistry(userModes: [])
+        if let mode, registry.mode(id: mode) == nil {
+            FileHandle.standardError.write(Data("unknown mode: \(mode)\n".utf8))
+            let known = registry.all.map(\.id).joined(separator: ", ")
+            FileHandle.standardError.write(Data("known modes: \(known)\n".utf8))
+            throw ExitCode(1)
         }
 
         let chosenModel: TranscriptionModel
@@ -94,10 +108,45 @@ struct Run: ParsableCommand {
         if let overlay {
             capture.onLevel = { level in overlay.pushLevel(level) }
         }
-        let hotkeyLabel = hotkey.label
-        let menuBar = MainActor.assumeIsolated {
-            MenuBarController(modelID: chosenModel.id, hotkeyLabel: hotkeyLabel)
+        // The keychain read happens ONCE, here, on the CLI's own thread — never
+        // inside `format`. `SecItemCopyMatching` raises an unlock or Allow/Deny
+        // prompt on a locked keychain or on an item whose ACL does not trust
+        // this binary, and blocks until a human answers it. On a
+        // cooperative-pool thread that is an unbounded version of the 9.16s
+        // stall `FormatterChain.withDeadline` documents — and the deadline
+        // cannot rescue it, because abandoning a task does not free the thread
+        // it is blocking. This binary is unsigned, so the legacy keychain's
+        // ACL-by-identity re-prompts after every rebuild; this is the normal
+        // path, not a corner case. The cost is that a rotated key needs a
+        // restart, which is the right trade.
+        var apiKey: String?
+        if let cloudConfig = config.cloud {
+            apiKey = Keychain.readPassword(account: cloudConfig.keychainAccount)
         }
+
+        let hotkeyLabel = hotkey.label
+        let startingMode = mode ?? config.mode
+        let menuBar = MainActor.assumeIsolated {
+            MenuBarController(modelID: chosenModel.id, hotkeyLabel: hotkeyLabel,
+                              modeID: startingMode)
+        }
+
+        // Sampled on the main actor at each hotkey release and read back from
+        // the session's actor. See `FrontmostApp` for why reading NSWorkspace
+        // from the session directly is a trap rather than a hop.
+        let frontmost = FrontmostApp()
+        MainActor.assumeIsolated { frontmost.capture() }
+
+        let modeOverride = mode
+        let session = Pipeline.makeSession(
+            config: config,
+            apiKey: apiKey,
+            local: Pipeline.localFormatter(),
+            registry: registry,
+            frontmostBundleID: frontmost.reader,
+            onModeResolved: { resolved in
+                Task { @MainActor in menuBar.setMode(resolved.id) }
+            })
 
         do {
             try monitor.start { event in
@@ -116,6 +165,10 @@ struct Run: ParsableCommand {
                 case .released:
                     let samples = capture.stop()
                     MainActor.assumeIsolated {
+                        // Sampled here, on the main thread, while it is still
+                        // true: this is the app the user was dictating into,
+                        // before transcription gives them time to switch away.
+                        frontmost.capture()
                         overlay?.show(.transcribing)
                         menuBar.setTranscribing()
                     }
@@ -144,12 +197,31 @@ struct Run: ParsableCommand {
                         let started = Date()
                         do {
                             let text = try await transcriber.transcribe(samples)
-                            let elapsed = Date().timeIntervalSince(started)
+                            let transcribed = Date().timeIntervalSince(started)
                             FileHandle.standardError.write(Data(
-                                String(format: "→ %.2fs · %@\n", elapsed, text).utf8
+                                String(format: "→ %.2fs · %@\n", transcribed, text).utf8
                             ))
+                            // Never `try?`, and never a throwing call: `process`
+                            // returns a String and cannot fail, so a broken
+                            // formatter can only ever degrade to raw text.
+                            let cleaned = await session.process(
+                                text, override: modeOverride, manual: nil)
+                            if cleaned != text {
+                                let total = Date().timeIntervalSince(started)
+                                FileHandle.standardError.write(Data(
+                                    String(format: "↦ %.2fs · %@\n", total, cleaned).utf8
+                                ))
+                            }
                             await MainActor.run {
-                                TextInjector.inject(text)
+                                // The empty string is `process`'s "nothing to
+                                // type": an empty transcript, or a request that
+                                // was cancelled while it was being formatted.
+                                // Injecting a withdrawn request's text is the
+                                // failure the chain propagates cancellation to
+                                // prevent, so the guard is the point, not tidiness.
+                                if !cleaned.isEmpty {
+                                    TextInjector.inject(cleaned)
+                                }
                                 overlay?.hide()
                                 menuBar.setRecording(false)
                             }

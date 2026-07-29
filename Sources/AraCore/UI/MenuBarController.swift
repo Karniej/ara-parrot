@@ -7,11 +7,15 @@ import AppKit
 public final class MenuBarController {
     private let statusItem: NSStatusItem
     private let modelLabel: NSMenuItem
+    private let modeLabel: NSMenuItem
     private let stateLabel: NSMenuItem
     private let modelID: String
     private let idleTitle: String
 
-    public init(modelID: String, hotkeyLabel: String = "fn") {
+    /// - Parameter modeID: The mode the daemon starts in. Modes are resolved per
+    ///   utterance — the frontmost application can change the answer — so this is
+    ///   only the initial value; `setMode` keeps the label honest afterwards.
+    public init(modelID: String, hotkeyLabel: String = "fn", modeID: String) {
         self.modelID = modelID
         self.idleTitle = "idle · hold \(hotkeyLabel) to dictate"
         self.statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
@@ -26,6 +30,10 @@ public final class MenuBarController {
         modelLabel = NSMenuItem(title: "model: \(modelID)", action: nil, keyEquivalent: "")
         modelLabel.isEnabled = false
         menu.addItem(modelLabel)
+
+        modeLabel = NSMenuItem(title: "mode: \(modeID)", action: nil, keyEquivalent: "")
+        modeLabel.isEnabled = false
+        menu.addItem(modeLabel)
 
         menu.addItem(.separator())
 
@@ -47,6 +55,14 @@ public final class MenuBarController {
 
     public func setTranscribing() {
         stateLabel.title = "transcribing…"
+    }
+
+    /// Shows the mode the current utterance is being formatted in. The daemon
+    /// resolves a mode per utterance from the `--mode` flag, the config default
+    /// and the frontmost application, so this is the only way to see which of
+    /// those actually won.
+    public func setMode(_ id: String) {
+        modeLabel.title = "mode: \(id)"
     }
 
     private func configureButton(recording: Bool) {
