@@ -43,6 +43,25 @@ public enum Hotkey: String, CaseIterable, ExpressibleByArgument {
         }
     }
 
+    /// The `NX_DEVICE*KEYMASK` bit IOKit documents for this physical key.
+    ///
+    /// A hint, never a requirement — see `ModifierEdgeDetector`, which learns
+    /// the bit a keyboard actually reports and uses this only to break a tie.
+    /// The documented table is not reliable: on this machine the right control
+    /// key reports `0x1` (`NX_DEVICELCTLKEYMASK`), not the `0x2000` listed here.
+    var documentedDeviceBit: UInt64? {
+        switch self {
+        case .fn: return nil                    // Fn has no left/right variant.
+        case .leftControl: return 0x0000_0001   // NX_DEVICELCTLKEYMASK
+        case .rightShift: return 0x0000_0004    // NX_DEVICERSHIFTKEYMASK
+        case .leftCommand: return 0x0000_0008   // NX_DEVICELCMDKEYMASK
+        case .rightCommand: return 0x0000_0010  // NX_DEVICERCMDKEYMASK
+        case .leftOption: return 0x0000_0020    // NX_DEVICELALTKEYMASK
+        case .rightOption: return 0x0000_0040   // NX_DEVICERALTKEYMASK
+        case .rightControl: return 0x0000_2000  // NX_DEVICERCTLKEYMASK
+        }
+    }
+
     /// Human-readable name for logs and the menu bar.
     public var label: String {
         switch self {

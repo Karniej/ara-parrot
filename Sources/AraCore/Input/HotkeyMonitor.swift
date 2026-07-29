@@ -16,11 +16,15 @@ public final class HotkeyMonitor {
     private var onEvent: ((Event) -> Void)?
     private var tap: CFMachPort?
     private var runLoopSource: CFRunLoopSource?
-    private var isPressed = false
+    /// Owns the press/release decision, including the case where the sibling
+    /// key of the same class is held at the same time. Pure and unit-tested;
+    /// this class contributes only the event tap around it.
+    private var edges: ModifierEdgeDetector
 
     public init(hotkey: Hotkey = .fn, debug: Bool = false) {
         self.hotkey = hotkey
         self.debug = debug
+        self.edges = ModifierEdgeDetector(hotkey: hotkey)
     }
 
     public func start(onEvent: @escaping (Event) -> Void) throws {
@@ -87,15 +91,16 @@ public final class HotkeyMonitor {
                 ))
         }
         guard type == .flagsChanged else { return }
-        // Left/right variants share a modifier bit, so the keycode on the event
-        // is what tells them apart. Fn matches on the flag alone (keyCode == nil).
-        if let expected = hotkey.keyCode {
-            guard event.getIntegerValueField(.keyboardEventKeycode) == expected else { return }
+        // Every flagsChanged event goes in, not only the ones for our keycode:
+        // the detector needs the sibling key's events to know which device bits
+        // were already set when ours went down.
+        let edge = edges.handle(keyCode: event.getIntegerValueField(.keyboardEventKeycode),
+                                flags: event.flags.rawValue)
+        switch edge {
+        case .pressed: onEvent?(.pressed)
+        case .released: onEvent?(.released)
+        case nil: break
         }
-        let pressed = event.flags.contains(hotkey.mask)
-        guard pressed != isPressed else { return }
-        isPressed = pressed
-        onEvent?(pressed ? .pressed : .released)
     }
 }
 
