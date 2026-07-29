@@ -3,20 +3,20 @@ import AppKit
 import ApplicationServices
 import Foundation
 
-enum CheckStatus {
+public enum CheckStatus {
     case ok
     case warn(String)
     case fail(String)
 }
 
-struct Check {
+public struct Check {
     let name: String
     let status: CheckStatus
     let remediation: String?
 }
 
-enum DoctorReport {
-    static func run() -> [Check] {
+public enum DoctorReport {
+    public static func run() -> [Check] {
         [
             checkMicrophone(),
             checkAccessibility(),
@@ -138,7 +138,7 @@ enum DoctorReport {
         return (s as NSString).lastPathComponent
     }
 
-    static func print(_ checks: [Check]) {
+    public static func print(_ checks: [Check]) {
         for c in checks {
             let (mark, label): (String, String) = {
                 switch c.status {
@@ -155,7 +155,7 @@ enum DoctorReport {
     }
 
     /// True if no checks are in a hard-fail state. Warnings don't block.
-    static func allOK(_ checks: [Check]) -> Bool {
+    public static func allOK(_ checks: [Check]) -> Bool {
         checks.allSatisfy {
             if case .fail = $0.status { return false }
             return true

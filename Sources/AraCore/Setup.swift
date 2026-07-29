@@ -3,12 +3,14 @@ import ArgumentParser
 import AVFoundation
 import Foundation
 
-struct Setup: ParsableCommand {
-    static let configuration = CommandConfiguration(
+public struct Setup: ParsableCommand {
+    public static let configuration = CommandConfiguration(
         abstract: "Walk through first-run permission setup."
     )
 
-    func run() throws {
+    public init() {}
+
+    public func run() throws {
         print("parrot setup")
         print("============")
         print()

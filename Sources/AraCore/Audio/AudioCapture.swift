@@ -4,13 +4,13 @@ import Foundation
 /// Captures microphone audio while recording is active and returns a 16 kHz
 /// mono Float32 buffer when stopped. Format-converts on the fly so callers
 /// don't have to worry about the input device's native rate.
-final class AudioCapture {
+public final class AudioCapture {
     enum CaptureError: Error {
         case engineStartFailed(Error)
         case converterCreationFailed
     }
 
-    static let targetSampleRate: Double = 16_000
+    public static let targetSampleRate: Double = 16_000
 
     private let engine = AVAudioEngine()
     private var converter: AVAudioConverter?
@@ -20,10 +20,12 @@ final class AudioCapture {
 
     /// Called for every audio buffer with the buffer's RMS level (0…~1).
     /// Invoked on an arbitrary thread; hop to main if you touch UI.
-    var onLevel: ((Float) -> Void)?
+    public var onLevel: ((Float) -> Void)?
+
+    public init() {}
 
     /// Begin recording. Idempotent — calling while already recording is a no-op.
-    func start() throws {
+    public func start() throws {
         guard !isRecording else { return }
 
         let input = engine.inputNode
@@ -63,7 +65,7 @@ final class AudioCapture {
 
     /// Stop recording and return all captured samples (16 kHz mono Float32).
     @discardableResult
-    func stop() -> [Float] {
+    public func stop() -> [Float] {
         guard isRecording else { return [] }
         engine.stop()
         engine.inputNode.removeTap(onBus: 0)
@@ -121,9 +123,9 @@ final class AudioCapture {
 
 // MARK: - WAV writer (for debugging M3 captures)
 
-enum WAVWriter {
+public enum WAVWriter {
     /// Write Float32 mono samples as 16-bit PCM WAV to `path`.
-    static func write(samples: [Float], sampleRate: Int, to path: String) throws {
+    public static func write(samples: [Float], sampleRate: Int, to path: String) throws {
         let bytesPerSample = 2
         let dataSize = samples.count * bytesPerSample
 
@@ -161,7 +163,7 @@ enum WAVWriter {
     }
 }
 
-func computeRMS(_ samples: [Float]) -> Float {
+public func computeRMS(_ samples: [Float]) -> Float {
     guard !samples.isEmpty else { return 0 }
     var sum: Double = 0
     for s in samples { sum += Double(s * s) }

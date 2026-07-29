@@ -7,7 +7,7 @@ import CoreGraphics
 /// both Option keys — so left/right variants are told apart by the keycode on the
 /// `flagsChanged` event. Fn is the exception: it matches on the flag alone,
 /// preserving the original behaviour on Apple's built-in keyboard.
-enum Hotkey: String, CaseIterable, ExpressibleByArgument {
+public enum Hotkey: String, CaseIterable, ExpressibleByArgument {
     case fn
     case leftOption = "left-option"
     case rightOption = "right-option"
@@ -18,7 +18,7 @@ enum Hotkey: String, CaseIterable, ExpressibleByArgument {
     case rightShift = "right-shift"
 
     /// The modifier bit macOS sets while the key is held.
-    var mask: CGEventFlags {
+    public var mask: CGEventFlags {
         switch self {
         case .fn: return .maskSecondaryFn
         case .leftOption, .rightOption: return .maskAlternate
@@ -30,7 +30,7 @@ enum Hotkey: String, CaseIterable, ExpressibleByArgument {
 
     /// Keycode carried by the `flagsChanged` event, used to disambiguate the
     /// left and right variants. `nil` means match on `mask` alone.
-    var keyCode: Int64? {
+    public var keyCode: Int64? {
         switch self {
         case .fn: return nil
         case .rightCommand: return 54
@@ -44,7 +44,7 @@ enum Hotkey: String, CaseIterable, ExpressibleByArgument {
     }
 
     /// Human-readable name for logs and the menu bar.
-    var label: String {
+    public var label: String {
         switch self {
         case .fn: return "fn"
         case .leftOption: return "left ⌥"
@@ -57,7 +57,7 @@ enum Hotkey: String, CaseIterable, ExpressibleByArgument {
         }
     }
 
-    static var valueNames: String {
+    public static var valueNames: String {
         allCases.map(\.rawValue).joined(separator: ", ")
     }
 }

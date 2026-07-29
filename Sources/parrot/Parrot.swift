@@ -1,7 +1,7 @@
 import AppKit
 import ArgumentParser
+import AraCore
 import Foundation
-import WhisperKit
 
 @main
 struct Parrot: ParsableCommand {

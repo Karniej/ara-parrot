@@ -9,12 +9,14 @@ let package = Package(
         .package(url: "https://github.com/argmaxinc/WhisperKit.git", from: "0.9.0"),
     ],
     targets: [
-        .executableTarget(
-            name: "parrot",
+        .target(
+            name: "AraCore",
             dependencies: [
                 .product(name: "ArgumentParser", package: "swift-argument-parser"),
                 .product(name: "WhisperKit", package: "WhisperKit"),
             ]
         ),
+        .executableTarget(name: "parrot", dependencies: ["AraCore"]),
+        .testTarget(name: "AraCoreTests", dependencies: ["AraCore"]),
     ]
 )

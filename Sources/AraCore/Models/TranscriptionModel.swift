@@ -5,15 +5,15 @@ enum Engine: String, Codable {
     case parakeet
 }
 
-struct TranscriptionModel: Codable {
-    let id: String
-    let displayName: String
+public struct TranscriptionModel: Codable {
+    public let id: String
+    public let displayName: String
     let engine: Engine
     /// Engine-specific identifier (e.g. "openai_whisper-base.en" for WhisperKit).
     let whisperKitID: String?
-    let sizeMB: Int
-    let languages: [String]
-    let recommended: Bool
+    public let sizeMB: Int
+    public let languages: [String]
+    public let recommended: Bool
 }
 
 struct ModelsManifest: Codable {

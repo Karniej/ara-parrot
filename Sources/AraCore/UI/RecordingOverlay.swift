@@ -4,8 +4,8 @@ import SwiftUI
 /// Borderless, click-through pill near the bottom of the active screen.
 /// Driven by the daemon's hotkey + transcription lifecycle.
 @MainActor
-final class RecordingOverlay {
-    enum State: Equatable {
+public final class RecordingOverlay {
+    public enum State: Equatable {
         case hidden
         case recording
         case transcribing
@@ -14,7 +14,9 @@ final class RecordingOverlay {
     private var window: NSPanel?
     private let model = OverlayModel()
 
-    func show(_ state: State) {
+    public init() {}
+
+    public func show(_ state: State) {
         ensureWindow()
         if state == .recording {
             model.resetLevels()
@@ -34,7 +36,7 @@ final class RecordingOverlay {
         }
     }
 
-    func hide() {
+    public func hide() {
         model.state = .hidden
         // Let the SwiftUI scale+fade animation play out before yanking the
         // window — otherwise it just pops away.
@@ -45,7 +47,7 @@ final class RecordingOverlay {
     }
 
     /// Push a new audio level (0…~1). Safe to call from any thread.
-    nonisolated func pushLevel(_ level: Float) {
+    public nonisolated func pushLevel(_ level: Float) {
         Task { @MainActor in
             self.model.pushLevel(level)
         }

@@ -6,9 +6,9 @@ import Foundation
 /// Watches a single modifier key (default: Fn) and emits press/release edges.
 /// Requires Accessibility permission. If the tap fails to register, callers
 /// will see an error from `start()`.
-final class HotkeyMonitor {
-    enum Event { case pressed, released }
-    enum HotkeyError: Error { case tapCreateFailed }
+public final class HotkeyMonitor {
+    public enum Event { case pressed, released }
+    public enum HotkeyError: Error { case tapCreateFailed }
 
     /// The modifier we treat as the hotkey. Defaults to Fn.
     private let hotkey: Hotkey
@@ -18,12 +18,12 @@ final class HotkeyMonitor {
     private var runLoopSource: CFRunLoopSource?
     private var isPressed = false
 
-    init(hotkey: Hotkey = .fn, debug: Bool = false) {
+    public init(hotkey: Hotkey = .fn, debug: Bool = false) {
         self.hotkey = hotkey
         self.debug = debug
     }
 
-    func start(onEvent: @escaping (Event) -> Void) throws {
+    public func start(onEvent: @escaping (Event) -> Void) throws {
         self.onEvent = onEvent
 
         let promptKey = kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String
@@ -64,7 +64,7 @@ final class HotkeyMonitor {
         self.runLoopSource = source
     }
 
-    func stop() {
+    public func stop() {
         if let tap {
             CGEvent.tapEnable(tap: tap, enable: false)
         }

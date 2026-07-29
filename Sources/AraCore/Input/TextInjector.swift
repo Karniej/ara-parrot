@@ -5,11 +5,11 @@ import Foundation
 /// keyboard events with `CGEventKeyboardSetUnicodeString`. Works in nearly
 /// every text field on macOS; some Electron apps and secure password fields
 /// can drop characters (platform constraint).
-enum TextInjector {
+public enum TextInjector {
     /// Inject the given text at the current cursor location.
     /// Splits long strings into chunks because the underlying API has a
     /// per-event character limit (~20 chars).
-    static func inject(_ text: String) {
+    public static func inject(_ text: String) {
         guard !text.isEmpty else { return }
 
         let utf16 = Array(text.utf16)

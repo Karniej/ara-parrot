@@ -5,8 +5,8 @@ import Foundation
 /// The model list lives directly in source rather than as a JSON resource so
 /// the binary stays self-contained — no `Bundle.module` lookup, no per-target
 /// resource bundle to ship alongside the executable.
-enum ModelRegistry {
-    static let shared: [TranscriptionModel] = [
+public enum ModelRegistry {
+    public static let shared: [TranscriptionModel] = [
         TranscriptionModel(
             id: "whisper-base.en",
             displayName: "Whisper Base (English)",
@@ -36,11 +36,11 @@ enum ModelRegistry {
         ),
     ]
 
-    static func find(_ id: String) -> TranscriptionModel? {
+    public static func find(_ id: String) -> TranscriptionModel? {
         shared.first { $0.id == id }
     }
 
-    static func recommended() -> TranscriptionModel? {
+    public static func recommended() -> TranscriptionModel? {
         shared.first { $0.recommended } ?? shared.first
     }
 }

@@ -6,8 +6,8 @@ import Foundation
 /// We deliberately do NOT use SMAppService.mainApp here — that requires a full
 /// .app bundle. Since parrot ships as a single binary in /usr/local/bin, a
 /// plain LaunchAgent plist is the simpler, more honest mechanism.
-struct Install: ParsableCommand {
-    static let configuration = CommandConfiguration(
+public struct Install: ParsableCommand {
+    public static let configuration = CommandConfiguration(
         abstract: "Install or remove the launch-at-login LaunchAgent."
     )
 
@@ -17,7 +17,9 @@ struct Install: ParsableCommand {
     @Flag(name: .long, help: "Remove the launch-at-login agent.")
     var uninstall: Bool = false
 
-    func run() throws {
+    public init() {}
+
+    public func run() throws {
         if launchAtLogin == uninstall {
             FileHandle.standardError.write(Data(
                 "specify exactly one of --launch-at-login or --uninstall\n".utf8

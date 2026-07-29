@@ -4,14 +4,14 @@ import AppKit
 /// a glance and provides the only persistent control surface for the daemon
 /// (since we run as `.accessory` — no dock icon, no main window).
 @MainActor
-final class MenuBarController {
+public final class MenuBarController {
     private let statusItem: NSStatusItem
     private let modelLabel: NSMenuItem
     private let stateLabel: NSMenuItem
     private let modelID: String
     private let idleTitle: String
 
-    init(modelID: String, hotkeyLabel: String = "fn") {
+    public init(modelID: String, hotkeyLabel: String = "fn") {
         self.modelID = modelID
         self.idleTitle = "idle · hold \(hotkeyLabel) to dictate"
         self.statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
@@ -41,11 +41,11 @@ final class MenuBarController {
         configureButton(recording: false)
     }
 
-    func setRecording(_ recording: Bool) {
+    public func setRecording(_ recording: Bool) {
         stateLabel.title = recording ? "● recording" : idleTitle
     }
 
-    func setTranscribing() {
+    public func setTranscribing() {
         stateLabel.title = "transcribing…"
     }
 
