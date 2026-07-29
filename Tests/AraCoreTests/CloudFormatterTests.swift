@@ -140,7 +140,7 @@ struct CloudFormatterTests {
                            key: String? = "sk-ant-secret-key",
                            config: CloudConfig = CloudConfig(),
                            captured: Captured? = nil) -> CloudFormatter {
-        CloudFormatter(config: config, apiKey: { key }, transport: { request in
+        CloudFormatter(config: config, apiKey: key, transport: { request in
             await captured?.record(request)
             let response = HTTPURLResponse(url: request.url!, statusCode: status,
                                            httpVersion: nil, headerFields: nil)!
@@ -427,7 +427,7 @@ struct CloudFormatterTests {
     @Test("a cancelled request is reported as cancellation, not a transport failure")
     func cancellationIsNotATransportFailure() async throws {
         let formatter = CloudFormatter(
-            config: CloudConfig(), apiKey: { "sk-ant-secret-key" },
+            config: CloudConfig(), apiKey: "sk-ant-secret-key",
             transport: { _ in throw URLError(.cancelled) })
         do {
             _ = try await formatter.format("hello there friend", mode: mode)
@@ -478,7 +478,7 @@ struct CloudFormatterTests {
         for userInfo in userInfos {
             do {
                 let leaky = CloudFormatter(
-                    config: CloudConfig(), apiKey: { key },
+                    config: CloudConfig(), apiKey: key,
                     transport: { _ in
                         throw URLError(.userAuthenticationRequired, userInfo: userInfo)
                     })
@@ -586,7 +586,7 @@ struct CloudFormatterTests {
         let timeout = 0.8
         let url = server.url
         let formatter = CloudFormatter(
-            config: CloudConfig(), apiKey: { "sk-ant-secret-key" },
+            config: CloudConfig(), apiKey: "sk-ant-secret-key",
             transport: { _ in
                 var hanging = URLRequest(url: url)
                 hanging.httpMethod = "POST"
@@ -613,6 +613,25 @@ struct CloudFormatterTests {
     }
 
     // MARK: - Keychain
+
+    /// Both renderers, because callers reach for both and they are fed by
+    /// different protocols: without `LocalizedError`, `localizedDescription`
+    /// returns "The operation couldn't be completed. (AraCore.KeychainError
+    /// error 0.)" and the `OSStatus` — the only part that explains the failure —
+    /// is lost.
+    @Test("a keychain error explains itself through either renderer")
+    func keychainErrorRenders() throws {
+        let add = KeychainError.addFailed(errSecAuthFailed)
+        let update = KeychainError.updateFailed(errSecInteractionNotAllowed)
+        for rendered in ["\(add)", add.localizedDescription] {
+            #expect(rendered.contains("add"))
+            #expect(rendered.contains("\(errSecAuthFailed)"))
+        }
+        for rendered in ["\(update)", update.localizedDescription] {
+            #expect(rendered.contains("update"))
+            #expect(rendered.contains("\(errSecInteractionNotAllowed)"))
+        }
+    }
 
     @Test("reading an absent keychain account returns nil rather than trapping")
     func keychainMissAndDefaults() throws {

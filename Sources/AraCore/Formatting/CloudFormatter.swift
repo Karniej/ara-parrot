@@ -30,8 +30,9 @@ import Foundation
 /// Everything interesting about this type is in how it treats a response —
 /// especially a refusal, which arrives as a perfectly successful HTTP 200. The
 /// seam lets those paths be driven without a network or an API key, and it
-/// defaults to `URLSession.shared.data(for:)`, which is the only transport
-/// production ever uses.
+/// defaults to `urlSessionTransport` — `URLSession.shared.data(for:delegate:)`
+/// with a delegate that refuses redirects, for the credential reason set out on
+/// that property — which is the only transport production ever uses.
 ///
 /// **The default transport suspends; it does not block.** That is a
 /// requirement, not a detail: `FormatterChain.withDeadline` abandons a slow
@@ -47,30 +48,38 @@ public struct CloudFormatter: Formatter {
         @Sendable (URLRequest) async throws -> (Data, URLResponse)
 
     private let config: CloudConfig
-    private let apiKey: @Sendable () -> String?
+    private let apiKey: String?
     private let transport: Transport
 
     /// - Parameters:
     ///   - config: Provider, model and keychain account. A `provider` other
     ///     than `anthropic` disables this formatter rather than sending that
     ///     vendor's key here.
-    ///   - apiKey: Supplies the credential per call.
+    ///   - apiKey: The credential, already read. `nil` disables this formatter.
     ///
-    ///     **This closure must not read the keychain.** It is invoked
-    ///     synchronously inside `format`, which `FormatterChain` runs on the
-    ///     cooperative pool, and `SecItemCopyMatching` blocks its thread
-    ///     indefinitely whenever the keychain is locked or the item's ACL does
-    ///     not trust this binary — it puts a dialog in front of the user and
-    ///     waits for an answer. Blocking a pool thread for however long a human
-    ///     takes to notice a prompt is the precise failure
-    ///     `FormatterChain.withDeadline` documents and cannot rescue: the
-    ///     deadline abandons the task without freeing the thread. Read the key
-    ///     once at startup, off the pool, and close over the cached value.
+    ///     **A value and not a closure, deliberately.** A closure would invite
+    ///     the caller to supply `{ Keychain.readPassword(account:) }`, and that
+    ///     is the one thing that must not happen: it would be evaluated inside
+    ///     `format`, which `FormatterChain` runs on the cooperative pool, and
+    ///     `SecItemCopyMatching` blocks its thread for as long as a human takes
+    ///     to answer a dialog whenever the keychain is locked or the item's ACL
+    ///     does not trust this binary. That is the precise failure
+    ///     `FormatterChain.withDeadline` documents and cannot rescue — the
+    ///     deadline abandons the task without freeing the thread — and an
+    ///     unsigned binary re-prompts on every rebuild, so it is not a corner
+    ///     case. A `String?` makes the rule structural rather than advisory:
+    ///     there is no lazy work left for a caller to smuggle in.
+    ///
+    ///     So the read happens once at startup, off the pool, where a prompt is
+    ///     expected and blocking is free. The cost is that a rotated key needs a
+    ///     restart to take effect, which is the right trade — picking rotation
+    ///     up automatically would mean reading the keychain per utterance, i.e.
+    ///     exactly the failure above.
     ///   - transport: Defaults to `urlSessionTransport`, which is what
     ///     production uses. Injected only so response handling — above all the
     ///     refusal path — is testable without a network.
     public init(config: CloudConfig,
-                apiKey: @escaping @Sendable () -> String?,
+                apiKey: String?,
                 transport: @escaping Transport = CloudFormatter.urlSessionTransport) {
         self.config = config
         self.apiKey = apiKey
@@ -130,7 +139,7 @@ public struct CloudFormatter: Formatter {
         let provider = config.provider
             .trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         guard provider == Self.anthropic else { throw FormatterError.unavailable }
-        guard let key = apiKey()?.trimmingCharacters(in: .whitespacesAndNewlines),
+        guard let key = apiKey?.trimmingCharacters(in: .whitespacesAndNewlines),
               !key.isEmpty
         else { throw FormatterError.unavailable }
 
@@ -139,9 +148,13 @@ public struct CloudFormatter: Formatter {
         // be defensible on that reasoning and is still the wrong trade: this
         // daemon's one promise is that a transcript is never lost, and a trap
         // in a shipped binary breaks it for a bug nobody can reproduce.
+        //
+        // Not `.unavailable`, which the chain prints as "engine unavailable" —
+        // a bug in this file reported to the user as a missing engine. The
+        // detail is a constant, so it carries no payload either way.
         guard let request = try? Self.buildRequest(key: key, model: config.model,
                                                    text: text, mode: mode)
-        else { throw FormatterError.unavailable }
+        else { throw FormatterError.transportFailure("request serialisation failed") }
 
         let data: Data
         let response: URLResponse
@@ -316,17 +329,24 @@ public struct CloudFormatter: Formatter {
     /// as `CancellationError`, and that is the only way this formatter sees one
     /// in practice: nothing else holds the `URLSessionTask`, so the request is
     /// cancelled exactly when the task wrapping it is. Reporting it as
-    /// cancellation rather than as `.transportFailure` changes no control flow —
-    /// `FormatterChain` decides cancellation by `Task.isCancelled` and never by
-    /// error type — but it decides what the user reads when the chain *does*
-    /// log, and "the network broke" would be the wrong sentence for a request
-    /// somebody withdrew.
+    /// cancellation rather than as `.transportFailure` is accurate but, to be
+    /// honest about it, **decorative**: `FormatterChain` decides cancellation by
+    /// `Task.isCancelled` and never by error type, and `withDeadline` cancels
+    /// the work task only in its `defer`, after the race is already decided — so
+    /// the resulting error is yielded into a finished continuation and dropped
+    /// before anything logs it. It earns its place as the right rendering if a
+    /// future caller ever cancels a `CloudFormatter` outside `withDeadline`, not
+    /// as a fix for anything observable today.
     ///
-    /// Anything that is not a `URLError` is reduced to its type name. That
-    /// looks over-cautious for a production path where the only transport is
-    /// `URLSession`, and it is the cheapest possible guarantee that no injected
-    /// transport can push its own payload — a wrapped response body, a
-    /// re-thrown error carrying the request — into a string this daemon prints.
+    /// Anything that is not a `URLError` is reduced to its type name, so that
+    /// no error a transport *throws* can push a payload — a wrapped response
+    /// body, a re-thrown error quoting the request — into a printed string.
+    /// Note the limit of that: a `FormatterError` is returned untouched, so a
+    /// transport throwing `.transportFailure(payload)` still has its payload
+    /// printed verbatim. Production's only transport is `URLSession`, which
+    /// throws `URLError`, so this costs nothing today — but the guarantee is
+    /// "no *foreign* error type reaches a log line", not "no injected transport
+    /// can print anything".
     static func translate(_ error: any Error) -> any Error {
         if let error = error as? FormatterError { return error }
         if error is CancellationError { return error }

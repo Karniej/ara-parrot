@@ -5,7 +5,7 @@ import Security
 /// a formatter, and reporting a denied Allow/Deny prompt as
 /// `FormatterError.transportFailure` would print "transport failure: keychain
 /// add failed (OSStatus -25308)" — a sentence about the network that is false.
-public enum KeychainError: Error, Sendable, CustomStringConvertible {
+public enum KeychainError: Error, Sendable, CustomStringConvertible, LocalizedError {
     case addFailed(OSStatus)
     case updateFailed(OSStatus)
 
@@ -17,6 +17,14 @@ public enum KeychainError: Error, Sendable, CustomStringConvertible {
         case .updateFailed(let status): return "keychain update failed (OSStatus \(status))"
         }
     }
+
+    /// `LocalizedError` as well as `CustomStringConvertible`, because they feed
+    /// different renderers and callers reach for both. Without this,
+    /// `localizedDescription` — which is what most error-reporting code prints —
+    /// yields "The operation couldn't be completed. (AraCore.KeychainError
+    /// error 0.)" and the `OSStatus` that would actually explain the failure is
+    /// lost.
+    public var errorDescription: String? { description }
 }
 
 /// Generic-password storage for the cloud API key.
