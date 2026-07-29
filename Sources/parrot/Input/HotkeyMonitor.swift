@@ -10,16 +10,16 @@ final class HotkeyMonitor {
     enum Event { case pressed, released }
     enum HotkeyError: Error { case tapCreateFailed }
 
-    /// Mask of the modifier we treat as the hotkey. Fn = `.maskSecondaryFn`.
-    private let mask: CGEventFlags
+    /// The modifier we treat as the hotkey. Defaults to Fn.
+    private let hotkey: Hotkey
     private let debug: Bool
     private var onEvent: ((Event) -> Void)?
     private var tap: CFMachPort?
     private var runLoopSource: CFRunLoopSource?
     private var isPressed = false
 
-    init(mask: CGEventFlags = .maskSecondaryFn, debug: Bool = false) {
-        self.mask = mask
+    init(hotkey: Hotkey = .fn, debug: Bool = false) {
+        self.hotkey = hotkey
         self.debug = debug
     }
 
@@ -87,7 +87,12 @@ final class HotkeyMonitor {
                 ))
         }
         guard type == .flagsChanged else { return }
-        let pressed = event.flags.contains(mask)
+        // Left/right variants share a modifier bit, so the keycode on the event
+        // is what tells them apart. Fn matches on the flag alone (keyCode == nil).
+        if let expected = hotkey.keyCode {
+            guard event.getIntegerValueField(.keyboardEventKeycode) == expected else { return }
+        }
+        let pressed = event.flags.contains(hotkey.mask)
         guard pressed != isPressed else { return }
         isPressed = pressed
         onEvent?(pressed ? .pressed : .released)
