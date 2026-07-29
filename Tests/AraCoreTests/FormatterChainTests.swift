@@ -11,6 +11,24 @@ private struct StubFormatter: AraCore.Formatter {
     }
 }
 
+/// Records whether the work the chain abandoned actually observed cancellation.
+private actor CancellationProbe {
+    private(set) var observed = false
+    func record() { observed = true }
+
+    /// Polls rather than sleeping a fixed interval: cancellation is delivered
+    /// asynchronously, so the only alternatives are a wait long enough to be
+    /// slow or short enough to be flaky.
+    func waitForObservation(upTo limit: Duration) async -> Bool {
+        let deadline = ContinuousClock.now + limit
+        while ContinuousClock.now < deadline {
+            if observed { return true }
+            try? await Task.sleep(for: .milliseconds(10))
+        }
+        return observed
+    }
+}
+
 @Suite("FormatterChain")
 struct FormatterChainTests {
     let mode = Mode(id: "default", name: "Default", prompt: "p",
@@ -150,6 +168,109 @@ struct FormatterChainTests {
             local: StubFormatter { _ in Issue.record("LLM was called"); return "x" },
             cloud: nil, rules: rules)
         #expect(try await chain.format("hello there friend", mode: verbatim) == "RULES")
+    }
+
+    /// Cancellation is not an engine failure. A caller that withdraws the
+    /// request must get `CancellationError`, not a string — a string would be
+    /// typed at the user's cursor by the injection layer, which has no way to
+    /// tell a real result from an absorbed cancellation.
+    @Test("a cancelled caller gets CancellationError rather than text")
+    func cancellationPropagates() async throws {
+        let chain = FormatterChain(
+            engine: .cloud, timeout: .seconds(30),
+            local: StubFormatter { _ in
+                try await Task.sleep(for: .seconds(30))
+                return "never"
+            },
+            cloud: StubFormatter { _ in
+                try await Task.sleep(for: .seconds(30))
+                return "never"
+            },
+            rules: rules)
+        let mode = mode
+        let running = Task { try await chain.format("hello there friend", mode: mode) }
+        try await Task.sleep(for: .milliseconds(50))
+        running.cancel()
+        await #expect(throws: CancellationError.self) { try await running.value }
+    }
+
+    /// The same guarantee on the branch that never consults an engine: a
+    /// cancelled verbatim-mode call must not hand back text either.
+    @Test("a cancelled caller gets CancellationError on the rules-only branch")
+    func cancellationPropagatesFromRulesBranch() async throws {
+        let chain = FormatterChain(
+            engine: .rules, timeout: .seconds(30),
+            local: nil, cloud: nil,
+            rules: StubFormatter { _ in
+                try await Task.sleep(for: .seconds(30))
+                return "never"
+            })
+        let mode = mode
+        let running = Task { try await chain.format("hello there friend", mode: mode) }
+        try await Task.sleep(for: .milliseconds(50))
+        running.cancel()
+        await #expect(throws: CancellationError.self) { try await running.value }
+    }
+
+    /// Abandoning the loser must also *cancel* it. Without this, a well-behaved
+    /// engine that could have stopped at the deadline keeps running to
+    /// completion, burning a pool thread and, for cloud, real money.
+    @Test("the losing formatter is cancelled once the deadline fires")
+    func loserIsCancelled() async throws {
+        let probe = CancellationProbe()
+        let chain = FormatterChain(
+            engine: .local, timeout: .milliseconds(50),
+            local: StubFormatter { _ in
+                do {
+                    try await Task.sleep(for: .seconds(10))
+                } catch {
+                    await probe.record()
+                    throw error
+                }
+                return "never"
+            },
+            cloud: nil, rules: rules)
+        #expect(try await chain.format("hello there friend", mode: mode) == "RULES")
+        #expect(await probe.waitForObservation(upTo: .seconds(2)))
+    }
+
+    /// The mirror image: when the work wins, the timer must be cancelled too,
+    /// so a one-second deadline does not keep a task alive for a second after
+    /// a formatter that returned in a millisecond.
+    @Test("the timer is cancelled once the formatter wins")
+    func timerIsCancelledOnSuccess() async throws {
+        let chain = FormatterChain(
+            engine: .local, timeout: .seconds(30),
+            local: StubFormatter { _ in "one two three four" },
+            cloud: nil, rules: rules)
+        let started = ContinuousClock.now
+        #expect(try await chain.format("one two three four five", mode: mode)
+                == "one two three four")
+        #expect(ContinuousClock.now - started < .seconds(1))
+    }
+
+    /// The type system does not back the "rules cannot fail" claim: `rules` is
+    /// an `any Formatter` and anything can be passed. The chain must survive a
+    /// broken one rather than losing the transcript.
+    @Test("a throwing rules formatter still yields the raw transcript")
+    func brokenRulesStillReturnsText() async throws {
+        let chain = FormatterChain(
+            engine: .local, timeout: .seconds(1),
+            local: StubFormatter { _ in throw FormatterError.unavailable },
+            cloud: nil,
+            rules: StubFormatter { _ in throw FormatterError.transportFailure("broken") })
+        #expect(try await chain.format("hello there friend", mode: mode)
+                == "hello there friend")
+    }
+
+    @Test("a throwing rules formatter is survivable on the rules-only branch too")
+    func brokenRulesOnRulesBranch() async throws {
+        let chain = FormatterChain(
+            engine: .rules, timeout: .seconds(1),
+            local: nil, cloud: nil,
+            rules: StubFormatter { _ in throw FormatterError.unavailable })
+        #expect(try await chain.format("hello there friend", mode: mode)
+                == "hello there friend")
     }
 
     /// The guarantee the whole chain exists to make: with every engine broken,

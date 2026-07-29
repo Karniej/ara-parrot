@@ -2,10 +2,23 @@ import Foundation
 
 /// Selects a formatting engine and guarantees a usable result.
 ///
-/// Every path terminates in the rule-based formatter, which cannot fail, so
-/// `format` never throws in practice. A stalled engine is abandoned at the
-/// deadline: a dictation tool that hangs is worse than one that is
-/// occasionally unpolished.
+/// Every path terminates in the rule-based formatter, and if even that throws
+/// the raw transcript is returned, so `format` fails only by propagating
+/// cancellation. A stalled engine is abandoned at the deadline: a dictation
+/// tool that hangs is worse than one that is occasionally unpolished.
+///
+/// `timeout` is **per candidate engine, not a total budget**. Under `.cloud` a
+/// hung cloud followed by a hung local costs two full timeouts before the rule
+/// based formatter runs, so the worst-case latency to the cursor is `timeout`
+/// times the number of configured engines. That is intended — each engine gets
+/// a fair chance — but it means the configured value should be chosen against
+/// the slowest single engine, then multiplied to sanity-check the worst case.
+///
+/// Cancellation is not a formatting failure. If the calling task is cancelled
+/// mid-format, `CancellationError` propagates rather than being absorbed into a
+/// fallback: the caller asked for the work to stop, and handing back a string
+/// anyway would get it typed at the user's cursor. "Never lose the transcript"
+/// is a promise about broken engines, not about abandoned work.
 ///
 /// The chain per engine:
 /// - `.off` — the raw transcript, untouched; no formatter is consulted.
@@ -38,7 +51,7 @@ public struct FormatterChain: Formatter {
     public func format(_ text: String, mode: Mode) async throws -> String {
         if engine == .off { return text }
         if engine == .rules || !mode.usesLLM {
-            return try await rules.format(text, mode: mode)
+            return try await terminalFallback(text, mode: mode)
         }
 
         // Labelled so a fall-through can name the engine that failed.
@@ -49,6 +62,13 @@ public struct FormatterChain: Formatter {
         for candidate in candidates {
             do {
                 return try await attempt(candidate.formatter, text: text, mode: mode)
+            } catch let error as CancellationError {
+                // Ordered ahead of the logging catch deliberately. Cancellation
+                // means the caller withdrew the request; the engine did nothing
+                // wrong, so blaming it in the log would be a lie, and carrying
+                // on to the next candidate would do work nobody wants. Let it
+                // out and let the caller decide.
+                throw error
             } catch {
                 // Swallowing this silently would make "why is my dictation not
                 // being cleaned up?" undebuggable: the user sees only that the
@@ -59,7 +79,30 @@ public struct FormatterChain: Formatter {
                           + "(\(Self.describe(error))); falling back")
             }
         }
-        return try await rules.format(text, mode: mode)
+        return try await terminalFallback(text, mode: mode)
+    }
+
+    /// The terminal step, and the only reason the chain's central promise holds.
+    ///
+    /// `rules` is typed `any Formatter`, so nothing in the type system enforces
+    /// "the rule-based formatter cannot fail" — that is a property of
+    /// `RuleBasedFormatter`, not of the parameter, and any throwing formatter
+    /// injected in its place would lose the user's transcript entirely. Catching
+    /// here makes the guarantee structural: whatever is passed as `rules`, a
+    /// non-cancelled call returns a string.
+    ///
+    /// Cancellation is re-thrown ahead of that fallback, so a withdrawn request
+    /// never comes back as raw text pretending to be a result.
+    private func terminalFallback(_ text: String, mode: Mode) async throws -> String {
+        do {
+            return try await rules.format(text, mode: mode)
+        } catch let error as CancellationError {
+            throw error
+        } catch {
+            Self.note("rule-based formatter threw (\(Self.describe(error))); "
+                      + "returning the raw transcript")
+            return text
+        }
     }
 
     private func attempt(_ formatter: any Formatter, text: String,
@@ -90,8 +133,23 @@ public struct FormatterChain: Formatter {
     /// is dropped, because `AsyncThrowingStream.Continuation` ignores
     /// everything after the first `finish`. The work task is cancelled on the
     /// way out, which stops it promptly if it is well-behaved; if it is not, it
-    /// is simply orphaned and its eventual result discarded. Leaking a task is
-    /// the lesser evil against never returning the user's words.
+    /// is simply orphaned and its eventual result discarded.
+    ///
+    /// **Requirement for engine implementors: a formatter that blocks its
+    /// thread MUST run that work on its own thread or executor, never on the
+    /// cooperative pool.** This is not a style preference. Orphaned blocking
+    /// tasks keep occupying cooperative-pool threads, and the pool is sized to
+    /// the core count, so abandonment only buys time — it does not buy safety.
+    /// Measured on a 12-core machine, 40 sequential calls, 80ms deadline, an
+    /// engine blocking 10s per call: calls 12, 24 and 36 each stalled ~9.16s
+    /// while every other call returned on time — a 114x deadline overshoot,
+    /// recurring once per pool width, because when orphans occupy every thread
+    /// the caller's own timer task cannot be scheduled to fire. For a wedged
+    /// local model that is eleven good utterances followed by a nine-second
+    /// freeze, over and over: the exact symptom this deadline exists to
+    /// prevent, deferred rather than removed. The deadline holds until
+    /// outstanding orphans reach pool width and then fails completely, so
+    /// keeping blocking work off the cooperative pool is what makes it real.
     private static func withDeadline<T: Sendable>(
         _ duration: Duration,
         _ operation: @escaping @Sendable () async throws -> T
