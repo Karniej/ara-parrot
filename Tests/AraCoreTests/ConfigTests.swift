@@ -32,6 +32,94 @@ struct ConfigTests {
         #expect(cfg.engine == .local)
     }
 
+    // MARK: - A file that is ignored says so
+
+    /// Collects what the user would have been told.
+    private final class Warnings: @unchecked Sendable {
+        private(set) var lines: [String] = []
+        var sink: (String) -> Void { { self.lines.append($0) } }
+        var joined: String { lines.joined(separator: "\n") }
+    }
+
+    @Test("an invalid enum value warns and names the file and the key")
+    func invalidEnumWarns() {
+        let warnings = Warnings()
+        let url = write(#"{"engine":"clod","cloud":{"model":"claude-opus-5"}}"#)
+        let cfg = Config.load(from: url, warn: warnings.sink)
+
+        // The whole file is still discarded — one bad value cannot be repaired
+        // into a good config — but the user is told, which is the difference
+        // between a mystery and a typo.
+        #expect(cfg.engine == .local)
+        #expect(cfg.cloud == nil)
+        #expect(warnings.lines.count == 1)
+        #expect(warnings.joined.contains(url.path))
+        #expect(warnings.joined.contains("engine"))
+        #expect(warnings.joined.contains("clod"))
+    }
+
+    @Test("a wrongly typed value warns and names the key")
+    func typeMismatchWarns() {
+        let warnings = Warnings()
+        let cfg = Config.load(from: write(#"{"timeoutMs":"2500"}"#), warn: warnings.sink)
+        #expect(cfg.timeoutMs == 2500)  // the default, not the string
+        #expect(warnings.lines.count == 1)
+        #expect(warnings.joined.contains("timeoutMs"))
+    }
+
+    @Test("a syntax error warns")
+    func syntaxErrorWarns() {
+        let warnings = Warnings()
+        _ = Config.load(from: write("{ not json"), warn: warnings.sink)
+        #expect(warnings.lines.count == 1)
+    }
+
+    @Test("a missing file is silent — it is the normal case")
+    func missingFileIsSilent() {
+        let warnings = Warnings()
+        _ = Config.load(from: URL(fileURLWithPath: "/nonexistent/x.json"),
+                        warn: warnings.sink)
+        #expect(warnings.lines.isEmpty)
+    }
+
+    @Test("a valid file is silent")
+    func validFileIsSilent() {
+        let warnings = Warnings()
+        let cfg = Config.load(from: write(#"{"engine":"rules","timeoutMs":2500}"#),
+                              warn: warnings.sink)
+        #expect(cfg.engine == .rules)
+        #expect(warnings.lines.isEmpty)
+    }
+
+    // MARK: - timeoutMs is clamped
+
+    @Test("a zero timeout is clamped and warned about")
+    func zeroTimeoutClamped() {
+        let warnings = Warnings()
+        let cfg = Config.load(from: write(#"{"timeoutMs":0}"#), warn: warnings.sink)
+        // Unclamped, .milliseconds(0) makes the deadline win every race, so
+        // every LLM engine "times out" instantly and formatting is silently off.
+        #expect(cfg.timeoutMs == Config.minimumTimeoutMs)
+        #expect(warnings.lines.count == 1)
+        #expect(warnings.joined.contains("timeoutMs"))
+    }
+
+    @Test("a negative timeout is clamped")
+    func negativeTimeoutClamped() {
+        let warnings = Warnings()
+        let cfg = Config.load(from: write(#"{"timeoutMs":-1}"#), warn: warnings.sink)
+        #expect(cfg.timeoutMs == Config.minimumTimeoutMs)
+        #expect(warnings.lines.count == 1)
+    }
+
+    @Test("a deliberately tight but usable timeout survives")
+    func tightTimeoutKept() {
+        let warnings = Warnings()
+        let cfg = Config.load(from: write(#"{"timeoutMs":50}"#), warn: warnings.sink)
+        #expect(cfg.timeoutMs == 50)
+        #expect(warnings.lines.isEmpty)
+    }
+
     @Test("reads every field")
     func fullFile() {
         let cfg = Config.load(from: write(#"""

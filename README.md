@@ -32,13 +32,27 @@ parrot                                 # run in the foreground (^C to quit)
 parrot setup                           # one-time setup: permissions + model download
 parrot install --launch-at-login       # register a LaunchAgent (background daemon)
 parrot install --uninstall             # remove the LaunchAgent
-parrot doctor                          # check permissions + fn key setting
+parrot doctor                          # check permissions, fn key, on-device formatting
 parrot models list                     # list available models
 parrot models download <id>            # pre-download a model
 parrot --model whisper-large-v3-turbo  # bigger, multilingual, slower first-run
 parrot --hotkey right-option           # change the push-to-talk key
 parrot --no-overlay                    # disable the bottom-of-screen pill
 ```
+
+### Configuration
+
+Optional, at `~/.config/ara/config.json`. Precedence is **CLI flag > config >
+default**, and every key is optional:
+
+```json
+{"hotkey": "right-command", "model": "whisper-base.en",
+ "engine": "local", "timeoutMs": 2500, "mode": "default"}
+```
+
+A value the file gets wrong never stops the daemon: it warns on stderr with a
+`config:` prefix and falls back. A `config:` line means part of the file did not
+take effect.
 
 ## Stack
 

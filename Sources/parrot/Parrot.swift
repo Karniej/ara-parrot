@@ -31,14 +31,19 @@ struct Run: ParsableCommand {
     @Flag(name: .long, help: "Disable the on-screen recording overlay.")
     var noOverlay: Bool = false
 
-    @Option(name: .long, help: "Model id to use. Defaults to the recommended model.")
+    @Option(name: .long,
+            help: "Model id to use. Defaults to config.model, then the recommended model.")
     var model: String?
 
+    // Optional, not defaulted to `.fn`: a default here is indistinguishable at
+    // the use site from the user having asked for Fn, which is what made
+    // `config.hotkey` dead. `nil` means "the user said nothing", and only then
+    // does the config get a say.
     @Option(
         name: .long,
-        help: "Push-to-talk key. One of: \(Hotkey.valueNames). Fn only works on Apple's built-in keyboard."
+        help: "Push-to-talk key. One of: \(Hotkey.valueNames). Defaults to config.hotkey, then fn. Fn only works on Apple's built-in keyboard."
     )
-    var hotkey: Hotkey = .fn
+    var hotkey: Hotkey?
 
     @Option(name: .long, help: "Output mode. One of: verbatim, default, email, chat, code.")
     var mode: String?
@@ -78,20 +83,20 @@ struct Run: ParsableCommand {
             config.mode = ModeRegistry.defaultMode.id
         }
 
+        // CLI flags > config > defaults, for both of these. The rules live in
+        // `StartupResolution` so they are covered by tests; `run()` is not.
+        let chosenHotkey = StartupResolution.hotkey(flag: hotkey, config: config.hotkey)
         let chosenModel: TranscriptionModel
-        if let id = model {
-            guard let m = ModelRegistry.find(id) else {
-                FileHandle.standardError.write(Data("unknown model: \(id)\n".utf8))
-                FileHandle.standardError.write(Data("run `parrot models list` to see options.\n".utf8))
-                throw ExitCode(1)
-            }
+        switch StartupResolution.model(flag: model, config: config.model) {
+        case .chosen(let m):
             chosenModel = m
-        } else {
-            guard let m = ModelRegistry.recommended() else {
-                FileHandle.standardError.write(Data("no models registered\n".utf8))
-                throw ExitCode(1)
-            }
-            chosenModel = m
+        case .unknownFlag(let id):
+            FileHandle.standardError.write(Data("unknown model: \(id)\n".utf8))
+            FileHandle.standardError.write(Data("run `parrot models list` to see options.\n".utf8))
+            throw ExitCode(1)
+        case .noModelsRegistered:
+            FileHandle.standardError.write(Data("no models registered\n".utf8))
+            throw ExitCode(1)
         }
 
         let transcriber = WhisperKitTranscriber(model: chosenModel)
@@ -114,7 +119,7 @@ struct Run: ParsableCommand {
         let app = NSApplication.shared
         app.setActivationPolicy(.accessory)
 
-        let monitor = HotkeyMonitor(hotkey: hotkey, debug: debugHotkey)
+        let monitor = HotkeyMonitor(hotkey: chosenHotkey, debug: debugHotkey)
         let capture = AudioCapture()
         let dumpWav = self.dumpWav
         let overlay: RecordingOverlay? = noOverlay ? nil : MainActor.assumeIsolated { RecordingOverlay() }
@@ -137,7 +142,7 @@ struct Run: ParsableCommand {
             apiKey = Keychain.readPassword(account: cloudConfig.keychainAccount)
         }
 
-        let hotkeyLabel = hotkey.label
+        let hotkeyLabel = chosenHotkey.label
         let startingMode = mode ?? config.mode
         let menuBar = MainActor.assumeIsolated {
             MenuBarController(modelID: chosenModel.id, hotkeyLabel: hotkeyLabel,
@@ -271,7 +276,7 @@ struct Run: ParsableCommand {
         signal(SIGINT, SIG_IGN)
 
         FileHandle.standardError.write(Data(
-            "listening on \(hotkey.label) hold · model: \(chosenModel.id) · ^C to quit\n".utf8
+            "listening on \(chosenHotkey.label) hold · model: \(chosenModel.id) · ^C to quit\n".utf8
         ))
         app.run()
     }
