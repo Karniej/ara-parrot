@@ -1499,11 +1499,16 @@ var localFormatter: Formatter?
 if #available(macOS 26.0, *), FoundationModelsFormatter.isAvailable {
     localFormatter = FoundationModelsFormatter()
 }
+// The keychain read happens ONCE here, at startup, on the CLI's own thread —
+// never inside `format`. `SecItemCopyMatching` raises an unlock or Allow/Deny
+// prompt on a locked or untrusted item and blocks until the user answers; on
+// a cooperative-pool thread that is an unbounded stall of the kind Task 6
+// measured at 9.16s. The binary is unsigned, so the legacy keychain's
+// ACL-by-identity re-prompts after every rebuild — this is not a rare path.
 var cloudFormatter: Formatter?
 if let cloudConfig = config.cloud {
-    cloudFormatter = CloudFormatter(
-        config: cloudConfig,
-        apiKey: { Keychain.readPassword(account: cloudConfig.keychainAccount) })
+    let apiKey = Keychain.readPassword(account: cloudConfig.keychainAccount)
+    cloudFormatter = CloudFormatter(config: cloudConfig, apiKey: apiKey)
 }
 
 let chain = FormatterChain(
