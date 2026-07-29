@@ -222,10 +222,28 @@ public enum Engine: String, Codable, Sendable {
     case local, cloud, rules, off
 }
 
+/// Property defaults are inert for synthesized `Decodable` — they apply only to
+/// the memberwise initialiser. Without the explicit decoder below, a partial
+/// `"cloud": {"model": "..."}` object throws `keyNotFound`, which propagates out
+/// of `Config.init(from:)` and makes `load` discard the *entire* file.
 public struct CloudConfig: Codable, Sendable {
     public var provider: String = "anthropic"
     public var model: String = "claude-opus-5"
     public var keychainAccount: String = "ara-cloud"
+
+    public init() {}
+
+    private enum CodingKeys: String, CodingKey {
+        case provider, model, keychainAccount
+    }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        provider = try c.decodeIfPresent(String.self, forKey: .provider) ?? "anthropic"
+        model = try c.decodeIfPresent(String.self, forKey: .model) ?? "claude-opus-5"
+        keychainAccount = try c.decodeIfPresent(String.self, forKey: .keychainAccount)
+            ?? "ara-cloud"
+    }
 }
 
 /// User configuration. Every field is optional on disk; absent keys keep their

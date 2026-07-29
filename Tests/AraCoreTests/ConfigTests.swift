@@ -42,4 +42,24 @@ struct ConfigTests {
         #expect(cfg.mode == "email")
         #expect(cfg.hotkey == "right-command")
     }
+
+    @Test("a partial cloud object keeps sibling settings and cloud defaults")
+    func partialCloudObject() {
+        let cfg = Config.load(from: write(#"""
+        {"engine":"cloud","timeoutMs":900,"cloud":{"model":"claude-opus-5"}}
+        """#))
+        #expect(cfg.engine == .cloud)
+        #expect(cfg.timeoutMs == 900)
+        #expect(cfg.cloud?.model == "claude-opus-5")
+        #expect(cfg.cloud?.provider == "anthropic")
+        #expect(cfg.cloud?.keychainAccount == "ara-cloud")
+    }
+
+    @Test("an empty cloud object yields all cloud defaults")
+    func emptyCloudObject() {
+        let cfg = Config.load(from: write(#"{"cloud":{}}"#))
+        #expect(cfg.cloud?.provider == "anthropic")
+        #expect(cfg.cloud?.model == "claude-opus-5")
+        #expect(cfg.cloud?.keychainAccount == "ara-cloud")
+    }
 }
