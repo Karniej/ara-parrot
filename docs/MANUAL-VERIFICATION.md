@@ -49,6 +49,7 @@ records a result.
    | `formatting: …` | the chain fell through from one engine to the next |
    | `dictation: …` | the session itself fell back to the raw transcript |
    | `unknown mode in config: …` | the `mode` key in `config.json` names a mode that does not exist; the daemon warns and continues on `default` |
+   | `config: …` | the config file was ignored, or a value in it was out of range. **Any line starting `config:` means part of your file did not take effect** |
 
 ## 1. Verbatim mode does no rewriting
 
@@ -71,7 +72,9 @@ records a result.
       *rule-based* result instead — filler removed, no capitalisation — plus one
       `formatting: local formatter failed (engine unavailable); falling back`
       line, or no `formatting:` line at all if no local engine was constructed.
-      Both are correct behaviour; note which you saw.
+      Both are correct behaviour; note which you saw. When there is no
+      `formatting:` line, `parrot doctor` is where the explanation lives — see
+      5e, which is the only place this state is reported.
 
 ## 3. Adversarial: the transcript is data, not a question
 
@@ -104,10 +107,12 @@ exists.
 - [ ] 👤 **4a.** With every engine off — `--mode default` and an
       `~/.config/ara/config.json` containing `{"engine": "rules"}` — dictate
       anything. Text must still appear.
-- [ ] 👤 **4b.** Set `{"engine": "local", "timeoutMs": 1}`. The deadline will
+- [ ] 👤 **4b.** Set `{"engine": "local", "timeoutMs": 50}`. The deadline will
       fire before any model can answer. Text must still appear (rule-based), and
       the log must show `formatting: local formatter failed (timed out); falling
-      back` — once per utterance, not repeatedly.
+      back` — once per utterance, not repeatedly. (50 is the floor; `timeoutMs: 1`
+      is clamped up to it with a `config:` warning, because a value at or below
+      zero would disable LLM formatting entirely and silently.)
 - [ ] 👤 **4c.** Set `{"engine": "off"}`. The transcript must be injected exactly
       as transcribed, filler words included, and no `↦` line should appear.
 - [ ] **4d.** Set `{"mode": "emial"}` (a typo). The daemon must **start**, print
@@ -116,6 +121,73 @@ exists.
       `--mode emial`, which exits 1: a flag the user just typed is worth
       rejecting, a config file is not worth refusing to run over. No microphone
       needed for this one; the warning appears at startup.
+- [ ] **4e. A malformed config is loud, not silent.** Set
+      `{"engine": "clod", "cloud": {"provider": "anthropic"}}` — one invalid
+      value, everything else fine. The daemon must **start** and print a single
+      line naming the file, the key and the bad value, e.g.
+      `config: ignoring …/config.json: at engine: Cannot initialize Engine from
+      invalid String value clod; using defaults`. The **whole file** is then
+      ignored, including the valid `cloud` section — that is why the warning has
+      to exist. Before this warning, the same typo produced no output at all and
+      the user's cloud configuration silently did nothing.
+      Repeat with `{"timeoutMs": "2500"}` (a string, not a number) and with a
+      truncated file such as `{ "engine":` — each must produce exactly one
+      `config:` line and a working daemon.
+
+## 4bis. The hotkey: where it comes from, and its edges
+
+**This is a regression test.** Both keys decoded, were documented in the spec,
+and were read by nothing: a user who configured `right-command` got Fn, which is
+the key that does not work on their non-Apple keyboard. Precedence is
+**CLI flag > config > default**.
+
+- [ ] 👤 **4f.** Put `{"hotkey": "right-command"}` in `~/.config/ara/config.json`
+      and start with **no** `--hotkey` flag. The startup line must read
+      `listening on right ⌘ hold`, the menu bar must show the same, and holding
+      right-command must start recording. Holding Fn must do nothing.
+- [ ] 👤 **4g.** With that config still in place, start with
+      `--hotkey right-shift`. The flag must win: `listening on right ⇧ hold`.
+- [ ] **4h.** Set `{"hotkey": "right-meta"}` (not a real key). The daemon must
+      **start** on Fn and print `config: unknown hotkey in config: right-meta —
+      using fn` followed by the list of valid names. It must not exit.
+- [ ] **4i.** Set `{"model": "whisper-small.en"}` with no `--model` flag. The
+      startup line must read `model: whisper-small.en` (it will download on
+      first use). Then set `{"model": "whisper-enormous"}`: the daemon must warn
+      `config: unknown model in config: whisper-enormous — using the recommended
+      model` and start on `whisper-base.en`. Contrast with
+      `--model whisper-enormous`, which exits 1.
+
+### Both keys of the pair held at once
+
+`CGEventFlags` carries one bit per modifier *class*, so with left-shift already
+down the release of right-shift still reports "shift is held". The daemon now
+learns each key's `NX_DEVICE*KEYMASK` bit at the moment it goes down and watches
+*that* bit instead. The learning is what makes it portable — the right control
+key on this machine reports the bit IOKit documents for the *left* one — but it
+also means the behaviour depends on the keyboard, so it has to be checked on
+real hardware. The logic is unit-tested against captured flag values; what is
+unverified is that a physical keyboard produces those values.
+
+- [ ] 👤 **4j.** Start with `--hotkey right-shift`. Hold **left**-shift down and
+      keep it down. Now press and release **right**-shift. Recording must start
+      on the press and **stop on the release** — `● recording` followed by
+      `○ captured …` while left-shift is still held. Before this fix, the release
+      was swallowed and the daemon kept recording until right-shift was tapped
+      again.
+- [ ] 👤 **4k.** The reverse order: hold right-shift (recording starts), press
+      and release left-shift a few times, then release right-shift. Exactly one
+      `○ captured` line, at the right-shift release — the sibling key must
+      neither start nor stop anything.
+- [ ] 👤 **4l.** Repeat 4j with `--hotkey right-command` against left-command,
+      and with `--hotkey right-control` against left-control. **Record the
+      result per pair.** Control is the pair most likely to still fail: if both
+      control keys report the same device bit there is nothing in the event to
+      tell them apart, and the release stays swallowed. That is a documented
+      limitation, not a new bug — but it is worth knowing which pairs are safe
+      on this keyboard.
+- [ ] 👤 **4m.** With `--debug-hotkey`, capture the `flags=` values for each key
+      you tested and record them next to the results above. They are the
+      evidence for whichever conclusion 4l reaches.
 
 ## 5. ⚙️ On-device formatting — **never executed on this machine**
 
@@ -140,7 +212,23 @@ usable).
       most once per utterance.
 - [ ] ⚙️👤 **5d.** Dictate something a safety classifier is likely to decline.
       Confirm the fallback text is injected and the log says `model refused the
-      rewrite` rather than a transport error.
+      rewrite` rather than a transport error. It must **not** quote your
+      transcript back: `GenerationError` carries a framework-written context
+      string that a guardrail violation can populate from the offending input,
+      and the daemon renders only its own fixed phrases. Anything resembling
+      what you just said appearing on that line is a leak.
+- [ ] **5e. `doctor` explains the silence.** Run `./.build/release/parrot doctor`
+      with Apple Intelligence **off**. It must print a line like
+      `! on-device formatting: Apple Intelligence is turned off` with a
+      remediation pointing at System Settings — and it must be a **warning**,
+      not a failure: the command's other checks decide the exit code, and
+      `parrot run` must still start. This is the only place the state is
+      surfaced; with the model unavailable there is no local engine in the chain
+      at all, so there is not even a fall-through line to read (see 2b).
+      With Apple Intelligence **on**, the same line must read `✓ on-device
+      formatting: ok`. On a Mac ineligible for Apple Intelligence, expect the
+      reason `this Mac is not eligible for Apple Intelligence`; while the model
+      downloads, expect `the on-device model is not ready yet`.
 
 ## 6. 🔑 Cloud formatting — **no live request has ever been made**
 
@@ -185,6 +273,25 @@ Requires: a real Anthropic API key, and it will spend money.
       log must read `transport failure: URLError ... (no internet connection)`.
 - [ ] 🔑 **6f.** Confirm the key is **not** in `~/.config/ara/config.json`:
       `grep -i 'sk-' ~/.config/ara/config.json` must find nothing.
+- [ ] 🔑 **6g. Credential hygiene, measured rather than assumed.** The key never
+      being logged is a property several deliberate decisions exist to protect —
+      the status-code-only rendering of HTTP errors, the literals-only
+      `URLError` summariser, the refusal to follow redirects — and none of them
+      is observable without this check. After exercising 6c through 6e, run:
+
+      ```sh
+      grep -c 'sk-ant' /tmp/ara-verify.log
+      ```
+
+      It must print `0`. Then force the failure paths and check again: an
+      invalid key (expect `HTTP 401`), a nonexistent model id (expect
+      `HTTP 404`), and Wi-Fi off (expect a `URLError` line). Each must produce a
+      log line with **no** response body and no key. Also confirm nothing leaked
+      into the shell's own history if you typed the key on a command line:
+      `grep -c 'sk-ant' ~/.zsh_history`.
+- [ ] 🔑 **6h.** Repeat the same grep against the *daemon's* full output, not
+      only the tee'd file, if you run it under a supervisor that captures
+      stderr separately.
 
 ## 7. 🔑 The keychain is read once, at startup, and never on the dictation path
 
@@ -249,6 +356,33 @@ triggered by hand today.
       `⨯ … cancelled; nothing injected` rather than an `↦` line with nothing
       after it.
 
+## 9bis. Injection into fields that resist it
+
+`TextInjector` synthesises `CGEventKeyboardSetUnicodeString` events, and its own
+doc comment names the constraint: "some Electron apps and secure password fields
+can drop characters". Nothing in the code detects that, and nothing in it can —
+the API reports success either way. The failure is partial text at the cursor,
+which for a password field means a **wrong** password rather than an obvious
+error, so this needs to be a known state rather than a surprise.
+
+- [ ] 👤 **9b.** Focus a **secure input** field — the login field in Keychain
+      Access, a `sudo` prompt in Terminal, or a website's password box — and
+      dictate a short phrase. Record exactly what happened: nothing typed, part
+      of it typed, or all of it. Any of the three is possible; the point is to
+      know which.
+- [ ] 👤 **9c.** While that secure field has focus, check whether the **hotkey
+      itself** still works. macOS's secure input mode can take the keyboard away
+      from the event tap entirely, in which case the daemon will not even start
+      recording. Note whether `● recording` appears.
+- [ ] 👤 **9d.** Repeat 9b in an Electron app (VS Code, Slack, Discord) with a
+      longer sentence, ~40 characters or more, since injection is chunked at 20
+      UTF-16 units and dropped characters tend to appear at chunk boundaries.
+      Compare the injected text against the `↦` line in the log character for
+      character — the log is the ground truth for what was *sent*.
+- [ ] 👤 **9e.** If characters are dropped anywhere, record the app, the exact
+      text sent and the text received. That is the input any future fix (paste
+      via the clipboard, a slower per-chunk cadence) has to be designed against.
+
 ## 10. Judgement calls to make with real dictation
 
 These are not pass/fail; they need a human's ear over a few days of real use.
@@ -265,15 +399,21 @@ These are not pass/fail; they need a human's ear over a few days of real use.
 
 ## What is already covered by `swift test` — do not re-verify by hand
 
-✅ Chain ordering per engine; the per-engine deadline and abandonment of a
-thread-blocking engine; cancellation propagation, including from a formatter
-that cannot observe cancellation; the rule-based floor surviving a broken
-formatter; `OutputGuard`'s ratio, duplication and refusal checks; prompt
-wrapping and tag escaping; `CloudFormatter` response handling (refusal,
-truncation, non-200, redirect refusal, error-body suppression) against a stubbed
-transport; `Config` decoding with missing and malformed keys; mode resolution
-precedence; and that the pipeline the daemon assembles honours `engine`,
-`timeoutMs`, `mode`, and the cloud account and key.
+✅ Chain ordering per engine; the per-formatter deadline — including on the
+rule-based floor — and abandonment of a thread-blocking engine; cancellation
+propagation, including from a formatter that cannot observe cancellation; the
+rule-based floor surviving a broken formatter; `OutputGuard`'s ratio,
+duplication and refusal checks, including refusals written with a curly
+apostrophe; prompt wrapping and tag escaping; that neither engine's error
+rendering can carry a payload out of the framework or the network into a log
+line; `CloudFormatter` response handling (refusal, truncation, non-200, redirect
+refusal, error-body suppression) against a stubbed transport; `Config` decoding
+with missing, malformed and out-of-range values, and the warning each produces;
+`hotkey`/`model` precedence between flag, config and default; the press/release
+edge logic for a modifier whose sibling is held, against captured flag values;
+that `doctor` reports on-device formatting as a warning rather than a failure;
+mode resolution precedence; and that the pipeline the daemon assembles honours
+`engine`, `timeoutMs`, `mode`, and the cloud account and key.
 
 Not covered by any test, and not coverable: `Run`'s three lines of glue —
 transcribe, `process`, inject — which sections 1 through 4 above exist to check.
