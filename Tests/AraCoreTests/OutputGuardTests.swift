@@ -33,6 +33,43 @@ struct OutputGuardTests {
     @Test("short inputs only bound expansion")
     func shortInputs() {
         #expect(OutputGuard.isPlausible(input: "ok", output: "OK."))
-        #expect(!OutputGuard.isPlausible(input: "ok", output: "Okay, sure, absolutely, yes."))
+        #expect(!OutputGuard.isPlausible(
+            input: "ok",
+            output: "Okay, sure, absolutely, yes, of course, no problem, I will get right on that immediately without any further delay whatsoever today."))
+    }
+
+    @Test("accepts a polite email expansion")
+    func acceptsEmailExpansion() {
+        #expect(OutputGuard.isPlausible(
+            input: "hey can you send me the file",
+            output: "Hi, could you please send me the file when you get a chance? Thanks so much."))
+    }
+
+    @Test("accepts a terse note expanded into a sentence")
+    func acceptsTerseExpansion() {
+        #expect(OutputGuard.isPlausible(
+            input: "reminder meeting 3pm",
+            output: "Reminder: the meeting is at 3pm this afternoon, please don't be late."))
+    }
+
+    @Test("rejects verbatim duplication")
+    func rejectsDuplication() {
+        #expect(!OutputGuard.isPlausible(
+            input: "send the report to bob",
+            output: "send the report to bob send the report to bob"))
+    }
+
+    @Test("rejects a refusal")
+    func rejectsRefusal() {
+        #expect(!OutputGuard.isPlausible(
+            input: "please send the quarterly report to bob by end of day",
+            output: "I can't help with formatting that request right now"))
+    }
+
+    @Test("does not mistake dictated refusal wording for a model refusal")
+    func allowsUserSayingCant() {
+        #expect(OutputGuard.isPlausible(
+            input: "i can't make thursday can we move it",
+            output: "I can't make Thursday. Can we move it?"))
     }
 }
