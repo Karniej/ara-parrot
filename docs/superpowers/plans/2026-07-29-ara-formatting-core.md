@@ -68,7 +68,17 @@ let package = Package(
                 .product(name: "WhisperKit", package: "WhisperKit"),
             ]
         ),
-        .executableTarget(name: "parrot", dependencies: ["AraCore"]),
+        .executableTarget(
+            name: "parrot",
+            dependencies: [
+                "AraCore",
+                // Parrot.swift imports ArgumentParser directly. Without this it
+                // still builds — SwiftPM puts every module in one search path —
+                // but the dependency is undeclared and an explicit-modules
+                // toolchain would break it.
+                .product(name: "ArgumentParser", package: "swift-argument-parser"),
+            ]
+        ),
         .testTarget(name: "AraCoreTests", dependencies: ["AraCore"]),
     ]
 )

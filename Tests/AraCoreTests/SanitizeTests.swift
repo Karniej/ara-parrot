@@ -25,4 +25,16 @@ struct SanitizeTests {
     func leavesSpeechAlone() {
         #expect(WhisperKitTranscriber.sanitize("one, two, three.") == "one, two, three.")
     }
+
+    @Test("replaces tokens with a separator, not nothing")
+    func replacesWithSeparator() {
+        #expect(WhisperKitTranscriber.sanitize("a[X]b") == "a b")
+    }
+
+    @Test("known limitation: parenthesised speech is dropped")
+    func dropsParentheticalSpeech() {
+        // Upstream behaviour, pinned deliberately: the (silence)/(music) filter
+        // cannot distinguish non-speech markers from real parenthesised words.
+        #expect(WhisperKitTranscriber.sanitize("call me (later) today") == "call me today")
+    }
 }

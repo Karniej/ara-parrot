@@ -16,7 +16,13 @@ let package = Package(
                 .product(name: "WhisperKit", package: "WhisperKit"),
             ]
         ),
-        .executableTarget(name: "parrot", dependencies: ["AraCore"]),
+        .executableTarget(
+            name: "parrot",
+            dependencies: [
+                "AraCore",
+                .product(name: "ArgumentParser", package: "swift-argument-parser"),
+            ]
+        ),
         .testTarget(name: "AraCoreTests", dependencies: ["AraCore"]),
     ]
 )

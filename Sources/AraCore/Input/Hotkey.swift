@@ -18,7 +18,7 @@ public enum Hotkey: String, CaseIterable, ExpressibleByArgument {
     case rightShift = "right-shift"
 
     /// The modifier bit macOS sets while the key is held.
-    public var mask: CGEventFlags {
+    var mask: CGEventFlags {
         switch self {
         case .fn: return .maskSecondaryFn
         case .leftOption, .rightOption: return .maskAlternate
@@ -30,7 +30,7 @@ public enum Hotkey: String, CaseIterable, ExpressibleByArgument {
 
     /// Keycode carried by the `flagsChanged` event, used to disambiguate the
     /// left and right variants. `nil` means match on `mask` alone.
-    public var keyCode: Int64? {
+    var keyCode: Int64? {
         switch self {
         case .fn: return nil
         case .rightCommand: return 54

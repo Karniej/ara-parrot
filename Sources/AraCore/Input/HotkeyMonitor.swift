@@ -8,7 +8,7 @@ import Foundation
 /// will see an error from `start()`.
 public final class HotkeyMonitor {
     public enum Event { case pressed, released }
-    public enum HotkeyError: Error { case tapCreateFailed }
+    enum HotkeyError: Error { case tapCreateFailed }
 
     /// The modifier we treat as the hotkey. Defaults to Fn.
     private let hotkey: Hotkey

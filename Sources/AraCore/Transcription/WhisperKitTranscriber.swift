@@ -2,7 +2,7 @@ import Foundation
 import WhisperKit
 
 public actor WhisperKitTranscriber: Transcriber {
-    public let modelID: String
+    let modelID: String
     private let model: TranscriptionModel
     private var pipeline: WhisperKit?
 
