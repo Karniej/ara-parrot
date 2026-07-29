@@ -17,6 +17,21 @@ private actor ModeRecorder {
     func record(_ id: String) { seen = id }
 }
 
+/// A one-shot latch, so an interleaving can be stated rather than raced for.
+/// Polls instead of sleeping a fixed interval: a wait long enough to be reliable
+/// would be slow, and one short enough to be quick would be flaky.
+private actor Gate {
+    private var isOpen = false
+    func open() { isOpen = true }
+
+    func wait(upTo limit: Duration) async {
+        let deadline = ContinuousClock.now + limit
+        while !isOpen, ContinuousClock.now < deadline {
+            try? await Task.sleep(for: .milliseconds(5))
+        }
+    }
+}
+
 /// Records what a `@Sendable` callback was handed, from any executor.
 private final class Box<T: Sendable>: @unchecked Sendable {
     private let lock = NSLock()
@@ -31,12 +46,10 @@ struct DictationSessionTests {
                                 defaultID: "default")
 
     private func session(_ formatter: any AraCore.Formatter,
-                         frontmost: @escaping @Sendable () -> String? = { nil },
                          onModeResolved: (@Sendable (Mode) -> Void)? = nil)
         -> DictationSession
     {
         DictationSession(formatter: formatter, resolver: resolver,
-                         frontmostBundleID: frontmost,
                          onModeResolved: onModeResolved)
     }
 
@@ -45,7 +58,7 @@ struct DictationSessionTests {
     @Test("returns formatted text on success")
     func happyPath() async {
         let out = await session(RuleBasedFormatter())
-            .process("um hello there friend", override: nil, manual: nil)
+            .process("um hello there friend", override: nil, manual: nil, frontmostBundleID: nil)
         #expect(out == "hello there friend")
     }
 
@@ -55,7 +68,7 @@ struct DictationSessionTests {
             throw FormatterError.transportFailure("boom")
         })
         let raw = "this must survive a formatter failure"
-        #expect(await session.process(raw, override: nil, manual: nil) == raw)
+        #expect(await session.process(raw, override: nil, manual: nil, frontmostBundleID: nil) == raw)
     }
 
     /// `Formatter` forbids an empty result for non-empty input, and nothing
@@ -66,13 +79,13 @@ struct DictationSessionTests {
     func emptyResultFallsBack() async {
         let session = session(StubFormatter { _, _ in "" })
         let raw = "this must not be erased by a broken formatter"
-        #expect(await session.process(raw, override: nil, manual: nil) == raw)
+        #expect(await session.process(raw, override: nil, manual: nil, frontmostBundleID: nil) == raw)
     }
 
     @Test("empty input stays empty")
     func emptyInput() async {
         #expect(await session(RuleBasedFormatter())
-            .process("", override: nil, manual: nil) == "")
+            .process("", override: nil, manual: nil, frontmostBundleID: nil) == "")
     }
 
     // MARK: - Mode selection
@@ -84,9 +97,9 @@ struct DictationSessionTests {
             StubFormatter { text, mode in
                 await recorder.record(mode.id)
                 return text
-            },
-            frontmost: { "com.apple.mail" })
-        _ = await session.process("hello there friend", override: nil, manual: nil)
+            })
+        _ = await session.process("hello there friend", override: nil, manual: nil,
+                                  frontmostBundleID: "com.apple.mail")
         #expect(await recorder.seen == "email")
     }
 
@@ -97,9 +110,9 @@ struct DictationSessionTests {
             StubFormatter { text, mode in
                 await recorder.record(mode.id)
                 return text
-            },
-            frontmost: { "com.apple.mail" })
-        _ = await session.process("hello there friend", override: "chat", manual: nil)
+            })
+        _ = await session.process("hello there friend", override: "chat", manual: nil,
+                                  frontmostBundleID: "com.apple.mail")
         #expect(await recorder.seen == "chat")
     }
 
@@ -109,10 +122,47 @@ struct DictationSessionTests {
     func reportsResolvedMode() async {
         let reported = Box<String>()
         let session = session(RuleBasedFormatter(),
-                              frontmost: { "com.tinyspeck.slackmacgap" },
                               onModeResolved: { reported.set($0.id) })
-        _ = await session.process("hello there friend", override: nil, manual: nil)
+        _ = await session.process("hello there friend", override: nil, manual: nil,
+                                  frontmostBundleID: "com.tinyspeck.slackmacgap")
         #expect(reported.current == "chat")
+    }
+
+    /// The failure this parameter exists to make impossible.
+    ///
+    /// `process` runs seconds after the hotkey was released, once transcription
+    /// has finished, so a user who starts a second utterance before the first
+    /// comes back has two formatting calls in flight at once. When the frontmost
+    /// application was a single slot the session read at format time, the second
+    /// utterance's sample overwrote the first's and the first was formatted in
+    /// the wrong mode — speech dictated into Mail arriving as a code-mode
+    /// rewrite. No text was lost, which is why nothing else in the suite caught
+    /// it.
+    ///
+    /// The overlap here is not a race left to timing: utterance one is held
+    /// inside `format` until utterance two has run to completion, so the
+    /// interleaving is the same on every run and on every machine.
+    @Test("interleaved utterances each keep their own frontmost sample")
+    func interleavedUtterancesKeepTheirOwnSample() async {
+        let secondFinished = Gate()
+        let session = session(StubFormatter { text, mode in
+            if text.hasPrefix("first") {
+                await secondFinished.wait(upTo: .seconds(5))
+            } else {
+                await secondFinished.open()
+            }
+            return "mode \(mode.id) for \(text)"
+        })
+
+        async let first = session.process(
+            "first utterance spoken here", override: nil, manual: nil,
+            frontmostBundleID: "com.apple.mail")
+        async let second = session.process(
+            "second utterance spoken here", override: nil, manual: nil,
+            frontmostBundleID: "com.apple.dt.Xcode")
+
+        #expect(await first == "mode email for first utterance spoken here")
+        #expect(await second == "mode code for second utterance spoken here")
     }
 
     // MARK: - Cancellation
@@ -127,7 +177,7 @@ struct DictationSessionTests {
             return "never"
         })
         let running = Task {
-            await session.process("hello there friend", override: nil, manual: nil)
+            await session.process("hello there friend", override: nil, manual: nil, frontmostBundleID: nil)
         }
         try await Task.sleep(for: .milliseconds(50))
         running.cancel()
@@ -146,7 +196,7 @@ struct DictationSessionTests {
             return "CLEANED"
         })
         let running = Task {
-            await session.process("hello there friend", override: nil, manual: nil)
+            await session.process("hello there friend", override: nil, manual: nil, frontmostBundleID: nil)
         }
         try await Task.sleep(for: .milliseconds(50))
         running.cancel()
@@ -162,7 +212,7 @@ struct DictationSessionTests {
     func strayCancellationKeepsTranscript() async {
         let session = session(StubFormatter { _, _ in throw CancellationError() })
         let raw = "hello there friend"
-        #expect(await session.process(raw, override: nil, manual: nil) == raw)
+        #expect(await session.process(raw, override: nil, manual: nil, frontmostBundleID: nil) == raw)
         #expect(!Task.isCancelled)
     }
 
@@ -177,7 +227,8 @@ struct DictationSessionTests {
         let running = Task { () async -> String in
             while !Task.isCancelled { await Task.yield() }
             return await session.process("hello there friend",
-                                         override: nil, manual: nil)
+                                         override: nil, manual: nil,
+                                         frontmostBundleID: nil)
         }
         running.cancel()
         #expect(await running.value == "")

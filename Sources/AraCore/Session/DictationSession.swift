@@ -53,33 +53,20 @@ import Foundation
 public actor DictationSession {
     private let formatter: any Formatter
     private let resolver: ModeResolver
-    private let frontmostBundleID: @Sendable () -> String?
     private let onModeResolved: (@Sendable (Mode) -> Void)?
 
     /// - Parameters:
     ///   - formatter: The formatting pipeline. Production passes
     ///     `FormatterChain`; the guarantees above hold for any implementation.
     ///   - resolver: Decides which mode an utterance is formatted in.
-    ///   - frontmostBundleID: Reads the bundle identifier of the app the user is
-    ///     dictating into.
-    ///
-    ///     **It must not block and must not assert an actor context.** It is
-    ///     called from this actor's executor, so a `MainActor.assumeIsolated`
-    ///     around an AppKit read traps the process rather than hopping to the
-    ///     main thread, and a `DispatchQueue.main.sync` would park a
-    ///     cooperative-pool thread on the main run loop. `FrontmostApp.reader`
-    ///     is the supported implementation: a lock-protected read of a value
-    ///     captured on the main actor when the hotkey was released.
     ///   - onModeResolved: Notified with the resolved mode before formatting
     ///     starts, so a UI can show which mode an utterance was treated as.
-    ///     Called from this actor's executor: it must not block either.
+    ///     Called from this actor's executor: it must not block.
     public init(formatter: any Formatter,
                 resolver: ModeResolver,
-                frontmostBundleID: @escaping @Sendable () -> String?,
                 onModeResolved: (@Sendable (Mode) -> Void)? = nil) {
         self.formatter = formatter
         self.resolver = resolver
-        self.frontmostBundleID = frontmostBundleID
         self.onModeResolved = onModeResolved
     }
 
@@ -88,15 +75,28 @@ public actor DictationSession {
     /// Returns the raw transcript on any formatting failure, and `""` when
     /// there is nothing to type — an empty transcript, or a request the caller
     /// cancelled. Never throws.
-    public func process(_ raw: String, override: String?,
-                        manual: String?) async -> String {
+    ///
+    /// - Parameter frontmostBundleID: The application this utterance was spoken
+    ///   into, **sampled by the caller when the user stopped speaking**.
+    ///
+    ///   A value per call rather than something the session reads for itself,
+    ///   and that is the point. This method runs seconds after the hotkey was
+    ///   released, once transcription has finished, so anything read here is the
+    ///   state of the world *now* — which for a user who has already started
+    ///   their next utterance is the wrong application. Two calls in flight at
+    ///   once must resolve two different modes, and only a value carried
+    ///   alongside its own transcript can do that. `FrontmostApp.bundleID` is
+    ///   what production samples; see it for why the read cannot happen from
+    ///   this actor at all.
+    public func process(_ raw: String, override: String?, manual: String?,
+                        frontmostBundleID: String?) async -> String {
         guard !raw.isEmpty else { return raw }
         // Nothing to inject for a request that was already withdrawn, and no
         // reason to spend an inference on it either.
         if Task.isCancelled { return "" }
 
         let mode = resolver.resolve(override: override, manual: manual,
-                                    frontmostBundleID: frontmostBundleID())
+                                    frontmostBundleID: frontmostBundleID)
         onModeResolved?(mode)
 
         do {

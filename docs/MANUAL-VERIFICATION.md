@@ -38,10 +38,17 @@ records a result.
    ./.build/release/parrot run --hotkey right-command --mode verbatim 2>&1 | tee /tmp/ara-verify.log
    ```
 
-   Throughout: `→` lines are the raw transcript with the transcription time.
-   `↦` lines are the formatted text with the total time, and appear **only when
-   formatting changed something**. `formatting:` lines are engine fall-throughs.
-   `dictation:` lines mean the session itself fell back to raw text.
+   Throughout, the log lines mean:
+
+   | Line | Meaning |
+   | --- | --- |
+   | `○ captured …` | audio was recorded |
+   | `→ <time> · <text>` | the raw transcript, with the transcription time |
+   | `↦ <time> · <text>` | the formatted text with the total time. Appears **only when formatting produced something and changed it** — identical text and cancelled requests both stay silent here |
+   | `⨯ <time> · cancelled; nothing injected` | the request was withdrawn mid-format and nothing was typed. Unreachable today (see section 9) |
+   | `formatting: …` | the chain fell through from one engine to the next |
+   | `dictation: …` | the session itself fell back to the raw transcript |
+   | `unknown mode in config: …` | the `mode` key in `config.json` names a mode that does not exist; the daemon warns and continues on `default` |
 
 ## 1. Verbatim mode does no rewriting
 
@@ -103,6 +110,12 @@ exists.
       back` — once per utterance, not repeatedly.
 - [ ] 👤 **4c.** Set `{"engine": "off"}`. The transcript must be injected exactly
       as transcribed, filler words included, and no `↦` line should appear.
+- [ ] **4d.** Set `{"mode": "emial"}` (a typo). The daemon must **start**, print
+      `unknown mode in config: emial — using default`, and show `mode: default`
+      in the menu bar — not the typo, and not an exit. Contrast with
+      `--mode emial`, which exits 1: a flag the user just typed is worth
+      rejecting, a config file is not worth refusing to run over. No microphone
+      needed for this one; the warning appears at startup.
 
 ## 5. ⚙️ On-device formatting — **never executed on this machine**
 
@@ -212,6 +225,15 @@ multi-second freeze rather than an error.
       whichever app is frontmost at release is the one that should be reported.
       Record what actually happened; this is the one ordering the implementation
       chose deliberately and it has never been observed.
+- [ ] 👤 **8g. Overlapping utterances.** Focus Mail, dictate a long sentence, and
+      **immediately start a second utterance in Xcode without waiting for the
+      first to appear**. Each utterance must be formatted for the app it was
+      spoken into: the Mail text must not come back as a code-mode rewrite. The
+      frontmost application is sampled at each release and carried with that
+      utterance's transcript, so crossing them is not possible by construction;
+      this step confirms it end to end. The menu-bar label shows whichever
+      utterance resolved most recently and is expected to flicker — the label is
+      not the thing under test here, the injected text is.
 
 ## 9. Cancellation
 
@@ -221,9 +243,11 @@ request yields nothing to inject, and nothing is typed), but it cannot be
 triggered by hand today.
 
 - [ ] 👤 **9.** Confirm the negative: pressing the hotkey again while a previous
-      utterance is still transcribing must not lose or duplicate text. If a
-      cancel gesture is added later, re-verify that a cancelled request types
-      **nothing** rather than raw text.
+      utterance is still transcribing must not lose or duplicate text (see also
+      8g). If a cancel gesture is added later, re-verify that a cancelled request
+      types **nothing** rather than raw text, and that the log shows
+      `⨯ … cancelled; nothing injected` rather than an `↦` line with nothing
+      after it.
 
 ## 10. Judgement calls to make with real dictation
 

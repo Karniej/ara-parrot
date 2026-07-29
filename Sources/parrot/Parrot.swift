@@ -56,13 +56,26 @@ struct Run: ParsableCommand {
 
         // Configuration and argument validation ahead of the model warm-up, so
         // `--mode typo` fails in milliseconds rather than after a model download.
-        let config = Config.load()
+        var config = Config.load()
         let registry = ModeRegistry(userModes: [])
+        let knownModes = registry.all.map(\.id).joined(separator: ", ")
+        // A bad flag is a mistake the user just made and can retype, so it is
+        // fatal. A bad `mode` key in config.json is not: exiting would leave the
+        // daemon unusable until a file is edited, over something the resolver
+        // already degrades from safely. Warn and continue — but *explicitly*, so
+        // the menu bar does not advertise a mode that does not exist and the
+        // silent degradation in `ModeResolver` never has to happen.
         if let mode, registry.mode(id: mode) == nil {
             FileHandle.standardError.write(Data("unknown mode: \(mode)\n".utf8))
-            let known = registry.all.map(\.id).joined(separator: ", ")
-            FileHandle.standardError.write(Data("known modes: \(known)\n".utf8))
+            FileHandle.standardError.write(Data("known modes: \(knownModes)\n".utf8))
             throw ExitCode(1)
+        }
+        if registry.mode(id: config.mode) == nil {
+            let warning = "unknown mode in config: \(config.mode) — using "
+                + "\(ModeRegistry.defaultMode.id)\n"
+            FileHandle.standardError.write(Data(warning.utf8))
+            FileHandle.standardError.write(Data("known modes: \(knownModes)\n".utf8))
+            config.mode = ModeRegistry.defaultMode.id
         }
 
         let chosenModel: TranscriptionModel
@@ -131,19 +144,12 @@ struct Run: ParsableCommand {
                               modeID: startingMode)
         }
 
-        // Sampled on the main actor at each hotkey release and read back from
-        // the session's actor. See `FrontmostApp` for why reading NSWorkspace
-        // from the session directly is a trap rather than a hop.
-        let frontmost = FrontmostApp()
-        MainActor.assumeIsolated { frontmost.capture() }
-
         let modeOverride = mode
         let session = Pipeline.makeSession(
             config: config,
             apiKey: apiKey,
             local: Pipeline.localFormatter(),
             registry: registry,
-            frontmostBundleID: frontmost.reader,
             onModeResolved: { resolved in
                 Task { @MainActor in menuBar.setMode(resolved.id) }
             })
@@ -164,13 +170,16 @@ struct Run: ParsableCommand {
                     }
                 case .released:
                     let samples = capture.stop()
-                    MainActor.assumeIsolated {
-                        // Sampled here, on the main thread, while it is still
-                        // true: this is the app the user was dictating into,
-                        // before transcription gives them time to switch away.
-                        frontmost.capture()
+                    // Sampled here — on the main thread, where the AppKit read
+                    // is legal — and then carried by value into this utterance's
+                    // task. Not read later from a shared slot: formatting starts
+                    // seconds from now, and by then a user who has begun their
+                    // next utterance would have moved the answer on.
+                    let frontmostBundleID: String? = MainActor.assumeIsolated {
+                        let id = FrontmostApp.bundleID
                         overlay?.show(.transcribing)
                         menuBar.setTranscribing()
+                        return id
                     }
                     let seconds = Double(samples.count) / AudioCapture.targetSampleRate
                     let rms = computeRMS(samples)
@@ -205,9 +214,20 @@ struct Run: ParsableCommand {
                             // returns a String and cannot fail, so a broken
                             // formatter can only ever degrade to raw text.
                             let cleaned = await session.process(
-                                text, override: modeOverride, manual: nil)
-                            if cleaned != text {
-                                let total = Date().timeIntervalSince(started)
+                                text, override: modeOverride, manual: nil,
+                                frontmostBundleID: frontmostBundleID)
+                            let total = Date().timeIntervalSince(started)
+                            if cleaned.isEmpty, !text.isEmpty {
+                                // An empty result for a non-empty transcript is
+                                // `process`'s report that the request was
+                                // withdrawn. Logged as its own thing: an `↦`
+                                // line with nothing after it would read as "the
+                                // formatter deleted your sentence".
+                                FileHandle.standardError.write(Data(
+                                    String(format: "⨯ %.2fs · cancelled; nothing injected\n",
+                                           total).utf8
+                                ))
+                            } else if !cleaned.isEmpty, cleaned != text {
                                 FileHandle.standardError.write(Data(
                                     String(format: "↦ %.2fs · %@\n", total, cleaned).utf8
                                 ))

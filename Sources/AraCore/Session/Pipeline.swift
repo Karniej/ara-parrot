@@ -56,11 +56,14 @@ public enum Pipeline {
     ///     rather than being dropped on the floor, since every other observable
     ///     outcome of a cloud misconfiguration looks identical to having no
     ///     cloud formatter at all.
-    public static func makeChain(config: Config,
-                                 apiKey: String?,
-                                 local: (any Formatter)?,
-                                 rules: any Formatter = RuleBasedFormatter(),
-                                 cloudTransport: CloudFormatter.Transport? = nil)
+    ///
+    /// Internal rather than public: the executable builds a session, never a
+    /// bare chain, and only the tests reach for this directly.
+    static func makeChain(config: Config,
+                          apiKey: String?,
+                          local: (any Formatter)?,
+                          rules: any Formatter = RuleBasedFormatter(),
+                          cloudTransport: CloudFormatter.Transport? = nil)
         -> FormatterChain
     {
         var cloud: (any Formatter)?
@@ -81,14 +84,15 @@ public enum Pipeline {
     ///
     /// `config.mode` becomes the resolver's default, which is what makes the
     /// `mode` key in `config.json` mean anything; `--mode` is passed per
-    /// utterance as `override` and outranks it.
+    /// utterance as `override` and outranks it. The frontmost application is not
+    /// configured here at all — it is sampled per utterance and passed to
+    /// `process`.
     public static func makeSession(config: Config,
                                    apiKey: String?,
                                    local: (any Formatter)?,
                                    registry: ModeRegistry = ModeRegistry(userModes: []),
                                    rules: any Formatter = RuleBasedFormatter(),
                                    cloudTransport: CloudFormatter.Transport? = nil,
-                                   frontmostBundleID: @escaping @Sendable () -> String?,
                                    onModeResolved: (@Sendable (Mode) -> Void)? = nil)
         -> DictationSession
     {
@@ -96,7 +100,6 @@ public enum Pipeline {
             formatter: makeChain(config: config, apiKey: apiKey, local: local,
                                  rules: rules, cloudTransport: cloudTransport),
             resolver: ModeResolver(registry: registry, defaultID: config.mode),
-            frontmostBundleID: frontmostBundleID,
             onModeResolved: onModeResolved)
     }
 }

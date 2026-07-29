@@ -46,13 +46,11 @@ struct PipelineTests {
     private func session(_ config: Config,
                          apiKey: String? = nil,
                          local: (any AraCore.Formatter)? = nil,
-                         cloudTransport: CloudFormatter.Transport? = nil,
-                         frontmost: @escaping @Sendable () -> String? = { nil })
+                         cloudTransport: CloudFormatter.Transport? = nil)
         -> DictationSession
     {
         Pipeline.makeSession(config: config, apiKey: apiKey, local: local,
-                             cloudTransport: cloudTransport,
-                             frontmostBundleID: frontmost)
+                             cloudTransport: cloudTransport)
     }
 
     // MARK: - engine
@@ -64,7 +62,7 @@ struct PipelineTests {
         let out = await session(config, local: PipelineStub { _, _ in
             Issue.record("an engine ran under engine .off")
             return "x"
-        }).process(Self.filler, override: nil, manual: nil)
+        }).process(Self.filler, override: nil, manual: nil, frontmostBundleID: nil)
         #expect(out == Self.filler)
     }
 
@@ -75,7 +73,7 @@ struct PipelineTests {
         let out = await session(config, local: PipelineStub { _, _ in
             Issue.record("an engine ran under engine .rules")
             return "x"
-        }).process(Self.filler, override: nil, manual: nil)
+        }).process(Self.filler, override: nil, manual: nil, frontmostBundleID: nil)
         #expect(out == Self.cleaned)
     }
 
@@ -84,7 +82,7 @@ struct PipelineTests {
         var config = Config()
         config.engine = .local
         let out = await session(config, local: PipelineStub { _, _ in "Hello there friend." })
-            .process(Self.filler, override: nil, manual: nil)
+            .process(Self.filler, override: nil, manual: nil, frontmostBundleID: nil)
         #expect(out == "Hello there friend.")
     }
 
@@ -103,7 +101,7 @@ struct PipelineTests {
         let out = await session(config, local: PipelineStub { _, _ in
             try await Task.sleep(for: .seconds(30))
             return "never"
-        }).process(Self.filler, override: nil, manual: nil)
+        }).process(Self.filler, override: nil, manual: nil, frontmostBundleID: nil)
         #expect(out == Self.cleaned)
         #expect(ContinuousClock.now - started < .seconds(5))
     }
@@ -121,7 +119,7 @@ struct PipelineTests {
         let out = await session(config, local: PipelineStub { _, _ in
             Issue.record("the language model ran in verbatim mode")
             return "REWRITTEN"
-        }).process(Self.filler, override: nil, manual: nil)
+        }).process(Self.filler, override: nil, manual: nil, frontmostBundleID: nil)
         #expect(out == Self.cleaned)
     }
 
@@ -133,7 +131,7 @@ struct PipelineTests {
         let out = await session(config, local: PipelineStub { _, _ in
             Issue.record("the language model ran under a verbatim override")
             return "REWRITTEN"
-        }).process(Self.filler, override: "verbatim", manual: nil)
+        }).process(Self.filler, override: "verbatim", manual: nil, frontmostBundleID: nil)
         #expect(out == Self.cleaned)
     }
 
@@ -146,9 +144,9 @@ struct PipelineTests {
         let out = await session(config,
                                 local: PipelineStub { _, mode in
                                     "formatted for \(mode.id) mode"
-                                },
-                                frontmost: { "com.apple.dt.Xcode" })
-            .process(Self.filler, override: nil, manual: nil)
+                                })
+            .process(Self.filler, override: nil, manual: nil,
+                     frontmostBundleID: "com.apple.dt.Xcode")
         #expect(out == "formatted for code mode")
     }
 
@@ -190,7 +188,7 @@ struct PipelineTests {
         await withTaskGroup(of: Void.self) { group in
             for _ in 0..<(cores * 2) {
                 group.addTask {
-                    _ = await session.process(Self.filler, override: nil, manual: nil)
+                    _ = await session.process(Self.filler, override: nil, manual: nil, frontmostBundleID: nil)
                 }
             }
         }
@@ -215,7 +213,7 @@ struct PipelineTests {
                                     Issue.record("a cloud request was built with no cloud config")
                                     throw FormatterError.unavailable
                                 })
-            .process(Self.filler, override: nil, manual: nil)
+            .process(Self.filler, override: nil, manual: nil, frontmostBundleID: nil)
         #expect(out == Self.cleaned)
     }
 
@@ -249,7 +247,7 @@ struct PipelineTests {
                                         httpVersion: nil, headerFields: nil)!
                                     return (Data(body.utf8), response)
                                 })
-            .process(Self.filler, override: nil, manual: nil)
+            .process(Self.filler, override: nil, manual: nil, frontmostBundleID: nil)
 
         #expect(out == "Hello there friend.")
         let request = try #require(box.current)
