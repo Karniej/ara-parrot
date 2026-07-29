@@ -18,15 +18,22 @@ public struct ModeRegistry: Sendable {
     public func mode(id: String) -> Mode? { modes[id] }
     public var all: [Mode] { order.compactMap { modes[$0] } }
 
-    public static let builtIns: [Mode] = [
+    /// The built-in "default" mode, hoisted into its own constant so there is
+    /// exactly one definition — `builtIns` references it, and `ModeResolver`
+    /// uses it as a belt-and-braces fallback instead of indexing into
+    /// `builtIns` positionally.
+    public static let defaultMode = Mode(
+        id: "default", name: "Default",
+        prompt: "Remove filler words and false starts. Repair sentence "
+              + "boundaries and capitalisation. Preserve the speaker's "
+              + "wording and meaning exactly.",
+        appBundleIDs: [], usesLLM: true)
+
+    static let builtIns: [Mode] = [
         Mode(id: "verbatim", name: "Verbatim",
              prompt: "",
              appBundleIDs: [], usesLLM: false),
-        Mode(id: "default", name: "Default",
-             prompt: "Remove filler words and false starts. Repair sentence "
-                   + "boundaries and capitalisation. Preserve the speaker's "
-                   + "wording and meaning exactly.",
-             appBundleIDs: [], usesLLM: true),
+        defaultMode,
         Mode(id: "email", name: "Email",
              prompt: "Rewrite as polished email prose with paragraph breaks. "
                    + "Do not invent a greeting or sign-off that was not spoken.",

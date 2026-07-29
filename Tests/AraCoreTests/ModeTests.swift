@@ -64,4 +64,15 @@ struct ModeTests {
         let m = resolver.resolve(override: "nope", manual: nil, frontmostBundleID: nil)
         #expect(m.id == "default")
     }
+
+    @Test("a duplicated user mode id yields last-write-wins with no duplicate entry")
+    func duplicateUserModeIDs() {
+        let first = Mode(id: "email", name: "First", prompt: "a",
+                         appBundleIDs: [], usesLLM: true)
+        let second = Mode(id: "email", name: "Second", prompt: "b",
+                          appBundleIDs: [], usesLLM: true)
+        let r = ModeRegistry(userModes: [first, second])
+        #expect(r.mode(id: "email")?.name == "Second")
+        #expect(r.all.filter { $0.id == "email" }.count == 1)
+    }
 }

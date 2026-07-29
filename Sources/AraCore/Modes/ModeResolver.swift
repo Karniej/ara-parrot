@@ -21,8 +21,13 @@ public struct ModeResolver: Sendable {
            let m = registry.all.first(where: { $0.appBundleIDs.contains(bundle) }) {
             return m
         }
+        // The merge in ModeRegistry.init can overwrite the "default" key's
+        // value (a user mode with id "default" replaces its content) but can
+        // never remove the key itself, so `registry.mode(id: "default")`
+        // always succeeds today — this final term is a belt-and-braces
+        // guarantee against a future change to that invariant, not a live path.
         return registry.mode(id: defaultID)
             ?? registry.mode(id: "default")
-            ?? ModeRegistry.builtIns[1]
+            ?? ModeRegistry.defaultMode
     }
 }
