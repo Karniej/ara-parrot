@@ -21,7 +21,39 @@ public enum DoctorReport {
             checkMicrophone(),
             checkAccessibility(),
             checkFnKeyMapping(),
+            checkOnDeviceFormatting(),
         ]
+    }
+
+    /// Reports whether on-device formatting can run, and why not when it cannot.
+    ///
+    /// The spec's error-handling table says an unavailable Apple Intelligence
+    /// should be surfaced "once in `doctor`", and this is the only place it can
+    /// be: when the model is unavailable the daemon builds a chain with **no**
+    /// local candidate, so there is not even a fall-through line to read. The
+    /// symptom otherwise is dictation that is merely filler-stripped, with
+    /// nothing anywhere connecting that to a system setting.
+    ///
+    /// A **warning, never a failure.** The rule-based floor is always present
+    /// and the app is fully functional without a language model; `run()` gates
+    /// startup on `allOK`, so returning `.fail` here would refuse to start the
+    /// daemon on every Mac that has Apple Intelligence switched off — which is
+    /// most of them.
+    static func checkOnDeviceFormatting() -> Check {
+        let name = "on-device formatting"
+        let remediation = "System Settings → Apple Intelligence & Siri → turn on. "
+            + "Without it, formatting falls back to rule-based cleanup."
+        if #available(macOS 26.0, *) {
+            guard let reason = FoundationModelsFormatter.unavailableReason else {
+                return Check(name: name, status: .ok, remediation: nil)
+            }
+            return Check(name: name, status: .warn(reason), remediation: remediation)
+        }
+        return Check(
+            name: name,
+            status: .warn("requires macOS 26"),
+            remediation: "Rule-based cleanup is used instead; no action needed on this macOS."
+        )
     }
 
     static func checkMicrophone() -> Check {
