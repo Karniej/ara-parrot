@@ -273,6 +273,79 @@ struct FormatterChainTests {
                 == "hello there friend")
     }
 
+    /// A `CancellationError` is not proof that *our* caller cancelled. A
+    /// formatter can leak one from an internal task group whose child was
+    /// cancelled, with the caller very much alive and still wanting its text.
+    /// Deciding on the error's type rather than on `Task.isCancelled` would
+    /// throw that transcript away.
+    @Test("a stray CancellationError from an engine does not lose the transcript")
+    func strayCancellationFromEngineFallsThrough() async throws {
+        let chain = FormatterChain(
+            engine: .local, timeout: .seconds(1),
+            local: StubFormatter { _ in throw CancellationError() },
+            cloud: nil, rules: rules)
+        #expect(try await chain.format("hello there friend", mode: mode) == "RULES")
+        #expect(!Task.isCancelled)
+    }
+
+    @Test("a stray CancellationError from rules does not lose the transcript")
+    func strayCancellationFromRulesFallsThrough() async throws {
+        let chain = FormatterChain(
+            engine: .rules, timeout: .seconds(1),
+            local: nil, cloud: nil,
+            rules: StubFormatter { _ in throw CancellationError() })
+        #expect(try await chain.format("hello there friend", mode: mode)
+                == "hello there friend")
+        #expect(!Task.isCancelled)
+    }
+
+    /// The converse hole, and the one the round-1 tests missed because their
+    /// stub `rules` happened to suspend. The real `RuleBasedFormatter` is pure
+    /// string work with no suspension point, so it cannot observe cancellation
+    /// at all: a call cancelled while it ran would *succeed*, return a string,
+    /// and raise no error anywhere for the chain to catch.
+    ///
+    /// The stub blocks with `usleep` rather than `Task.sleep` precisely so it
+    /// cannot notice the cancellation, and returns normally. Only a check after
+    /// the work completes catches this — a check at entry cannot, because the
+    /// caller was still alive at entry.
+    @Test("a cancelled caller gets no text from a formatter that ignores cancellation")
+    func cancelledCallerGetsNoTextFromIgnoringFormatter() async throws {
+        let chain = FormatterChain(
+            engine: .rules, timeout: .seconds(5),
+            local: nil, cloud: nil,
+            rules: StubFormatter { _ in
+                usleep(200_000)
+                return "CLEANED"
+            })
+        let mode = mode
+        let running = Task { try await chain.format("hello there friend", mode: mode) }
+        try await Task.sleep(for: .milliseconds(50))
+        running.cancel()
+        await #expect(throws: CancellationError.self) { try await running.value }
+    }
+
+    /// The other half: a request withdrawn before the chain starts must not
+    /// spin up a language model at all. Cancelling a dictation should not cost
+    /// a two-second inference.
+    @Test("an already-cancelled caller never starts the engine")
+    func cancelledCallerNeverStartsEngine() async throws {
+        let chain = FormatterChain(
+            engine: .local, timeout: .seconds(1),
+            local: StubFormatter { _ in
+                Issue.record("engine was started for an already-cancelled request")
+                return "x"
+            },
+            cloud: nil, rules: rules)
+        let mode = mode
+        let running = Task { () async throws -> String in
+            while !Task.isCancelled { await Task.yield() }
+            return try await chain.format("hello there friend", mode: mode)
+        }
+        running.cancel()
+        await #expect(throws: CancellationError.self) { try await running.value }
+    }
+
     /// The guarantee the whole chain exists to make: with every engine broken,
     /// the real terminal formatter still puts words at the cursor.
     @Test("with everything broken the real rule-based formatter still returns text")

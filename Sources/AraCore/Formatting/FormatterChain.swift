@@ -2,10 +2,16 @@ import Foundation
 
 /// Selects a formatting engine and guarantees a usable result.
 ///
+/// The exact contract, because the whole component exists to make it true:
+/// **if the calling task is not cancelled, `format` returns a string.** Not
+/// "usually", not "unless the model is broken" — there is no error any injected
+/// formatter can throw, and no way for one to hang, that makes a non-cancelled
+/// call fail. `CancellationError` is the only error it ever propagates.
+///
 /// Every path terminates in the rule-based formatter, and if even that throws
-/// the raw transcript is returned, so `format` fails only by propagating
-/// cancellation. A stalled engine is abandoned at the deadline: a dictation
-/// tool that hangs is worse than one that is occasionally unpolished.
+/// the raw transcript is returned. A stalled engine is abandoned at the
+/// deadline: a dictation tool that hangs is worse than one that is occasionally
+/// unpolished.
 ///
 /// `timeout` is **per candidate engine, not a total budget**. Under `.cloud` a
 /// hung cloud followed by a hung local costs two full timeouts before the rule
@@ -19,6 +25,11 @@ import Foundation
 /// fallback: the caller asked for the work to stop, and handing back a string
 /// anyway would get it typed at the user's cursor. "Never lose the transcript"
 /// is a promise about broken engines, not about abandoned work.
+///
+/// The test for cancellation is always *this task's* state, never the type of
+/// error a formatter reported. A `CancellationError` raised by a formatter
+/// while the caller is alive is that formatter's own bug and is handled like
+/// any other engine failure — the transcript survives it.
 ///
 /// The chain per engine:
 /// - `.off` — the raw transcript, untouched; no formatter is consulted.
@@ -49,6 +60,21 @@ public struct FormatterChain: Formatter {
     }
 
     public func format(_ text: String, mode: Mode) async throws -> String {
+        // Don't start a model inference for a request the caller has already
+        // withdrawn.
+        try Task.checkCancellation()
+        let result = try await route(text, mode: mode)
+        // Every path converges here, and it has to: a formatter is not obliged
+        // to observe cancellation, and the one that matters does not.
+        // `RuleBasedFormatter` is pure string work with no suspension point, so
+        // a verbatim-mode call cancelled while it ran would otherwise hand back
+        // a perfectly good string for a request nobody wants — the same trap as
+        // an absorbed `CancellationError`, reached without any error at all.
+        try Task.checkCancellation()
+        return result
+    }
+
+    private func route(_ text: String, mode: Mode) async throws -> String {
         if engine == .off { return text }
         if engine == .rules || !mode.usesLLM {
             return try await terminalFallback(text, mode: mode)
@@ -62,14 +88,25 @@ public struct FormatterChain: Formatter {
         for candidate in candidates {
             do {
                 return try await attempt(candidate.formatter, text: text, mode: mode)
-            } catch let error as CancellationError {
-                // Ordered ahead of the logging catch deliberately. Cancellation
-                // means the caller withdrew the request; the engine did nothing
-                // wrong, so blaming it in the log would be a lie, and carrying
-                // on to the next candidate would do work nobody wants. Let it
-                // out and let the caller decide.
-                throw error
             } catch {
+                // Checked ahead of the logging, and gated on *our* task rather
+                // than on the error's type. Cancellation of this task means the
+                // caller withdrew the request: the engine did nothing wrong, so
+                // blaming it in the log would be a lie, and moving on to the
+                // next candidate would do work nobody wants.
+                //
+                // Gating on `Task.isCancelled` instead of on
+                // `error is CancellationError` matters in both directions. A
+                // formatter can throw a `CancellationError` that has nothing to
+                // do with us — one leaked from an internal task group whose
+                // child was cancelled, say — and treating that as withdrawal
+                // would lose a transcript the caller still wants; here it falls
+                // through to the fallback like any other engine bug. And an
+                // engine that maps our cancellation onto its own error type
+                // still stops the chain, because what makes the request dead is
+                // our cancellation, not the shape of the report.
+                if Task.isCancelled { throw CancellationError() }
+
                 // Swallowing this silently would make "why is my dictation not
                 // being cleaned up?" undebuggable: the user sees only that the
                 // output looks raw, with no way to tell a missing model from a
@@ -89,16 +126,16 @@ public struct FormatterChain: Formatter {
     /// `RuleBasedFormatter`, not of the parameter, and any throwing formatter
     /// injected in its place would lose the user's transcript entirely. Catching
     /// here makes the guarantee structural: whatever is passed as `rules`, a
-    /// non-cancelled call returns a string.
+    /// non-cancelled call returns a string — including when what it threw was
+    /// itself a `CancellationError` that had nothing to do with our caller.
     ///
-    /// Cancellation is re-thrown ahead of that fallback, so a withdrawn request
-    /// never comes back as raw text pretending to be a result.
+    /// Cancellation of *this task* is re-thrown ahead of that fallback, so a
+    /// withdrawn request never comes back as raw text pretending to be a result.
     private func terminalFallback(_ text: String, mode: Mode) async throws -> String {
         do {
             return try await rules.format(text, mode: mode)
-        } catch let error as CancellationError {
-            throw error
         } catch {
+            if Task.isCancelled { throw CancellationError() }
             Self.note("rule-based formatter threw (\(Self.describe(error))); "
                       + "returning the raw transcript")
             return text
