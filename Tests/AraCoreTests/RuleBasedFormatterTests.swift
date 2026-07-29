@@ -32,13 +32,32 @@ struct RuleBasedFormatterTests {
         #expect(try await f.format("Ship it on Friday.", mode: mode) == "Ship it on Friday.")
     }
 
-    // Documents the actual behavior of "like" in the filler list (ruling #3
-    // in the task-3 brief): it strips *all* standalone occurrences of "like",
-    // including ones that carry meaning as a verb, not just filler usage
-    // ("like, totally"). This is a known false-positive, kept as written per
-    // the brief pending a decision from the plan owner.
-    @Test("strips \"like\" even when it changes the meaning of the sentence")
-    func likeIsOverEager() async throws {
-        #expect(try await f.format("I would like to go", mode: mode) == "I would to go")
+    @Test("preserves 'like' as a verb")
+    func preservesLike() async throws {
+        #expect(try await f.format("I would like to go", mode: mode) == "I would like to go")
+    }
+
+    @Test("preserves literal 'you know' and 'I mean'")
+    func preservesDiscoursePhrasesUsedLiterally() async throws {
+        #expect(try await f.format("Do you know what time it is?", mode: mode)
+                == "Do you know what time it is?")
+        #expect(try await f.format("I mean it", mode: mode) == "I mean it")
+    }
+
+    @Test("does not break hyphenated interjections")
+    func preservesHyphenated() async throws {
+        #expect(try await f.format("uh-huh, that works", mode: mode) == "uh-huh, that works")
+        #expect(try await f.format("uh-oh, we broke it", mode: mode) == "uh-oh, we broke it")
+    }
+
+    @Test("preserves unit abbreviations")
+    func preservesUnits() async throws {
+        #expect(try await f.format("battery rated at 60 Ah", mode: mode)
+                == "battery rated at 60 Ah")
+    }
+
+    @Test("punctuation-only residue returns the original")
+    func punctuationResidue() async throws {
+        #expect(try await f.format("Um, uh...", mode: mode) == "Um, uh...")
     }
 }
