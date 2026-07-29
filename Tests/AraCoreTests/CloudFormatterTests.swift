@@ -44,6 +44,75 @@ private final class BlackHoleServer: @unchecked Sendable {
     func close() { Darwin.close(descriptor) }
 }
 
+/// A loopback HTTP server that answers every connection with one canned
+/// response and records what it was sent.
+///
+/// Enough HTTP to be talked to by `URLSession` and no more. It exists so the
+/// redirect test can observe what a redirect *target* receives, which is the
+/// only way to state the credential requirement as a fact rather than as a
+/// claim about a delegate.
+private final class LoopbackHTTPServer: @unchecked Sendable {
+    private let descriptor: Int32
+    private let lock = NSLock()
+    private var received: [String] = []
+    let port: UInt16
+
+    init(response: @escaping @Sendable (UInt16) -> String) {
+        let fd = socket(AF_INET, SOCK_STREAM, 0)
+        var reuse: Int32 = 1
+        setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &reuse,
+                   socklen_t(MemoryLayout<Int32>.size))
+        var addr = sockaddr_in()
+        addr.sin_len = UInt8(MemoryLayout<sockaddr_in>.size)
+        addr.sin_family = sa_family_t(AF_INET)
+        addr.sin_port = 0
+        addr.sin_addr.s_addr = inet_addr("127.0.0.1")
+        _ = withUnsafePointer(to: &addr) {
+            $0.withMemoryRebound(to: sockaddr.self, capacity: 1) {
+                bind(fd, $0, socklen_t(MemoryLayout<sockaddr_in>.size))
+            }
+        }
+        _ = listen(fd, 16)
+        var bound = sockaddr_in()
+        var length = socklen_t(MemoryLayout<sockaddr_in>.size)
+        _ = withUnsafeMutablePointer(to: &bound) {
+            $0.withMemoryRebound(to: sockaddr.self, capacity: 1) {
+                getsockname(fd, $0, &length)
+            }
+        }
+        descriptor = fd
+        port = UInt16(bigEndian: bound.sin_port)
+
+        let reply = response(port)
+        let thread = Thread { [self] in
+            while true {
+                let client = accept(fd, nil, nil)
+                if client < 0 { return }
+                var buffer = [UInt8](repeating: 0, count: 16384)
+                let read = Darwin.read(client, &buffer, buffer.count)
+                if read > 0 {
+                    let text = String(decoding: buffer[0..<read], as: UTF8.self)
+                    lock.lock(); received.append(text); lock.unlock()
+                }
+                _ = reply.withCString { Darwin.write(client, $0, strlen($0)) }
+                Darwin.close(client)
+            }
+        }
+        thread.stackSize = 512 * 1024
+        thread.start()
+    }
+
+    var url: URL { URL(string: "http://127.0.0.1:\(port)/")! }
+
+    var requests: [String] {
+        lock.lock()
+        defer { lock.unlock() }
+        return received
+    }
+
+    func close() { Darwin.close(descriptor) }
+}
+
 /// `FormatterError` is deliberately not `Equatable` — `.transportFailure`
 /// carries a detail string no test should have to spell out — so cases are
 /// compared by tag.
@@ -261,6 +330,22 @@ struct CloudFormatterTests {
         #expect(await captured.count == 0)
     }
 
+    /// The guard above must not be a trap for people who hand-edit
+    /// `config.json`. Capitalisation or a stray space would otherwise disable
+    /// cloud formatting with the same `.unavailable` a missing key produces,
+    /// which is indistinguishable from the outside.
+    @Test("provider matching tolerates case and surrounding whitespace")
+    func providerIsNormalised() async throws {
+        for spelling in ["anthropic", "Anthropic", " anthropic ", "ANTHROPIC\n"] {
+            var config = CloudConfig()
+            config.provider = spelling
+            let out = try await formatter(status: 200, body: Self.goodBody,
+                                          config: config)
+                .format("um ship it friday", mode: mode)
+            #expect(out == "Ship it Friday.", "provider \"\(spelling)\" was rejected")
+        }
+    }
+
     // MARK: - Request shape
 
     @Test("the request carries the pinned model, headers and inference settings")
@@ -380,16 +465,28 @@ struct CloudFormatterTests {
         }
 
         // A transport that throws an error carrying the key must not have that
-        // error interpolated wholesale either.
-        do {
-            let leaky = CloudFormatter(
-                config: CloudConfig(), apiKey: { key },
-                transport: { _ in throw URLError(.userAuthenticationRequired,
-                                                 userInfo: ["key": key]) })
-            _ = try await leaky.format("hello there friend", mode: mode)
-            Issue.record("expected an error")
-        } catch {
-            thrown.append(error)
+        // error interpolated wholesale either. Two legs, because they exercise
+        // different renderers and only the second reaches the one the shipped
+        // code actually calls: a custom `userInfo` key shows up in `"\(error)"`,
+        // while `NSLocalizedDescriptionKey` is what `localizedDescription`
+        // returns — so an implementation that renders `localizedDescription`
+        // passes the first leg and leaks on the second.
+        let userInfos: [[String: Any]] = [
+            ["key": key],
+            [NSLocalizedDescriptionKey: "boom \(key)"],
+        ]
+        for userInfo in userInfos {
+            do {
+                let leaky = CloudFormatter(
+                    config: CloudConfig(), apiKey: { key },
+                    transport: { _ in
+                        throw URLError(.userAuthenticationRequired, userInfo: userInfo)
+                    })
+                _ = try await leaky.format("hello there friend", mode: mode)
+                Issue.record("expected an error")
+            } catch {
+                thrown.append(error)
+            }
         }
 
         for error in thrown {
@@ -401,6 +498,61 @@ struct CloudFormatterTests {
     private static func detail(_ error: FormatterError) -> String {
         if case .transportFailure(let detail) = error { return detail }
         return ""
+    }
+
+    // MARK: - Redirects
+
+    /// CFNetwork strips `Authorization` when a redirect crosses hosts and does
+    /// **not** strip `x-api-key` — it has no way to know a custom header is a
+    /// credential. Without a delegate refusing redirects, any 3xx from the
+    /// endpoint hands the key to whatever host `Location` names, and nothing
+    /// downstream inspects the final `response.url`. Reaching that needs
+    /// someone able to answer as `api.anthropic.com` with a trusted
+    /// certificate, which a corporate TLS-inspecting proxy is.
+    ///
+    /// Stated as a fact about the destination rather than as a claim about the
+    /// delegate: this drives `CloudFormatter.urlSessionTransport` itself — the
+    /// production transport, default argument and all — against a real
+    /// redirect, and asks the redirect target what it received.
+    @Test("the production transport refuses redirects, so no other host sees the key")
+    func transportRefusesRedirects() async throws {
+        let target = LoopbackHTTPServer { _ in
+            "HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\n{}"
+        }
+        defer { target.close() }
+        // A different host string as well as a different port, so this is a
+        // cross-host redirect — the case where CFNetwork *does* strip
+        // `Authorization`, and still forwards `x-api-key`.
+        let redirector = LoopbackHTTPServer { [port = target.port] _ in
+            "HTTP/1.1 302 Found\r\nLocation: http://localhost:\(port)/\r\n"
+            + "Content-Length: 0\r\nConnection: close\r\n\r\n"
+        }
+        defer { redirector.close() }
+
+        let key = "sk-ant-secret-key"
+        var request = URLRequest(url: redirector.url)
+        request.httpMethod = "POST"
+        request.setValue(key, forHTTPHeaderField: "x-api-key")
+        request.httpBody = Data("{}".utf8)
+        request.timeoutInterval = 10
+
+        let (_, response) = try await CloudFormatter.urlSessionTransport(request)
+
+        // Sanity first: without this the test could pass by never having put a
+        // credential on the wire at all.
+        #expect(redirector.requests.first?.contains(key) == true,
+                "the request did not carry the key, so this proves nothing")
+
+        // The 3xx is the final response — nothing was followed. `format` turns
+        // that into .transportFailure("HTTP 302") and the chain falls back.
+        #expect((response as? HTTPURLResponse)?.statusCode == 302)
+
+        // The requirement itself.
+        #expect(target.requests.isEmpty,
+                "the redirect target was contacted and received: \(target.requests)")
+        for seen in target.requests {
+            #expect(!seen.contains(key), "the API key reached the redirect target")
+        }
     }
 
     // MARK: - Thread-pool behaviour

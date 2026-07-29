@@ -50,6 +50,25 @@ public struct CloudFormatter: Formatter {
     private let apiKey: @Sendable () -> String?
     private let transport: Transport
 
+    /// - Parameters:
+    ///   - config: Provider, model and keychain account. A `provider` other
+    ///     than `anthropic` disables this formatter rather than sending that
+    ///     vendor's key here.
+    ///   - apiKey: Supplies the credential per call.
+    ///
+    ///     **This closure must not read the keychain.** It is invoked
+    ///     synchronously inside `format`, which `FormatterChain` runs on the
+    ///     cooperative pool, and `SecItemCopyMatching` blocks its thread
+    ///     indefinitely whenever the keychain is locked or the item's ACL does
+    ///     not trust this binary — it puts a dialog in front of the user and
+    ///     waits for an answer. Blocking a pool thread for however long a human
+    ///     takes to notice a prompt is the precise failure
+    ///     `FormatterChain.withDeadline` documents and cannot rescue: the
+    ///     deadline abandons the task without freeing the thread. Read the key
+    ///     once at startup, off the pool, and close over the cached value.
+    ///   - transport: Defaults to `urlSessionTransport`, which is what
+    ///     production uses. Injected only so response handling — above all the
+    ///     refusal path — is testable without a network.
     public init(config: CloudConfig,
                 apiKey: @escaping @Sendable () -> String?,
                 transport: @escaping Transport = CloudFormatter.urlSessionTransport) {
@@ -60,8 +79,33 @@ public struct CloudFormatter: Formatter {
 
     /// The production transport. Named rather than inlined so the default
     /// argument and the documentation above refer to the same one line.
+    ///
+    /// The delegate is not boilerplate and must not be dropped: it is the only
+    /// thing keeping the API key from being forwarded to whatever host a
+    /// redirect names. CFNetwork strips `Authorization` when a redirect crosses
+    /// hosts, but it has no idea `x-api-key` is a credential and forwards it
+    /// verbatim — measured against two loopback servers, on both 302 and 307,
+    /// with the destination receiving the key in full. The framework's own
+    /// strip list is precisely the statement that custom auth headers are the
+    /// caller's problem, and this is a hand-rolled client with a custom auth
+    /// header. Refusing every redirect outright costs nothing real: this
+    /// endpoint does not legitimately redirect, so a 3xx surfaces as
+    /// `.transportFailure("HTTP 3xx")` and the chain falls back.
     public static let urlSessionTransport: Transport = { request in
-        try await URLSession.shared.data(for: request)
+        try await URLSession.shared.data(for: request, delegate: NoRedirects.shared)
+    }
+
+    /// Refuses every HTTP redirect. Stateless, hence safely shared.
+    private final class NoRedirects: NSObject, URLSessionTaskDelegate, @unchecked Sendable {
+        static let shared = NoRedirects()
+
+        func urlSession(_ session: URLSession, task: URLSessionTask,
+                        willPerformHTTPRedirection response: HTTPURLResponse,
+                        newRequest request: URLRequest,
+                        completionHandler: @escaping (URLRequest?) -> Void) {
+            // `nil` means "do not follow"; the 3xx becomes the final response.
+            completionHandler(nil)
+        }
     }
 
     private static let endpoint =
@@ -78,13 +122,26 @@ public struct CloudFormatter: Formatter {
         // Both guards run before a request is built, let alone sent. A key
         // minted for another vendor must never be handed to this endpoint —
         // that is a credential disclosure to a third party, not a failed call.
-        guard config.provider == Self.anthropic else { throw FormatterError.unavailable }
+        //
+        // Both are normalised the same way. Comparing the provider strictly
+        // while trimming the key would make `provider: "Anthropic"` or a
+        // trailing space in config.json disable cloud formatting with an
+        // `.unavailable` the user cannot tell apart from a missing key.
+        let provider = config.provider
+            .trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard provider == Self.anthropic else { throw FormatterError.unavailable }
         guard let key = apiKey()?.trimmingCharacters(in: .whitespacesAndNewlines),
               !key.isEmpty
         else { throw FormatterError.unavailable }
 
-        let request = Self.buildRequest(key: key, model: config.model,
-                                        text: text, mode: mode)
+        // Serialising this body cannot fail — every value is a literal or a
+        // `String`, and a Swift `String` is always valid Unicode. `try!` would
+        // be defensible on that reasoning and is still the wrong trade: this
+        // daemon's one promise is that a transcript is never lost, and a trap
+        // in a shipped binary breaks it for a bug nobody can reproduce.
+        guard let request = try? Self.buildRequest(key: key, model: config.model,
+                                                   text: text, mode: mode)
+        else { throw FormatterError.unavailable }
 
         let data: Data
         let response: URLResponse
@@ -139,7 +196,7 @@ public struct CloudFormatter: Formatter {
     // MARK: - Request construction
 
     static func buildRequest(key: String, model: String,
-                             text: String, mode: Mode) -> URLRequest {
+                             text: String, mode: Mode) throws -> URLRequest {
         let body: [String: Any] = [
             "model": model,
             "max_tokens": maxTokens,
@@ -165,9 +222,7 @@ public struct CloudFormatter: Formatter {
         request.setValue(key, forHTTPHeaderField: "x-api-key")
         request.setValue("2023-06-01", forHTTPHeaderField: "anthropic-version")
         request.setValue("application/json", forHTTPHeaderField: "content-type")
-        // Force-try: the dictionary above is built from literals and two
-        // `String`s, so there is no input that makes it unserialisable.
-        request.httpBody = try! JSONSerialization.data(withJSONObject: body)
+        request.httpBody = try JSONSerialization.data(withJSONObject: body)
         return request
     }
 
@@ -277,11 +332,33 @@ public struct CloudFormatter: Formatter {
         if error is CancellationError { return error }
         if let error = error as? URLError {
             if error.code == .cancelled { return CancellationError() }
-            // `URLError.localizedDescription` is a canned system string; it
-            // names at most the host, never a header.
             return FormatterError.transportFailure(
-                "URLError \(error.code.rawValue): \(error.localizedDescription)")
+                "URLError \(error.code.rawValue) (\(Self.summarise(error.code)))")
         }
         return FormatterError.transportFailure("\(type(of: error))")
+    }
+
+    /// A fixed, code-derived phrase for a `URLError`.
+    ///
+    /// Deliberately *not* `localizedDescription`. That reads
+    /// `NSLocalizedDescriptionKey` out of the error's `userInfo`, which makes
+    /// the message a channel the error's producer controls — and the errors
+    /// this daemon renders come from a request that carries the API key in a
+    /// header. Every string below is a literal in this file, so no `userInfo`
+    /// any transport can construct reaches a log line.
+    private static func summarise(_ code: URLError.Code) -> String {
+        switch code {
+        case .notConnectedToInternet: return "no internet connection"
+        case .networkConnectionLost: return "connection lost"
+        case .timedOut: return "timed out"
+        case .cannotFindHost: return "cannot find host"
+        case .cannotConnectToHost: return "cannot connect to host"
+        case .dnsLookupFailed: return "DNS lookup failed"
+        case .secureConnectionFailed: return "TLS handshake failed"
+        case .serverCertificateUntrusted: return "server certificate untrusted"
+        case .userAuthenticationRequired: return "authentication required"
+        case .httpTooManyRedirects: return "too many redirects"
+        default: return "unclassified"
+        }
     }
 }
