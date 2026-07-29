@@ -76,6 +76,37 @@ public struct FoundationModelsFormatter: Formatter {
         #endif
     }
 
+    /// Why the system model cannot be asked for a rewrite, or `nil` when it can.
+    ///
+    /// The same read as `isAvailable`, carrying the reason instead of discarding
+    /// it. `doctor` is the one place the reason matters: with Apple Intelligence
+    /// off, `Pipeline.localFormatter()` returns `nil`, so there is no local
+    /// candidate in the chain at all and therefore no fall-through line either —
+    /// the user sees plainer text and nothing anywhere explains why. Every
+    /// string returned is a literal in this file; nothing from the framework's
+    /// own error rendering is passed through.
+    public static var unavailableReason: String? {
+        #if canImport(FoundationModels)
+        switch SystemLanguageModel.default.availability {
+        case .available:
+            return nil
+        case .unavailable(let reason):
+            switch reason {
+            case .deviceNotEligible:
+                return "this Mac is not eligible for Apple Intelligence"
+            case .appleIntelligenceNotEnabled:
+                return "Apple Intelligence is turned off"
+            case .modelNotReady:
+                return "the on-device model is not ready yet (still downloading?)"
+            @unknown default:
+                return "unavailable for an unrecognised reason"
+            }
+        }
+        #else
+        return "this binary was built against an SDK without FoundationModels"
+        #endif
+    }
+
     public func format(_ text: String, mode: Mode) async throws -> String {
         // Pure string work, cheap, and safe anywhere.
         let instructions = Self.instructions(for: mode)
@@ -256,9 +287,32 @@ public struct FoundationModelsFormatter: Formatter {
     /// error before falling back, so the distinction is what tells a user "the
     /// model declined this text" apart from "the model is broken".
     ///
-    /// `FormatterError` and `CancellationError` pass through untouched:
-    /// wrapping a cancellation in `.transportFailure` would report the user's
-    /// own withdrawal of the request as an engine fault.
+    /// ## Every rendered string is a literal in this file
+    ///
+    /// The same rule `CloudFormatter.translate` follows, and for a sharper
+    /// reason here. `GenerationError` is a `LocalizedError` whose every case
+    /// carries a `Context` with a framework-authored `debugDescription`, and the
+    /// case most likely to fire is `guardrailViolation` — raised *because of*
+    /// what the user just dictated. `localizedDescription` reads
+    /// `NSLocalizedDescriptionKey` out of the error, so an implementation that
+    /// quoted the offending input would put the user's speech into a daemon log
+    /// that is routinely piped to a file. The switch below is exhaustive over
+    /// the nine documented cases so that adding one is a compile error rather
+    /// than a silent fall-through to whatever the framework wants to say, and
+    /// anything foreign is reduced to its type name.
+    ///
+    /// ## The cancellation passthrough is decorative
+    ///
+    /// `FormatterError` and `CancellationError` pass through untouched, but not
+    /// because that protects the user's withdrawal from being logged as an
+    /// engine fault — `FormatterChain` decides cancellation by
+    /// `Task.isCancelled` and never by error type, so the rendering is not what
+    /// the chain reads. When our caller *is* cancelled the chain rethrows before
+    /// this error is ever described; when it is not, a `CancellationError`
+    /// arriving from the model is that engine's own bug and is handled like any
+    /// other engine failure, transcript intact. The passthrough earns its place
+    /// as the honest rendering of the error, not as a fix for anything
+    /// observable today.
     static func translate(_ error: any Error) -> any Error {
         if let error = error as? FormatterError { return error }
         if error is CancellationError { return error }
@@ -269,11 +323,23 @@ public struct FoundationModelsFormatter: Formatter {
                 return FormatterError.refused
             case .assetsUnavailable:
                 return FormatterError.unavailable
-            default:
-                return FormatterError.transportFailure(error.localizedDescription)
+            case .exceededContextWindowSize:
+                return FormatterError.transportFailure("transcript exceeded the context window")
+            case .unsupportedGuide:
+                return FormatterError.transportFailure("unsupported generation guide")
+            case .unsupportedLanguageOrLocale:
+                return FormatterError.transportFailure("unsupported language or locale")
+            case .decodingFailure:
+                return FormatterError.transportFailure("could not decode the model's response")
+            case .rateLimited:
+                return FormatterError.transportFailure("rate limited by the system model")
+            case .concurrentRequests:
+                return FormatterError.transportFailure("too many concurrent model requests")
+            @unknown default:
+                return FormatterError.transportFailure("unclassified generation error")
             }
         }
         #endif
-        return FormatterError.transportFailure("\(error)")
+        return FormatterError.transportFailure("\(type(of: error))")
     }
 }

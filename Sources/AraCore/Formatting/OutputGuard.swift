@@ -42,6 +42,25 @@ enum OutputGuard {
         "i'm sorry", "sorry, i", "i apologize", "i apologise", "as an ai",
     ]
 
+    /// Folds typographic apostrophes onto the ASCII one.
+    ///
+    /// Every opener above is written with `'`, and a language model writing
+    /// prose emits `’` (U+2019) at least as often — "I can’t help with that"
+    /// matched nothing and was typed at the user's cursor as a rewrite. A
+    /// refusal is one of the three shapes this guard exists to catch, so the
+    /// comparison must not depend on which of two visually identical characters
+    /// the model happened to pick. U+02BC is included because it is the other
+    /// character Unicode calls an apostrophe; U+2018 is not, because a *left*
+    /// quote in that position is an opening quotation mark, not a contraction.
+    ///
+    /// Applied to both sides of every comparison, so the "user genuinely
+    /// dictated 'I can't ...'" exemption keeps working when the transcript and
+    /// the rewrite disagree about the character.
+    private static func foldApostrophes(_ s: String) -> String {
+        s.replacingOccurrences(of: "\u{2019}", with: "'")
+            .replacingOccurrences(of: "\u{02BC}", with: "'")
+    }
+
     private static func wordCount(_ s: String) -> Int {
         s.split(whereSeparator: { $0.isWhitespace }).count
     }
@@ -60,8 +79,9 @@ enum OutputGuard {
         let outWords = wordCount(trimmed)
         guard inWords > 0 else { return false }
 
-        let inputLower = input.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        let outputLower = trimmed.lowercased()
+        let inputLower = foldApostrophes(
+            input.trimmingCharacters(in: .whitespacesAndNewlines).lowercased())
+        let outputLower = foldApostrophes(trimmed.lowercased())
 
         // Verbatim duplication: the model echoed the whole input two or more
         // times instead of rewriting it once. Only checked when the output

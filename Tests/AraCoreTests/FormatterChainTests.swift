@@ -263,6 +263,50 @@ struct FormatterChainTests {
                 == "hello there friend")
     }
 
+    /// The chain's contract says there is "no way for one to hang". That was
+    /// true only of the *concrete* `RuleBasedFormatter`; the parameter is typed
+    /// `any Formatter`, and the terminal step used to await it with no deadline
+    /// at all. Blocking rather than sleeping, so the stub cannot be rescued by
+    /// cancellation — the deadline has to be what ends the wait.
+    ///
+    /// Mutation: drop the `withDeadline` wrapper from `terminalFallback` and
+    /// this returns `"RULES"` after ~400ms instead of the raw transcript after
+    /// ~60ms, failing both expectations.
+    @Test("a hung rule-based floor cannot hang the dictation")
+    func rulesFloorIsDeadlined() async throws {
+        let chain = FormatterChain(
+            engine: .rules, timeout: .milliseconds(60),
+            local: nil, cloud: nil,
+            rules: StubFormatter { _ in
+                usleep(400_000)
+                return "RULES"
+            })
+        let started = ContinuousClock.now
+        #expect(try await chain.format("hello there friend", mode: mode)
+                == "hello there friend")
+        #expect(ContinuousClock.now - started < .milliseconds(300))
+    }
+
+    /// The same protection on the verbatim fast path, which reaches the floor by
+    /// a different branch (`!mode.usesLLM`) and is the path most utterances take
+    /// when the user has picked verbatim.
+    @Test("the verbatim fast path is deadlined too")
+    func verbatimFloorIsDeadlined() async throws {
+        let verbatim = Mode(id: "verbatim", name: "V", prompt: "",
+                            appBundleIDs: [], usesLLM: false)
+        let chain = FormatterChain(
+            engine: .local, timeout: .milliseconds(60),
+            local: nil, cloud: nil,
+            rules: StubFormatter { _ in
+                usleep(400_000)
+                return "RULES"
+            })
+        let started = ContinuousClock.now
+        #expect(try await chain.format("hello there friend", mode: verbatim)
+                == "hello there friend")
+        #expect(ContinuousClock.now - started < .milliseconds(300))
+    }
+
     @Test("a throwing rules formatter is survivable on the rules-only branch too")
     func brokenRulesOnRulesBranch() async throws {
         let chain = FormatterChain(

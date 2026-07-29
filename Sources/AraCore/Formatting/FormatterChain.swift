@@ -13,12 +13,14 @@ import Foundation
 /// deadline: a dictation tool that hangs is worse than one that is occasionally
 /// unpolished.
 ///
-/// `timeout` is **per candidate engine, not a total budget**. Under `.cloud` a
-/// hung cloud followed by a hung local costs two full timeouts before the rule
-/// based formatter runs, so the worst-case latency to the cursor is `timeout`
-/// times the number of configured engines. That is intended — each engine gets
-/// a fair chance — but it means the configured value should be chosen against
-/// the slowest single engine, then multiplied to sanity-check the worst case.
+/// `timeout` is **per formatter, not a total budget**, and it covers the
+/// rule-based floor as well as the LLM engines. Under `.cloud` a hung cloud
+/// followed by a hung local costs two full timeouts before the rule based
+/// formatter runs, and a hung floor a third, so the worst-case latency to the
+/// cursor is `timeout` times the number of formatters consulted. That is
+/// intended — each engine gets a fair chance — but it means the configured
+/// value should be chosen against the slowest single engine, then multiplied to
+/// sanity-check the worst case.
 ///
 /// Cancellation is not a formatting failure. If the calling task is cancelled
 /// mid-format, `CancellationError` propagates rather than being absorbed into a
@@ -129,14 +131,30 @@ public struct FormatterChain: Formatter {
     /// non-cancelled call returns a string — including when what it threw was
     /// itself a `CancellationError` that had nothing to do with our caller.
     ///
+    /// The deadline is applied here too, and for the same reason the catch is.
+    /// "There is nothing left to fall back to" is the argument for *omitting* it,
+    /// and it is backwards: there is exactly one thing left, the raw transcript,
+    /// and this method already returns it when `rules` throws. Timing out is just
+    /// another way for the floor to fail to produce a rewrite, and it degrades to
+    /// the same place. Without this, an injected formatter that hangs hangs the
+    /// dictation forever — the chain's "no way for one to hang" claim held only
+    /// for the *concrete* `RuleBasedFormatter`, which is pure string work, and
+    /// not for the `any Formatter` the parameter actually accepts.
+    ///
+    /// The cost is two unstructured tasks on the verbatim fast path, which is
+    /// microseconds against a transcription measured in seconds.
+    ///
     /// Cancellation of *this task* is re-thrown ahead of that fallback, so a
     /// withdrawn request never comes back as raw text pretending to be a result.
     private func terminalFallback(_ text: String, mode: Mode) async throws -> String {
+        let rules = self.rules
         do {
-            return try await rules.format(text, mode: mode)
+            return try await Self.withDeadline(timeout) {
+                try await rules.format(text, mode: mode)
+            }
         } catch {
             if Task.isCancelled { throw CancellationError() }
-            Self.note("rule-based formatter threw (\(Self.describe(error))); "
+            Self.note("rule-based formatter failed (\(Self.describe(error))); "
                       + "returning the raw transcript")
             return text
         }

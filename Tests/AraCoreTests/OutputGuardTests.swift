@@ -72,4 +72,30 @@ struct OutputGuardTests {
             input: "i can't make thursday can we move it",
             output: "I can't make Thursday. Can we move it?"))
     }
+
+    /// A model writing prose emits U+2019, not the ASCII apostrophe the opener
+    /// list is written with. Before the fold, this refusal was typed at the
+    /// user's cursor as though it were their sentence.
+    @Test("rejects a refusal written with a curly apostrophe")
+    func rejectsCurlyRefusal() {
+        #expect(!OutputGuard.isPlausible(
+            input: "please send the quarterly report to bob by end of day",
+            output: "I can\u{2019}t help with formatting that request right now"))
+        #expect(!OutputGuard.isPlausible(
+            input: "please send the quarterly report to bob by end of day",
+            output: "I\u{2019}m sorry, but I can't rewrite that particular sentence for you"))
+    }
+
+    /// The exemption has to survive the fold in both directions: whichever
+    /// character the transcript and the rewrite each use, a user who genuinely
+    /// dictated "I can't ..." must still get their sentence.
+    @Test("the dictated-refusal exemption survives mixed apostrophes")
+    func allowsUserSayingCantWithCurlyApostrophe() {
+        #expect(OutputGuard.isPlausible(
+            input: "i can't make thursday can we move it",
+            output: "I can\u{2019}t make Thursday. Can we move it?"))
+        #expect(OutputGuard.isPlausible(
+            input: "i can\u{2019}t make thursday can we move it",
+            output: "I can't make Thursday. Can we move it?"))
+    }
 }

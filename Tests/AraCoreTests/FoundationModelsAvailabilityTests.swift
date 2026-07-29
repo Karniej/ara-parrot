@@ -1,6 +1,9 @@
 import Foundation
 import Testing
 @testable import AraCore
+#if canImport(FoundationModels)
+import FoundationModels
+#endif
 
 /// Peak simultaneous occupancy, sampled from threads that are about to block.
 ///
@@ -33,6 +36,16 @@ private final class PeakOccupancy: @unchecked Sendable {
 }
 
 private struct StubError: Error {}
+
+/// An error whose *rendering* carries a payload. Nothing in production throws
+/// one; it exists so the "only literals reach a log line" rule is tested by
+/// something that would visibly break it, rather than by a type whose default
+/// description happens to be harmless anyway.
+private struct LeakyError: Error, CustomStringConvertible, LocalizedError {
+    static let payload = "sk-ant-SECRET-and-the-users-dictated-sentence"
+    var description: String { Self.payload }
+    var errorDescription: String? { Self.payload }
+}
 
 @Suite("FoundationModels availability")
 struct FoundationModelsAvailabilityTests {
@@ -191,5 +204,74 @@ struct FoundationModelsAvailabilityTests {
             Issue.record("an unrecognised error should become .transportFailure")
             return
         }
+    }
+
+    /// `FormatterChain` prints the mapped error to stderr, and this daemon's
+    /// stderr is routinely piped to a file. A foreign error's description is a
+    /// channel its producer controls, so it is reduced to a type name.
+    @Test("a foreign error's own description never reaches the log line")
+    func foreignErrorIsReducedToItsTypeName() throws {
+        guard #available(macOS 26.0, *) else { return }
+        let detail = Self.transportDetail(FoundationModelsFormatter.translate(LeakyError()))
+        #expect(detail == "LeakyError")
+        #expect(detail?.contains(LeakyError.payload) == false)
+    }
+
+    #if canImport(FoundationModels)
+    /// The case that matters: `guardrailViolation` fires *because of* what the
+    /// user just dictated, and its `Context.debugDescription` is written by the
+    /// framework. Nothing from it may be rendered.
+    @Test("no GenerationError context text reaches the log line")
+    func generationErrorContextIsNeverRendered() throws {
+        guard #available(macOS 26.0, *) else { return }
+        let secret = "MY-PRIVATE-DICTATED-SENTENCE"
+        let context = LanguageModelSession.GenerationError.Context(debugDescription: secret)
+        let errors: [LanguageModelSession.GenerationError] = [
+            .exceededContextWindowSize(context),
+            .assetsUnavailable(context),
+            .guardrailViolation(context),
+            .unsupportedGuide(context),
+            .unsupportedLanguageOrLocale(context),
+            .decodingFailure(context),
+            .rateLimited(context),
+            .concurrentRequests(context),
+            .refusal(.init(transcriptEntries: []), context),
+        ]
+        for error in errors {
+            let mapped = FoundationModelsFormatter.translate(error)
+            guard let mapped = mapped as? FormatterError else {
+                Issue.record("\(error) was not mapped onto the chain's vocabulary")
+                continue
+            }
+            #expect(Self.transportDetail(mapped)?.contains(secret) != true,
+                    "the context's debugDescription reached the rendered error")
+        }
+    }
+
+    @Test("the cases the chain distinguishes keep their meaning")
+    func generationErrorsKeepTheirMeaning() throws {
+        guard #available(macOS 26.0, *) else { return }
+        let context = LanguageModelSession.GenerationError.Context(debugDescription: "x")
+        let refused = FoundationModelsFormatter.translate(
+            LanguageModelSession.GenerationError.guardrailViolation(context)) as? FormatterError
+        guard case .refused? = refused else {
+            Issue.record("a guardrail violation is a refusal, not a transport fault")
+            return
+        }
+        let unavailable = FoundationModelsFormatter.translate(
+            LanguageModelSession.GenerationError.assetsUnavailable(context)) as? FormatterError
+        guard case .unavailable? = unavailable else {
+            Issue.record("missing assets mean the engine is unavailable")
+            return
+        }
+        let rateLimited = FoundationModelsFormatter.translate(
+            LanguageModelSession.GenerationError.rateLimited(context)) as? FormatterError
+        #expect(Self.transportDetail(rateLimited) == "rate limited by the system model")
+    }
+    #endif
+
+    private static func transportDetail(_ error: (any Error)?) -> String? {
+        guard case .transportFailure(let detail)? = error as? FormatterError else { return nil }
+        return detail
     }
 }
