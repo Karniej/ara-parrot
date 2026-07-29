@@ -39,15 +39,34 @@ import Foundation
 /// of the hold. The documented bit for the key is used only as a tie-breaker
 /// when several bits appear at once, never as a requirement.
 ///
-/// ## It cannot do worse than the code it replaces
+/// ## Fn is excluded from all of this, deliberately
+///
+/// Fn is the one hotkey with no keycode gate: it matches on the class flag
+/// alone, so **every** `flagsChanged` event is a candidate edge for it, not just
+/// its own. It also has no left/right sibling, which is the entire problem
+/// device bits solve. Learning for it is therefore not merely useless but
+/// actively wrong: if the first event the detector sees is the Fn press while
+/// some other modifier is already physically held, the diff attributes that
+/// foreign key's device bit to Fn, and releasing that modifier mid-hold then
+/// fabricates a release — one truncated utterance, on the default hotkey.
+///
+/// Measured before the guard existed: Fn pressed with shift held
+/// (`0x00820102`, keycode 63) learned `0x2`, and the shift release
+/// (`0x00800100`, keycode 56) returned `.released` while Fn was still down.
+///
+/// So when there is no keycode gate, the class bit alone decides — which is
+/// both the old behaviour and the complete correct answer for a key with no
+/// sibling.
+///
+/// ## For a key with a sibling, it cannot do worse than the code it replaces
 ///
 /// If no device bits appear at the press edge — an external keyboard that does
 /// not report them, a synthetic event, a remapper — nothing is learned and the
-/// class bit decides, which is exactly the previous behaviour. The failure mode
-/// is therefore "no better than before", never "worse than before". The one
-/// case that stays wrong is a key already held when the process started, since
-/// there is no observed transition to learn from; the next press of that key
-/// re-learns it.
+/// class bit decides, which is exactly the previous behaviour. Within that
+/// scope the failure mode is "no better than before", never "worse than
+/// before". The one case that stays wrong is a key already held when the
+/// process started, since there is no observed transition to learn from; the
+/// next press of that key re-learns it.
 struct ModifierEdgeDetector {
     enum Edge { case pressed, released }
 
@@ -90,7 +109,13 @@ struct ModifierEdgeDetector {
 
         // Left/right variants share a class bit, so the keycode on the event is
         // what tells them apart. Fn matches on the flag alone (keyCode == nil).
-        if let expected = keyCode, code != expected { return nil }
+        guard let expected = keyCode else {
+            // No keycode gate means no sibling to disambiguate and every event
+            // in the stream is a candidate edge. Learning here can only mis-file
+            // another key's device bit as ours; see the type's doc comment.
+            return edge(pressed: flags & classMask != 0)
+        }
+        if code != expected { return nil }
 
         let classHeld = flags & classMask != 0
         var pressed = classHeld
@@ -106,6 +131,11 @@ struct ModifierEdgeDetector {
             }
         }
 
+        return edge(pressed: pressed)
+    }
+
+    /// Records the new state and reports it only when it changed.
+    private mutating func edge(pressed: Bool) -> Edge? {
         guard pressed != isPressed else { return nil }
         isPressed = pressed
         return pressed ? .pressed : .released

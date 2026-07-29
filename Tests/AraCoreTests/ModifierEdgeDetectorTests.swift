@@ -136,6 +136,45 @@ struct ModifierEdgeDetectorTests {
         #expect(d.handle(keyCode: 63, flags: Flags.idle) == .released)
     }
 
+    /// Fn is the default hotkey and the only one with no keycode gate, so every
+    /// event in the stream is a candidate edge for it — and it has no left/right
+    /// sibling, so there is nothing for a device bit to disambiguate. Learning
+    /// for it therefore attributes some *other* key's bit to Fn, and that key
+    /// going up mid-hold fabricates a release the user never asked for: one
+    /// truncated utterance on the default hotkey.
+    ///
+    /// The exact sequence, measured against the unguarded implementation: the Fn
+    /// press learned `0x2` from the already-held shift, and the shift release
+    /// returned `.released` with Fn still physically down.
+    ///
+    /// Mutation: remove the `keyCode == nil` guard from `handle` and the second
+    /// expectation fails with `.released`.
+    @Test("a foreign modifier going up mid-hold does not fabricate an fn release")
+    func fnDoesNotLearnAForeignDeviceBit() {
+        let fnWithShiftHeld: UInt64 = 0x0082_0102   // maskSecondaryFn | maskShift | 0x100 | 0x2
+        let shiftReleasedFnDown: UInt64 = 0x0080_0100
+        var d = ModifierEdgeDetector(hotkey: .fn)
+        // Fn goes down while shift is already physically held.
+        #expect(d.handle(keyCode: 63, flags: fnWithShiftHeld) == .pressed)
+        // Shift comes up. Fn is still down, so this is not an edge at all.
+        #expect(d.handle(keyCode: Keys.leftShift, flags: shiftReleasedFnDown) == nil)
+        // And the real release still lands.
+        #expect(d.handle(keyCode: 63, flags: Flags.idle) == .released)
+    }
+
+    /// The same shape with the modifier arriving *after* Fn rather than before,
+    /// which the diff would attribute to nothing but which must still be inert.
+    @Test("a foreign modifier pressed and released during an fn hold is inert")
+    func fnIgnoresForeignModifierChurn() {
+        let fnDown: UInt64 = 0x0080_0100
+        let fnPlusShift: UInt64 = 0x0082_0102
+        var d = ModifierEdgeDetector(hotkey: .fn)
+        #expect(d.handle(keyCode: 63, flags: fnDown) == .pressed)
+        #expect(d.handle(keyCode: Keys.leftShift, flags: fnPlusShift) == nil)
+        #expect(d.handle(keyCode: Keys.leftShift, flags: fnDown) == nil)
+        #expect(d.handle(keyCode: 63, flags: Flags.idle) == .released)
+    }
+
     @Test("repeated presses re-learn the device bit each time")
     func repeatedHolds() {
         var d = ModifierEdgeDetector(hotkey: .rightShift)
@@ -159,3 +198,4 @@ struct ModifierEdgeDetectorTests {
         #expect(d.handle(keyCode: Keys.rightShift, flags: Flags.leftShift) == .released)
     }
 }
+

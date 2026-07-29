@@ -188,6 +188,16 @@ unverified is that a physical keyboard produces those values.
 - [ ] 👤 **4m.** With `--debug-hotkey`, capture the `flags=` values for each key
       you tested and record them next to the results above. They are the
       evidence for whichever conclusion 4l reaches.
+- [ ] 👤 **4n. Fn with an unrelated modifier held.** With the **default** hotkey
+      (no `--hotkey` flag), hold **shift** down first, then hold **fn** and speak,
+      then release **shift** while still holding fn, then release fn. Recording
+      must stop at the **fn** release and nowhere earlier — one `● recording`
+      followed by one `○ captured …`, and the captured duration long enough to
+      contain everything you said. If the utterance is truncated at the moment shift came
+      up, the detector has attributed shift's device bit to fn: fn has no
+      left/right sibling and must be decided by the class bit alone. Worth doing
+      with left-command and left-option held too, since fn re-evaluates every
+      modifier event rather than only its own.
 
 ## 5. ⚙️ On-device formatting — **never executed on this machine**
 
