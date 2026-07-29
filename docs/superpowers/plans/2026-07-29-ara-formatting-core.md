@@ -388,15 +388,21 @@ import Foundation
 /// result would be empty, the original is returned — losing the user's words
 /// is worse than leaving an "um" in.
 public struct RuleBasedFormatter: Formatter {
-    private static let filler = ["um", "uh", "erm", "ah", "you know", "i mean", "like"]
+    // Only words that are never content-bearing in English. Anything requiring
+    // judgement about filler-vs-content ("like", "you know", "i mean") belongs
+    // to the language-model formatters, not to the floor: a bare boundary regex
+    // turns "I mean it" into "it" and "Do you know what time it is?" into
+    // "Do what time it is?".
+    private static let filler = ["um", "uh", "erm"]
 
     public init() {}
 
     public func format(_ text: String, mode: Mode) async throws -> String {
         var out = text
         for word in Self.filler {
-            // \b guards against matching inside "drum" or "humming".
-            let pattern = "\\b\(NSRegularExpression.escapedPattern(for: word))\\b"
+            // Refuses to match inside "drum" or across a hyphen — \b alone finds
+            // a boundary at "uh|-huh" and would leave "-huh".
+            let pattern = "(?<![\\w-])\(NSRegularExpression.escapedPattern(for: word))(?![\\w-])"
             out = out.replacingOccurrences(
                 of: pattern, with: " ",
                 options: [.regularExpression, .caseInsensitive]
