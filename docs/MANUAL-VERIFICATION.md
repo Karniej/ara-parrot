@@ -164,9 +164,9 @@ exists.
 - [ ] 👤 **4a.** With every engine off — `--mode default` and an
       `~/.config/ara/config.json` containing `{"engine": "rules"}` — dictate
       anything. Text must still appear.
-- [ ] 👤 **4b.** Set `{"engine": "local", "timeoutMs": 50}`. The deadline will
+- [ ] 👤 **4b.** Set `{"engine": "mlx", "timeoutMs": 50}`. The deadline will
       fire before any model can answer. Text must still appear (rule-based), and
-      the log must show `formatting: local formatter failed (timed out); falling
+      the log must show `formatting: mlx formatter failed (timed out); falling
       back` — once per utterance, not repeatedly. (50 is the floor; `timeoutMs: 1`
       is clamped up to it with a `config:` warning, because a value at or below
       zero would disable LLM formatting entirely and silently.)

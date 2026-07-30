@@ -47,7 +47,7 @@ default**, and every key is optional:
 
 ```json
 {"hotkey": "right-command", "model": "whisper-base.en",
- "engine": "local", "timeoutMs": 2500, "mode": "default"}
+ "engine": "mlx", "timeoutMs": 2500, "mode": "default"}
 ```
 
 A value the file gets wrong never stops the daemon: it warns on stderr with a

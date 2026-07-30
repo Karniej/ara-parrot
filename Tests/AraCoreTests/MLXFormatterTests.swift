@@ -105,6 +105,7 @@ struct MLXFormatterTests {
 
     @Test("a second warm-up does not reload")
     func warmUpIsIdempotent() async throws {
+        guard #available(macOS 15.4, *) else { return }
         let loads = Counter()
         let formatter = MLXFormatter(
             isModelPresent: { true },
@@ -130,6 +131,7 @@ struct MLXFormatterTests {
     /// stub that blocks is the honest model of it.
     @Test("format keeps its inference call off the cooperative thread pool")
     func formatRunsInferenceOffTheCooperativePool() async throws {
+        guard #available(macOS 15.4, *) else { return }
         let cores = ProcessInfo.processInfo.activeProcessorCount
         let occupancy = PeakOccupancy()
         let mode = mode
@@ -160,9 +162,11 @@ struct MLXFormatterTests {
 
     /// The same requirement for the load. A cold load is 38s of compute-bound,
     /// non-suspending work; on the cooperative pool that is one core gone for
-    /// the whole of startup, and `Run` warms the transcriber concurrently.
+    /// the whole of startup, and `Run` warms the transcriber and then MLX
+    /// sequentially inside a single detached task.
     @Test("warm-up keeps the load off the cooperative thread pool")
     func warmUpRunsTheLoadOffTheCooperativePool() async throws {
+        guard #available(macOS 15.4, *) else { return }
         let cores = ProcessInfo.processInfo.activeProcessorCount
         let occupancy = PeakOccupancy()
 
@@ -190,6 +194,7 @@ struct MLXFormatterTests {
 
     @Test("format's prompt and instructions come from TranscriptPrompt, not a private copy")
     func formatUsesTheSharedPrompt() async throws {
+        guard #available(macOS 15.4, *) else { return }
         let mode = Mode(id: "email", name: "Email", prompt: "MODE-SPECIFIC-RULE",
                         appBundleIDs: [], usesLLM: true)
         let captured = Captured()
@@ -209,6 +214,7 @@ struct MLXFormatterTests {
 
     @Test("the model's output is cleaned of an echoed wrapper")
     func outputIsCleaned() async throws {
+        guard #available(macOS 15.4, *) else { return }
         let formatter = try await loaded(generate: { _, _ in
             "\n<transcript>Hello there, friend.</transcript>\n"
         })
@@ -218,6 +224,7 @@ struct MLXFormatterTests {
 
     @Test("an empty rewrite is implausible rather than a silent deletion")
     func emptyOutputIsRejected() async throws {
+        guard #available(macOS 15.4, *) else { return }
         let formatter = try await loaded(generate: { _, _ in "   \n " })
         do {
             let out = try await formatter.format("hello there friend", mode: mode)
@@ -234,6 +241,7 @@ struct MLXFormatterTests {
 
     @Test("a generation failure becomes a FormatterError the chain can fall back from")
     func generationFailureIsMapped() async throws {
+        guard #available(macOS 15.4, *) else { return }
         let formatter = try await loaded(generate: { _, _ in throw StubError() })
         do {
             _ = try await formatter.format("hello there friend", mode: mode)
@@ -252,6 +260,7 @@ struct MLXFormatterTests {
     /// channel its producer controls, so it is reduced to a type name.
     @Test("a foreign error's own description never reaches the log line")
     func foreignErrorIsReducedToItsTypeName() async throws {
+        guard #available(macOS 15.4, *) else { return }
         let formatter = try await loaded(generate: { _, _ in throw LeakyError() })
         do {
             _ = try await formatter.format("hello there friend", mode: mode)
@@ -271,6 +280,7 @@ struct MLXFormatterTests {
     /// absorbing the withdrawal into a rewrite.
     @Test("cancellation propagates out of format")
     func cancellationPropagates() async throws {
+        guard #available(macOS 15.4, *) else { return }
         let formatter = try await loaded(generate: { _, _ in
             try await Task.sleep(for: .seconds(30))
             return "never"
