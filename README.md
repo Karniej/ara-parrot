@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="docs/assets/ara.png" alt="Ara — free, open, on-device dictation" width="720">
+</p>
+
 # Ara (parrot)
 
 A free macOS dictation daemon. Push-to-talk, on-device transcription, AI
