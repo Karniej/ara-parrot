@@ -289,6 +289,14 @@ public enum DoctorReport {
     }
 
     public static func print(_ checks: [Check]) {
+        Swift.print(rendered(checks))
+    }
+
+    /// The report as one string, exactly what `print` emits — a second
+    /// consumer (the menu's "Run Diagnostics…" alert) needs the same text in
+    /// a window instead of a terminal, and two renderers would drift.
+    public static func rendered(_ checks: [Check]) -> String {
+        var lines: [String] = []
         for c in checks {
             let (mark, label): (String, String) = {
                 switch c.status {
@@ -297,11 +305,12 @@ public enum DoctorReport {
                 case .fail(let msg): return ("✗", msg)
                 }
             }()
-            Swift.print("\(mark) \(c.name): \(label)")
+            lines.append("\(mark) \(c.name): \(label)")
             if let r = c.remediation {
-                Swift.print("    → \(r)")
+                lines.append("    → \(r)")
             }
         }
+        return lines.joined(separator: "\n")
     }
 
     /// True if no checks are in a hard-fail state. Warnings don't block.

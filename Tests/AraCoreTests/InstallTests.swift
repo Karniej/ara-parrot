@@ -36,6 +36,18 @@ struct InstallTests {
         #expect(plist["RunAtLoad"] as? Bool == true)
     }
 
+    /// The menu's "Start at Login" checkmark is this predicate — the plist on
+    /// disk, never an assumption about what a toggle did.
+    @Test("isInstalled reflects whether the agent plist exists")
+    func isInstalledReflectsDisk() throws {
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("ara-agent-\(UUID().uuidString).plist")
+        #expect(!Install.isInstalled(at: url))
+        try Data("plist".utf8).write(to: url)
+        #expect(Install.isInstalled(at: url))
+        try FileManager.default.removeItem(at: url)
+    }
+
     // MARK: - flag validation
 
     @Test("exactly one primary action, purge allowed alone or alongside")

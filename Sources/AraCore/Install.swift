@@ -38,9 +38,9 @@ public struct Install: ParsableCommand {
             purgeLegacyLogFiles()
         }
         if uninstall {
-            try removeAgent()
+            try Self.uninstallAgent()
         } else if launchAtLogin {
-            try writeAgent()
+            try Self.installAgent()
         }
     }
 
@@ -58,15 +58,21 @@ public struct Install: ParsableCommand {
     private static let label = "com.digimata.parrot"
 
     /// Where the agent plist lives. Static so `doctor` can inspect the
-    /// installed file without constructing the command.
-    static var plistURL: URL {
+    /// installed file — and the menu's "Start at Login" item can read its
+    /// state — without constructing the command.
+    public static var plistURL: URL {
         let home = FileManager.default.homeDirectoryForCurrentUser
         return home
             .appendingPathComponent("Library/LaunchAgents", isDirectory: true)
             .appendingPathComponent("\(label).plist")
     }
 
-    private var plistURL: URL { Self.plistURL }
+    /// Whether launch-at-login is installed: the plist on disk, nothing else.
+    /// The menu re-reads this after every toggle — success *and* failure —
+    /// rather than assuming the toggle worked.
+    public static func isInstalled(at url: URL = plistURL) -> Bool {
+        FileManager.default.fileExists(atPath: url.path)
+    }
 
     /// The plist content, separated from the write so tests can hold it to
     /// its privacy contract:
@@ -92,9 +98,19 @@ public struct Install: ParsableCommand {
         ]
     }
 
-    private func writeAgent() throws {
+    /// Writes the agent plist and bootstraps it. Static and public so the
+    /// menu's "Start at Login" toggle runs the *same* logic in-process —
+    /// `Install` stays the single source of truth for the plist's content and
+    /// the launchctl choreography.
+    ///
+    /// Note the bootstrap is immediate: `RunAtLoad` plus `launchctl
+    /// bootstrap` means a background copy starts **now**, not at next login.
+    /// A caller whose own process is a foreground daemon (the menu) owes the
+    /// user that fact — two daemons will both grab the hotkey until one
+    /// quits.
+    public static func installAgent() throws {
         let binary = try resolveBinaryPath()
-        let plist = Self.agentPlist(binary: binary)
+        let plist = agentPlist(binary: binary)
 
         let url = plistURL
         try FileManager.default.createDirectory(
@@ -140,7 +156,10 @@ public struct Install: ParsableCommand {
         }
     }
 
-    private func removeAgent() throws {
+    /// Boots the agent out and removes its plist. Static and public for
+    /// `installAgent`'s reason: the menu toggle and the CLI flag are one
+    /// implementation.
+    public static func uninstallAgent() throws {
         let url = plistURL
         if FileManager.default.fileExists(atPath: url.path) {
             _ = runLaunchctl(["bootout", "gui/\(uid())", url.path])
@@ -151,7 +170,7 @@ public struct Install: ParsableCommand {
         }
     }
 
-    private func resolveBinaryPath() throws -> String {
+    private static func resolveBinaryPath() throws -> String {
         // /usr/local/bin/parrot is the canonical install path. Honor a real
         // location if running from elsewhere (e.g. dev).
         let candidate = "/usr/local/bin/parrot"
@@ -172,9 +191,9 @@ public struct Install: ParsableCommand {
         throw ExitCode(1)
     }
 
-    private func uid() -> uid_t { getuid() }
+    private static func uid() -> uid_t { getuid() }
 
-    private func runLaunchctl(_ args: [String]) -> (status: Int32, stderr: String) {
+    private static func runLaunchctl(_ args: [String]) -> (status: Int32, stderr: String) {
         let task = Process()
         task.launchPath = "/bin/launchctl"
         task.arguments = args

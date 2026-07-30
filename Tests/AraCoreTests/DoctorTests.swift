@@ -32,6 +32,27 @@ struct DoctorTests {
         #expect(DoctorReport.allOK([check]))
     }
 
+    /// The menu's "Run Diagnostics…" alert shows the same report the CLI
+    /// prints, so the rendering is one function with two consumers — this
+    /// test is what keeps them from drifting.
+    @Test("rendered() is the printed format: mark, name, message, remediation")
+    func renderedMatchesPrintedFormat() {
+        let checks = [
+            Check(name: "alpha", status: .ok, remediation: nil),
+            Check(name: "beta", status: .warn("looks off"),
+                  remediation: "tighten beta"),
+            Check(name: "gamma", status: .fail("broken"),
+                  remediation: "replace gamma"),
+        ]
+        #expect(DoctorReport.rendered(checks) == """
+        ✓ alpha: ok
+        ! beta: looks off
+            → tighten beta
+        ✗ gamma: broken
+            → replace gamma
+        """)
+    }
+
     // MARK: - the default engine
 
     /// The MLX engine is the default, so its state is the one a fresh install
