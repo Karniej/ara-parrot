@@ -275,6 +275,9 @@ both move fast, so treat the paid columns as a snapshot.
 | Price | Free tier + paid | Free tier + paid | **Free, MIT, forever** |
 | Push-to-talk on a modifier key | ✅ | ✅ | ✅ |
 | AI cleanup (fillers, punctuation, caps) | ✅ paid models | ✅ cloud | ✅ local open model |
+| Cleanup intensity dial (none→high) | ❌ | ✅ | ✅ `cleanup` config key |
+| Reliable delivery into terminals/Electron | ✅ option | ✅ | ✅ auto per-app paste |
+| Transcripts kept out of world-readable logs | ❌ audio kept forever | cloud-side | ✅ length-only logs by default |
 | Per-app formatting modes | ✅ | ✅ | ✅ (default/email/chat/code) |
 | Custom dictionary / replacements | ✅ | ✅ | ✅ hot-reloaded JSON + menu |
 | Survives mic unplug mid-dictation | ❌ | partial | ✅ **keeps the utterance** |
@@ -283,7 +286,7 @@ both move fast, so treat the paid columns as a snapshot.
 | History + search + reprocess | ✅ | partial | 🔜 planned, with retention controls |
 | Context awareness (selected text → cleanup) | ✅ | ✅ (cloud, incl. screenshots) | 🔜 planned, local-only |
 | Voice commands on selection ("make this shorter") | ❌ | ✅ paid | 🔜 planned |
-| Snippets (voice text expansion) | ❌ | ✅ | 🔜 planned |
+| Snippets (voice text expansion) | ❌ | ✅ | ✅ `snippets.json`, hot-reloaded |
 | Hands-free / locked dictation | ✅ | ✅ | 🔜 planned |
 | Multiple / multilingual models | ✅ paid | ✅ | 🔜 planned (translation will be free) |
 | Streaming preview while speaking | ✅ | ✅ | not yet |
