@@ -563,6 +563,17 @@ the way so any correction seen is unambiguously the dictionary's.
       it just loaded, so a hand edit made seconds earlier survives. Adding
       the same variant to the same canonical again must leave the file
       byte-identical (no churn to `git diff` if you keep the file in a repo).
+- [ ] 👤 **9q-f. A broken file is never clobbered by the menu.** With
+      corrections accumulated in the file, break it as in 9q-d (delete the
+      closing `]`) and add a *new* correction through the menu. The file's
+      bytes must be exactly as you broke them — the menu must not replace
+      your accumulated vocabulary with a single-entry file — and the log
+      must show one `dictionary: correction not saved (…); it applies until
+      quit` line. Dictate the new correction's heard form: the canonical
+      must still be typed (it applies in memory). Repair the file's syntax,
+      then add any further correction through the menu: the file must gain
+      *both* — the repaired content, the in-memory backlog, and the new
+      addition all merged.
 
 ## 10. Judgement calls to make with real dictation
 

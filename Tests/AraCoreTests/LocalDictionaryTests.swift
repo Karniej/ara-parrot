@@ -425,6 +425,35 @@ struct LocalDictionaryTests {
             .save(heard: "ARRA", canonical: "ara", to: url) == nil)
     }
 
+    /// The clobber hole: `load` tolerates a broken file by behaving as empty
+    /// (dictation must never stop), but a *rewrite* must not — merging into
+    /// the empty fallback and writing back would atomically replace the
+    /// user's whole accumulated vocabulary with a single new entry. A file
+    /// that exists but cannot be parsed gets the failed-write treatment
+    /// instead: bytes untouched, error returned (the daemon's "applies until
+    /// quit" line), correction backlogged.
+    ///
+    /// The fixture is a *truncated* file, not a trailing comma: this OS's
+    /// `JSONDecoder` quietly accepts trailing commas, so a comma would test
+    /// nothing. Truncation mid-edit is also exactly the manual-verification
+    /// breakage.
+    @Test("save never rewrites a file it cannot parse")
+    func saveRefusesToClobberBrokenFile() throws {
+        let url = uniqueURL("save-broken")
+        // A hand edit gone wrong: the closing bracket never made it.
+        let broken = Data(#"[{"canonical": "Ara", "variants": ["arra"]}"#.utf8)
+        try broken.write(to: url)
+
+        let unsaved = UnsavedCorrections()
+        #expect(unsaved.save(heard: "parat", canonical: "Parrot", to: url) != nil)
+        #expect(try Data(contentsOf: url) == broken)
+        // The correction still applies for the session, on top of whatever
+        // each utterance's load can read (nothing, while the file is broken).
+        #expect(unsaved
+            .applied(to: LocalDictionary.load(from: url, warn: { _ in }))
+            .entries == [entry("Parrot", "parat")])
+    }
+
     /// The stale-backlog hole: a correction whose write failed must not
     /// outvote the user's *newer* answer for the same variant. Sequence:
     /// a mistaken `arra → Parrot` fails to write and is backlogged; the user

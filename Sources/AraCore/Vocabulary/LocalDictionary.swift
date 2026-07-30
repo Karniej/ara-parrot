@@ -273,6 +273,41 @@ public struct LocalDictionary: Sendable, Equatable {
             withIntermediateDirectories: true)
         try encoded().write(to: url, options: .atomic)
     }
+
+    /// How a *rewrite* reads the file, as opposed to how dictation does.
+    ///
+    /// `load` tolerates a broken file by behaving as empty, because dictation
+    /// must never stop. A rewrite must not inherit that tolerance: composed
+    /// with the atomic write, "broken means empty" means a mid-edit syntax
+    /// error costs the user their whole accumulated vocabulary — merged as
+    /// one new entry and written over the file they were editing. So an
+    /// absent file is `.readable` and empty (the normal fresh-install case;
+    /// the write creates it), but a file that exists and cannot be read or
+    /// parsed is `.unloadable`, and the caller must keep its hands off.
+    enum RewriteSource {
+        case readable(LocalDictionary)
+        case unloadable(any Error)
+    }
+
+    /// Internal, not public: only `UnsavedCorrections.save` rewrites the
+    /// file. No warn ledger here — the per-utterance `load` owns telling the
+    /// user their file is broken, once.
+    static func loadForRewrite(from url: URL) -> RewriteSource {
+        let data: Data
+        do {
+            data = try Data(contentsOf: url)
+        } catch {
+            return FileManager.default.fileExists(atPath: url.path)
+                ? .unloadable(error)
+                : .readable(LocalDictionary())
+        }
+        do {
+            let entries = try JSONDecoder().decode([Entry].self, from: data)
+            return .readable(LocalDictionary(entries: entries))
+        } catch {
+            return .unloadable(error)
+        }
+    }
 }
 
 /// Corrections added through the menu that could not be written to disk.
@@ -331,16 +366,33 @@ public final class UnsavedCorrections: @unchecked Sendable {
     /// persist the result.
     ///
     /// Returns `nil` when the file now holds the merged state (including the
-    /// no-churn case where it already did, which writes nothing). Returns the
-    /// write error when persistence failed: the correction is then remembered
-    /// here and applies until quit, and the caller owns the one stderr line —
-    /// only it knows what "not saved" should sound like next to its other
-    /// warnings.
+    /// no-churn case where it already did, which writes nothing). Returns an
+    /// error when persistence failed — the write itself, or a file that
+    /// exists but cannot be parsed, which a rewrite must never replace (see
+    /// `loadForRewrite`): the correction is then remembered here and applies
+    /// until quit, and the caller owns the one stderr line — only it knows
+    /// what "not saved" should sound like next to its other warnings.
     @discardableResult
     public func save(heard: String, canonical: String, to url: URL)
         -> (any Error)?
     {
-        let onDisk = LocalDictionary.load(from: url)
+        let onDisk: LocalDictionary
+        switch LocalDictionary.loadForRewrite(from: url) {
+        case .readable(let dictionary):
+            onDisk = dictionary
+        case .unloadable(let error):
+            // The file exists but cannot be parsed (a hand edit gone wrong)
+            // or read. Writing now would replace the user's accumulated
+            // vocabulary with whatever this merge produced from nothing —
+            // so the file stays exactly as it is, and the correction gets
+            // the failed-write treatment: remembered here, applying on top
+            // of every load until quit (or until the file is repaired, at
+            // which point the next save lands the backlog too). The
+            // returned error becomes the daemon's one stderr line; load's
+            // warn-once ledger already tells the user the file is broken.
+            remember(heard: heard, canonical: canonical)
+            return error
+        }
         let merged = applied(to: onDisk)
             .adding(heard: heard, canonical: canonical)
         guard merged != onDisk else {
