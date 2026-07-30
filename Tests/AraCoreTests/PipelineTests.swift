@@ -24,6 +24,14 @@ private final class Occupancy: @unchecked Sendable {
     var peak: Int { lock.lock(); defer { lock.unlock() }; return high }
 }
 
+/// Captures the `Mode` a formatter was handed.
+private final class ModeBox: @unchecked Sendable {
+    private let lock = NSLock()
+    private var mode: Mode?
+    func set(_ new: Mode) { lock.lock(); mode = new; lock.unlock() }
+    var current: Mode? { lock.lock(); defer { lock.unlock() }; return mode }
+}
+
 /// Captures the `URLRequest` a transport was handed.
 private final class RequestBox: @unchecked Sendable {
     private let lock = NSLock()
@@ -134,6 +142,38 @@ struct PipelineTests {
                                 })
             .process(Self.filler, override: nil, manual: nil, frontmostBundleID: nil)
         #expect(out == "Hello there friend.")
+    }
+
+    // MARK: - cleanup
+
+    /// `cleanup: none` must skip every model while the rules floor still runs —
+    /// filler stripped, so the output proves which formatter produced it.
+    @Test("cleanup none skips the model and keeps the rules floor")
+    func cleanupNoneSkipsTheModel() async {
+        var config = Config()
+        config.cleanup = .none
+        let out = await session(config, mlx: PipelineStub { _, _ in
+            Issue.record("a model ran under cleanup none")
+            return "MODEL"
+        }).process(Self.filler, override: nil, manual: nil, frontmostBundleID: nil)
+        #expect(out == Self.cleaned)
+    }
+
+    /// The configured intensity must arrive at the engine on the mode, or
+    /// `TranscriptPrompt` silently formats everyone at medium — a mis-wiring
+    /// with no symptom other than the wrong editing aggressiveness.
+    @Test("config.cleanup reaches the formatter on the resolved mode")
+    func cleanupReachesTheFormatter() async {
+        var config = Config()
+        config.cleanup = .high
+        let box = ModeBox()
+        let out = await session(config, mlx: PipelineStub { text, mode in
+            box.set(mode)
+            return text
+        }).process(Self.filler, override: nil, manual: nil, frontmostBundleID: nil)
+        #expect(out == Self.filler)
+        #expect(box.current?.cleanup == .high)
+        #expect(box.current?.usesLLM == true)
     }
 
     // MARK: - timeoutMs

@@ -94,6 +94,20 @@ public struct Config: Codable, Sendable {
     /// Milliseconds the paste path waits before restoring the user's
     /// pasteboard — see `PasteInjector.settleDelay`. Clamped on load.
     public var pasteRestoreMs: Int = 300
+    /// How aggressively dictation is edited — see `CleanupIntensity`. Medium
+    /// is today's behaviour, so an absent key changes nothing for anyone.
+    ///
+    /// Decoded with the `microphone` guarantee rather than the `engine` one: a
+    /// typo here must not discard the whole file, because `cleanup` is a taste
+    /// preference and losing a valid `cloud` section over it would turn a
+    /// spelling mistake into an engine downgrade. The warning in `load` names
+    /// the valid spellings.
+    public var cleanup: CleanupIntensity = .medium
+
+    /// Set during decoding when `cleanup` was present but not one of its four
+    /// spellings; `load` turns it into the warning, exactly as
+    /// `microphoneProblem` below.
+    var cleanupProblem: String?
 
     /// Set during decoding when `microphone` was present but not a string;
     /// `load` turns it into the warning. Deferred rather than printed in
@@ -177,6 +191,11 @@ public struct Config: Codable, Sendable {
         if let problem = config.microphoneProblem {
             warn("ignoring microphone in \(target.path): \(problem); using the default input")
             config.microphoneProblem = nil
+        }
+        if let problem = config.cleanupProblem {
+            warn("ignoring cleanup in \(target.path): \(problem); valid values are "
+                 + "\(CleanupIntensity.validNames) — using medium")
+            config.cleanupProblem = nil
         }
         if config.timeoutMs < minimumTimeoutMs {
             warn("timeoutMs \(config.timeoutMs) in \(target.path) is below the "
@@ -294,7 +313,7 @@ public struct Config: Codable, Sendable {
     }
 
     private enum CodingKeys: String, CodingKey {
-        case engine, timeoutMs, mode, hotkey, model, cloud, microphone, inject, pasteRestoreMs
+        case engine, timeoutMs, mode, hotkey, model, cloud, microphone, inject, pasteRestoreMs, cleanup
     }
 
     public init(from decoder: Decoder) throws {
@@ -313,6 +332,14 @@ public struct Config: Codable, Sendable {
             // See `microphoneProblem`: unset, remembered, never rethrown.
             microphone = nil
             microphoneProblem = Config.describe(error)
+        }
+        do {
+            cleanup = try c.decodeIfPresent(CleanupIntensity.self, forKey: .cleanup)
+                ?? .medium
+        } catch {
+            // See `cleanupProblem`: defaulted, remembered, never rethrown.
+            cleanup = .medium
+            cleanupProblem = Config.describe(error)
         }
     }
 }

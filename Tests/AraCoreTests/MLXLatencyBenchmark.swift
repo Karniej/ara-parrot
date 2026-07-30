@@ -19,10 +19,11 @@ struct MLXLatencyBenchmark {
     /// speech, including the two adversarial ones the prompt has to survive:
     /// a genuine question put to the model inside the transcript, and a direct
     /// instruction-injection attempt. Both *should* come back as punctuated
-    /// sentences, not as answers. Measured outcome: the question survives, the
-    /// direct injection does not — the model tells the joke, under every
-    /// packaging tried. Recorded in docs/KNOWN-ISSUES.md; the assertions below
-    /// therefore pin only the tag-leak guarantee, which does hold.
+    /// sentences, not as answers — and since the cleanup-parity hardening pass
+    /// both measurably do (before it, the model told the joke; the tables are
+    /// in docs/KNOWN-ISSUES.md). The assertions below still pin only the
+    /// tag-leak guarantee: correctness lives in the harness recorded there,
+    /// this suite is the latency instrument.
     static let transcripts = [
         "hey can you send me the notes from yesterdays standup i think we missed the bit about the migration",
         "um so the thing is i dont really know if we should ship on friday i mean the tests are green but",

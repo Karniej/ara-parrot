@@ -106,6 +106,7 @@ default**, and every key is optional:
 {"hotkey": "right-command", "model": "whisper-base.en",
  "engine": "mlx", "timeoutMs": 2500, "mode": "default",
  "inject": "auto", "pasteRestoreMs": 300,
+ "cleanup": "medium",
  "microphone": "AppleUSBAudioEngine:Blue:Yeti:123:1"}
 ```
 
@@ -152,6 +153,17 @@ The paste path is careful with your pasteboard:
   content.
 - If the pasteboard write or the ⌘V synthesis fails, the transcript is
   delivered through the typing path instead — it is never lost.
+`cleanup` sets how aggressively dictation is edited, independently of the
+mode: `"none"` skips the language model entirely (filler stripping only),
+`"light"` adds punctuation and capitalisation but keeps every spoken word,
+`"medium"` (the default) also removes fillers, collapses spoken
+self-corrections ("we ship Tuesday, no wait, Wednesday" → "We ship
+Wednesday.") and obeys dictated punctuation ("comma", "period", "question
+mark"), and `"high"` additionally restructures fragments into complete
+sentences and formats spoken enumerations ("number one… number two…") as
+numbered lists. Dictated "new line"/"new paragraph" currently become a
+sentence break, not a real line break — a measured limit of the local model,
+recorded in docs/KNOWN-ISSUES.md.
 
 ### Microphone
 

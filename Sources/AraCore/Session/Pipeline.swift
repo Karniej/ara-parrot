@@ -148,6 +148,7 @@ public enum Pipeline {
             resolver: ModeResolver(registry: registry, defaultID: config.mode),
             dictionary: dictionary ?? { LocalDictionary.load(from: dictionaryURL) },
             snippets: snippets ?? { Snippets.load(from: snippetsURL) },
+            cleanup: config.cleanup,
             onModeResolved: onModeResolved)
     }
 }
