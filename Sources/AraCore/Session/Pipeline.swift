@@ -108,6 +108,11 @@ public enum Pipeline {
     /// utterance as `override` and outranks it. The frontmost application is not
     /// configured here at all — it is sampled per utterance and passed to
     /// `process`.
+    ///
+    /// `dictionaryURL` is where the custom vocabulary lives; `nil` means the
+    /// production location next to `config.json`. The session gets a *loader*,
+    /// not a dictionary: `LocalDictionary.load` runs per utterance, which is
+    /// the entire hot-reload mechanism — see `DictationSession.init`.
     public static func makeSession(config: Config,
                                    apiKey: String?,
                                    mlx: (any Formatter)?,
@@ -115,14 +120,17 @@ public enum Pipeline {
                                    registry: ModeRegistry = ModeRegistry(userModes: []),
                                    rules: any Formatter = RuleBasedFormatter(),
                                    cloudTransport: CloudFormatter.Transport? = nil,
+                                   dictionaryURL: URL? = nil,
                                    onModeResolved: (@Sendable (Mode) -> Void)? = nil)
         -> DictationSession
     {
-        DictationSession(
+        let dictionaryURL = dictionaryURL ?? LocalDictionary.defaultURL
+        return DictationSession(
             formatter: makeChain(config: config, apiKey: apiKey, mlx: mlx,
                                  apple: apple, rules: rules,
                                  cloudTransport: cloudTransport),
             resolver: ModeResolver(registry: registry, defaultID: config.mode),
+            dictionary: { LocalDictionary.load(from: dictionaryURL) },
             onModeResolved: onModeResolved)
     }
 }

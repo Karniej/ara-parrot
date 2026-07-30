@@ -46,10 +46,13 @@ struct DictationSessionTests {
                                 defaultID: "default")
 
     private func session(_ formatter: any AraCore.Formatter,
+                         dictionary: @escaping @Sendable () -> LocalDictionary
+                             = { LocalDictionary() },
                          onModeResolved: (@Sendable (Mode) -> Void)? = nil)
         -> DictationSession
     {
         DictationSession(formatter: formatter, resolver: resolver,
+                         dictionary: dictionary,
                          onModeResolved: onModeResolved)
     }
 
@@ -86,6 +89,72 @@ struct DictationSessionTests {
     func emptyInput() async {
         #expect(await session(RuleBasedFormatter())
             .process("", override: nil, manual: nil, frontmostBundleID: nil) == "")
+    }
+
+    // MARK: - The dictionary runs first
+
+    /// The point of the pipeline position: every formatting engine sees
+    /// corrected text, so an LLM cannot paraphrase a term it never saw
+    /// misheard. Proved on the formatter's *input*, not on the session's
+    /// output — an implementation that corrected after formatting would
+    /// produce the same final string here and be wrong everywhere else.
+    @Test("the dictionary corrects the transcript before the formatter sees it")
+    func dictionaryRunsBeforeTheFormatter() async {
+        let received = Box<String>()
+        let session = session(
+            StubFormatter { text, _ in
+                received.set(text)
+                return text
+            },
+            dictionary: {
+                LocalDictionary(entries: [
+                    .init(canonical: "Ara", variants: ["arra"])
+                ])
+            })
+        let out = await session.process("tell arra hello", override: nil,
+                                        manual: nil, frontmostBundleID: nil)
+        #expect(received.current == "tell Ara hello")
+        #expect(out == "tell Ara hello")
+    }
+
+    /// Corrections are about what the user said, not how it is formatted, so
+    /// the never-lose-the-transcript fallback returns the *corrected* text —
+    /// a formatter failure must not also undo the dictionary.
+    @Test("a formatter failure falls back to the corrected transcript")
+    func formatterFailureKeepsCorrections() async {
+        let session = session(
+            StubFormatter { _, _ in throw FormatterError.transportFailure("boom") },
+            dictionary: {
+                LocalDictionary(entries: [
+                    .init(canonical: "Ara", variants: ["arra"])
+                ])
+            })
+        let out = await session.process("tell arra hello", override: nil,
+                                        manual: nil, frontmostBundleID: nil)
+        #expect(out == "tell Ara hello")
+    }
+
+    /// Hot reload lives in the source closure: the session must consult it
+    /// per utterance, never capture one dictionary at init.
+    @Test("the dictionary source is consulted fresh for every utterance")
+    func dictionarySourceIsConsultedPerUtterance() async {
+        let generation = Box<Int>()
+        generation.set(0)
+        let session = session(
+            StubFormatter { text, _ in text },
+            dictionary: {
+                let now = (generation.current ?? 0) + 1
+                generation.set(now)
+                return LocalDictionary(entries: [
+                    .init(canonical: "generation \(now)", variants: ["marker"])
+                ])
+            })
+        let first = await session.process("marker", override: nil, manual: nil,
+                                          frontmostBundleID: nil)
+        let second = await session.process("marker", override: nil, manual: nil,
+                                           frontmostBundleID: nil)
+        #expect(first == "generation 1")
+        #expect(second == "generation 2")
     }
 
     // MARK: - Mode selection

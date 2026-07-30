@@ -47,11 +47,22 @@ struct PipelineTests {
                          apiKey: String? = nil,
                          mlx: (any AraCore.Formatter)? = nil,
                          apple: (any AraCore.Formatter)? = nil,
-                         cloudTransport: CloudFormatter.Transport? = nil)
+                         cloudTransport: CloudFormatter.Transport? = nil,
+                         dictionaryURL: URL? = nil)
         -> DictationSession
     {
         Pipeline.makeSession(config: config, apiKey: apiKey, mlx: mlx,
-                             apple: apple, cloudTransport: cloudTransport)
+                             apple: apple, cloudTransport: cloudTransport,
+                             dictionaryURL: dictionaryURL)
+    }
+
+    /// A dictionary file with one correction, for the wiring tests.
+    private func dictionaryFile() -> URL {
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("ara-dict-pipe-\(UUID().uuidString).json")
+        try! #"[{"canonical": "Ara", "variants": ["arra"]}]"#
+            .write(to: url, atomically: true, encoding: .utf8)
+        return url
     }
 
     // MARK: - engine
@@ -185,6 +196,47 @@ struct PipelineTests {
             .process(Self.filler, override: nil, manual: nil,
                      frontmostBundleID: "com.apple.dt.Xcode")
         #expect(out == "formatted for code mode")
+    }
+
+    // MARK: - dictionary
+
+    /// The file lives where the user already edits configuration.
+    @Test("the dictionary file defaults to the config directory")
+    func dictionaryDefaultsNextToConfig() {
+        #expect(LocalDictionary.defaultURL
+                == Config.defaultURL.deletingLastPathComponent()
+                    .appendingPathComponent("dictionary.json"))
+    }
+
+    /// Engine `.off` consults no formatter at all, so a correction arriving
+    /// anyway proves both halves at once: `makeSession` wires the URL it was
+    /// given, and the dictionary runs upstream of every engine.
+    @Test("makeSession wires the dictionary from the given URL")
+    func dictionaryURLIsWired() async {
+        var config = Config()
+        config.engine = .off
+        let out = await session(config, dictionaryURL: dictionaryFile())
+            .process("tell arra hello", override: nil, manual: nil,
+                     frontmostBundleID: nil)
+        #expect(out == "tell Ara hello")
+    }
+
+    /// Corrections are about what the user said, not how it is formatted:
+    /// verbatim mode skips the language model, and must not skip the
+    /// dictionary with it.
+    @Test("verbatim mode still gets dictionary corrections")
+    func verbatimModeIsCorrected() async {
+        var config = Config()
+        config.engine = .apple
+        let out = await session(config,
+                                apple: PipelineStub { _, _ in
+                                    Issue.record("the language model ran in verbatim mode")
+                                    return "REWRITTEN"
+                                },
+                                dictionaryURL: dictionaryFile())
+            .process("um tell arra hello", override: "verbatim", manual: nil,
+                     frontmostBundleID: nil)
+        #expect(out == "tell Ara hello")
     }
 
     // MARK: - executor routing

@@ -53,28 +53,41 @@ import Foundation
 public actor DictationSession {
     private let formatter: any Formatter
     private let resolver: ModeResolver
+    private let dictionary: @Sendable () -> LocalDictionary
     private let onModeResolved: (@Sendable (Mode) -> Void)?
 
     /// - Parameters:
     ///   - formatter: The formatting pipeline. Production passes
     ///     `FormatterChain`; the guarantees above hold for any implementation.
     ///   - resolver: Decides which mode an utterance is formatted in.
+    ///   - dictionary: The custom-vocabulary source, consulted **per
+    ///     utterance** — hot reload is nothing more than this closure reading
+    ///     the file fresh each call, so caching its result here would quietly
+    ///     turn "edits apply to the next dictation" into "edits apply after a
+    ///     restart". Production passes `LocalDictionary.load`; not defaulted,
+    ///     for `Pipeline.makeChain`'s reason: a call site that forgot the
+    ///     argument would disable the user's corrections with no symptom.
+    ///     Runs on this actor's executor: small local file I/O is fine,
+    ///     anything slower is not.
     ///   - onModeResolved: Notified with the resolved mode before formatting
     ///     starts, so a UI can show which mode an utterance was treated as.
     ///     Called from this actor's executor: it must not block.
     public init(formatter: any Formatter,
                 resolver: ModeResolver,
+                dictionary: @escaping @Sendable () -> LocalDictionary,
                 onModeResolved: (@Sendable (Mode) -> Void)? = nil) {
         self.formatter = formatter
         self.resolver = resolver
+        self.dictionary = dictionary
         self.onModeResolved = onModeResolved
     }
 
-    /// Formats `raw` and returns the text to inject.
+    /// Corrects `raw` against the user's dictionary, formats it, and returns
+    /// the text to inject.
     ///
-    /// Returns the raw transcript on any formatting failure, and `""` when
-    /// there is nothing to type — an empty transcript, or a request the caller
-    /// cancelled. Never throws.
+    /// Returns the corrected transcript on any formatting failure, and `""`
+    /// when there is nothing to type — an empty transcript, or a request the
+    /// caller cancelled. Never throws.
     ///
     /// - Parameter frontmostBundleID: The application this utterance was spoken
     ///   into, **sampled by the caller when the user stopped speaking**.
@@ -95,12 +108,26 @@ public actor DictationSession {
         // reason to spend an inference on it either.
         if Task.isCancelled { return "" }
 
+        // Vocabulary corrections come first, before any mode or engine
+        // decision, so every formatting path — including verbatim, which
+        // never consults a language model — sees the corrected words, and an
+        // LLM cannot paraphrase a term it only ever saw misheard. From here
+        // on `corrected` *is* the transcript: every fallback below returns
+        // it, because a formatter failure is no reason to also undo the
+        // user's own dictionary. `LocalDictionary` never throws and treats
+        // every load/apply failure as "no corrections", so this line cannot
+        // cost a transcript; the emptiness guard is for the one degenerate
+        // dictionary (an empty canonical swallowing the whole utterance)
+        // that could otherwise turn words into "nothing to type".
+        var corrected = dictionary().apply(raw)
+        if corrected.isEmpty { corrected = raw }
+
         let mode = resolver.resolve(override: override, manual: manual,
                                     frontmostBundleID: frontmostBundleID)
         onModeResolved?(mode)
 
         do {
-            let formatted = try await formatter.format(raw, mode: mode)
+            let formatted = try await formatter.format(corrected, mode: mode)
             // After the work, not only before it: see the class note. A
             // formatter with no suspension point returns a string for a
             // cancelled request without ever raising anything.
@@ -110,7 +137,7 @@ public actor DictationSession {
                 // able to erase an utterance by looking like a cancellation.
                 Self.note("formatter returned nothing for a non-empty "
                           + "transcript; injecting the raw transcript")
-                return raw
+                return corrected
             }
             return formatted
         } catch {
@@ -125,7 +152,7 @@ public actor DictationSession {
             // everything except cancellation.
             Self.note("formatting failed (\(type(of: error))); "
                       + "injecting the raw transcript")
-            return raw
+            return corrected
         }
     }
 
