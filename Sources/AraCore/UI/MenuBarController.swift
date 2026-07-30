@@ -10,6 +10,7 @@ public final class MenuBarController {
     private let modeLabel: NSMenuItem
     private let stateLabel: NSMenuItem
     private let microphoneItem: NSMenuItem
+    private let cleanupItem: NSMenuItem
     private let modelID: String
     private let idleTitle: String
 
@@ -22,6 +23,24 @@ public final class MenuBarController {
     /// Both arrive trimmed and non-empty — an empty field never gets here.
     /// Invoked on the main thread by AppKit.
     public var onCorrectionAdded: ((_ heard: String, _ canonical: String) -> Void)?
+
+    /// The user picked an intensity in the Cleanup submenu. The pick
+    /// persists to the config and applies on the next launch — the submenu's
+    /// caption says so; see `CleanupMenuModel`. Invoked on the main thread
+    /// by AppKit.
+    public var onCleanupPicked: ((CleanupIntensity) -> Void)?
+
+    /// The user picked "Edit dictionary…": open the dictionary file in
+    /// whatever edits JSON on this machine. The file is the editor and the
+    /// per-utterance load is the apply mechanism, so this callback's whole
+    /// job is making sure a file exists and handing it to the system.
+    /// Invoked on the main thread by AppKit.
+    public var onEditDictionary: (() -> Void)?
+
+    /// "Edit snippets…", the same contract as `onEditDictionary`: ensure a
+    /// file exists, hand it to the system editor, and let the per-utterance
+    /// load apply whatever gets saved. Invoked on the main thread by AppKit.
+    public var onEditSnippets: (() -> Void)?
 
     /// - Parameter modeID: The mode the daemon starts in. Modes are resolved per
     ///   utterance — the frontmost application can change the answer — so this is
@@ -54,6 +73,12 @@ public final class MenuBarController {
         microphoneItem.submenu = microphoneSubmenu
         menu.addItem(microphoneItem)
 
+        cleanupItem = NSMenuItem(title: "Cleanup", action: nil, keyEquivalent: "")
+        let cleanupSubmenu = NSMenu()
+        cleanupSubmenu.autoenablesItems = false
+        cleanupItem.submenu = cleanupSubmenu
+        menu.addItem(cleanupItem)
+
         let addCorrection = NSMenuItem(
             title: "Add dictionary correction…",
             action: #selector(addCorrectionClicked),
@@ -61,6 +86,22 @@ public final class MenuBarController {
         )
         addCorrection.target = self
         menu.addItem(addCorrection)
+
+        let editDictionary = NSMenuItem(
+            title: "Edit dictionary…",
+            action: #selector(editDictionaryClicked),
+            keyEquivalent: ""
+        )
+        editDictionary.target = self
+        menu.addItem(editDictionary)
+
+        let editSnippets = NSMenuItem(
+            title: "Edit snippets…",
+            action: #selector(editSnippetsClicked),
+            keyEquivalent: ""
+        )
+        editSnippets.target = self
+        menu.addItem(editSnippets)
 
         menu.addItem(.separator())
 
@@ -151,8 +192,47 @@ public final class MenuBarController {
         }
     }
 
+    /// Rebuilds the Cleanup submenu from a model, `setMicrophoneMenu`'s
+    /// pattern exactly: titles, the check, and the trailing "applies on
+    /// restart" caption all arrive decided by `CleanupMenuModel.compute`,
+    /// where they are unit-tested.
+    public func setCleanupMenu(_ model: CleanupMenuModel) {
+        guard let submenu = cleanupItem.submenu else { return }
+        submenu.removeAllItems()
+        for item in model.items {
+            let row = NSMenuItem(
+                title: item.title,
+                action: #selector(cleanupClicked(_:)),
+                keyEquivalent: "")
+            row.target = self
+            row.state = item.checked ? .on : .off
+            row.representedObject = item.intensity.rawValue
+            submenu.addItem(row)
+        }
+        submenu.addItem(.separator())
+        let caption = NSMenuItem(title: model.caption, action: nil,
+                                 keyEquivalent: "")
+        caption.isEnabled = false
+        submenu.addItem(caption)
+    }
+
     @objc private func microphoneClicked(_ sender: NSMenuItem) {
         onMicrophonePicked?(sender.representedObject as? String)
+    }
+
+    @objc private func cleanupClicked(_ sender: NSMenuItem) {
+        guard let raw = sender.representedObject as? String,
+              let intensity = CleanupIntensity(rawValue: raw)
+        else { return }
+        onCleanupPicked?(intensity)
+    }
+
+    @objc private func editDictionaryClicked() {
+        onEditDictionary?()
+    }
+
+    @objc private func editSnippetsClicked() {
+        onEditSnippets?()
     }
 
     /// The "heard → should be" form: an `NSAlert` with two text fields as its

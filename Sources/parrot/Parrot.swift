@@ -8,7 +8,8 @@ struct Parrot: ParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "parrot",
         abstract: "Minimal macOS dictation daemon. Hold Fn, speak, release.",
-        subcommands: [Run.self, Setup.self, Doctor.self, Models.self, Install.self],
+        subcommands: [Run.self, Setup.self, Doctor.self, Models.self,
+                      DictionaryCommand.self, SnippetsCommand.self, Install.self],
         defaultSubcommand: Run.self
     )
 }
@@ -197,6 +198,7 @@ struct Run: ParsableCommand {
         // until quit, the same "applies until quit" contract as a microphone
         // pick whose config write failed.
         let dictionaryURL = LocalDictionary.defaultURL
+        let snippetsURL = Snippets.defaultURL
         let unsavedCorrections = UnsavedCorrections()
 
         // The submenu's contents are computed by `MicrophoneMenuModel.compute`
@@ -236,6 +238,63 @@ struct Run: ParsableCommand {
                 {
                     FileHandle.standardError.write(Data(
                         "dictionary: correction not saved (\(type(of: error))); it applies until quit\n"
+                            .utf8))
+                }
+            }
+            menuBar.onEditDictionary = {
+                // The file is the editor and the per-utterance load is the
+                // apply mechanism — saving in whatever opens is the whole
+                // "apply" story. All this does is guarantee there is a file
+                // to open: a fresh install gets the starter (the README's
+                // own example entry, so the format explains itself), an
+                // existing file — even a broken one — is never touched.
+                do {
+                    try LocalDictionary.createStarterFileIfAbsent(at: dictionaryURL)
+                } catch {
+                    FileHandle.standardError.write(Data(
+                        "dictionary: could not create \(dictionaryURL.path) (\(type(of: error)))\n"
+                            .utf8))
+                    return
+                }
+                if !NSWorkspace.shared.open(dictionaryURL) {
+                    FileHandle.standardError.write(Data(
+                        "dictionary: no editor opened \(dictionaryURL.path)\n".utf8))
+                }
+            }
+            menuBar.onEditSnippets = {
+                // The dictionary's contract, for the other hand-edited file.
+                do {
+                    try Snippets.createStarterFileIfAbsent(at: snippetsURL)
+                } catch {
+                    FileHandle.standardError.write(Data(
+                        "snippets: could not create \(snippetsURL.path) (\(type(of: error)))\n"
+                            .utf8))
+                    return
+                }
+                if !NSWorkspace.shared.open(snippetsURL) {
+                    FileHandle.standardError.write(Data(
+                        "snippets: no editor opened \(snippetsURL.path)\n".utf8))
+                }
+            }
+            // The check shows what the config resolved at startup — which is
+            // what the running session is actually doing. A pick persists via
+            // the same one-key rewrite as the microphone, but unlike the
+            // microphone it cannot apply live: the session's intensity was
+            // stamped when it was built, so the submenu's caption (and the
+            // model's doc) say "applies on restart". The check moves only
+            // when the pick actually landed in the file — a failed write
+            // changes nothing on restart, so re-checking would be a lie.
+            let startupCleanup = config.cleanup
+            menuBar.setCleanupMenu(CleanupMenuModel.compute(current: startupCleanup))
+            menuBar.onCleanupPicked = { intensity in
+                do {
+                    try Config.persistCleanup(intensity)
+                    menuBar.setCleanupMenu(CleanupMenuModel.compute(current: intensity))
+                } catch {
+                    let reason = (error as? Config.PersistError)?.description
+                        ?? "\(type(of: error))"
+                    FileHandle.standardError.write(Data(
+                        "config: cleanup choice not saved (\(reason)); the saved setting is unchanged\n"
                             .utf8))
                 }
             }
@@ -523,6 +582,47 @@ struct Run: ParsableCommand {
         // roots of the object graph for as long as the application runs.
         withExtendedLifetime((monitor, sigint, menuBar)) {
             app.run()
+        }
+    }
+}
+
+/// Read-only in v1: the file is the editor (see "Edit dictionary…" in the
+/// menu), so the CLI's job is showing what is there and where — mutation
+/// flags would be a second editor to keep honest.
+///
+/// Named `DictionaryCommand` rather than `Dictionary` so the standard
+/// library's type keeps its name in this file; the user-facing name comes
+/// from the configuration.
+struct DictionaryCommand: ParsableCommand {
+    static let configuration = CommandConfiguration(
+        commandName: "dictionary",
+        abstract: "Show the custom dictionary: each correction, and the file that holds them."
+    )
+
+    func run() throws {
+        let url = LocalDictionary.defaultURL
+        // The tolerant per-utterance loader, deliberately: what this prints
+        // is what the next dictation will actually use, and a broken file
+        // explains itself through load's own stderr warning.
+        let dictionary = LocalDictionary.load(from: url)
+        for line in dictionary.listingLines(path: url.path) {
+            print(line)
+        }
+    }
+}
+
+/// `DictionaryCommand`'s twin for the other hand-edited file.
+struct SnippetsCommand: ParsableCommand {
+    static let configuration = CommandConfiguration(
+        commandName: "snippets",
+        abstract: "Show the voice snippets: each trigger, and the file that holds them."
+    )
+
+    func run() throws {
+        let url = Snippets.defaultURL
+        let snippets = Snippets.load(from: url)
+        for line in snippets.listingLines(path: url.path) {
+            print(line)
         }
     }
 }
