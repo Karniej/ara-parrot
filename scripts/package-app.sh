@@ -137,6 +137,35 @@ if [ ! -f "$APP/Contents/MacOS/mlx.metallib" ]; then
     exit 1
 fi
 
+# Ad-hoc sign the bundle. Not optional, and not the same thing as shipping
+# unsigned: the linker already ad-hoc signs the executable, so a bundle that
+# is never signed as a bundle has an executable signature and no
+# `_CodeSignature/CodeResources` — an *invalid* state, not an absent one.
+# `codesign --verify` fails it and Gatekeeper reports it as damaged, which is
+# a worse first run than the honest unsigned prompt. Signing with `-` needs no
+# certificate; a maintainer with a Developer ID replaces `-` with their
+# identity and adds `--timestamp`, and the rest of this script is unchanged.
+#
+# Signed inner-out rather than with `--deep`, which Apple documents as a
+# verification convenience and discourages for signing. The metallib has to be
+# signed first: it lives in Contents/MacOS (where MLX's loader looks), and
+# codesign treats everything there as a nested code object — sealing the
+# bundle around an unsigned one fails with "code object is not signed at all".
+if ! codesign --force --sign - "$APP/Contents/MacOS/mlx.metallib" 2>/dev/null; then
+    echo "could not sign the Metal kernel library" >&2
+    exit 1
+fi
+if ! codesign --force --options runtime --sign - "$APP" 2>/dev/null; then
+    echo "ad-hoc signing failed — the bundle would be reported as damaged" >&2
+    exit 1
+fi
+# Verified, not assumed: this is the check Gatekeeper's own evaluation starts
+# from, and the defect it catches is invisible until a user double-clicks.
+if ! codesign --verify "$APP" 2>/dev/null; then
+    echo "the signed bundle does not verify — refusing to ship $APP" >&2
+    exit 1
+fi
+
 echo "✓ $APP ($VERSION, $(du -sh "$APP" | cut -f1))"
 echo "  binary:   Contents/MacOS/ara"
 echo "  metallib: Contents/MacOS/mlx.metallib (beside the binary — MLX looks there)"

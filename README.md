@@ -117,9 +117,11 @@ notarized. What that means when you download the DMG:
 
 - macOS attaches `com.apple.quarantine` to anything downloaded, and Gatekeeper
   refuses to launch a quarantined app that is neither signed nor notarized. A
-  double-click gets *"Ara is damaged and can't be opened"* or *"cannot be opened
-  because the developer cannot be verified"* — neither of which is true; both
-  are what "unsigned" looks like.
+  double-click gets *"cannot be opened because the developer cannot be
+  verified"* — which is not a claim that anything is wrong with the app; it is
+  what "unsigned" looks like. The bundle *is* ad-hoc signed by
+  `scripts/package-app.sh`, so it is structurally valid and Gatekeeper's
+  consent path works; what it lacks is a Developer ID and a notary ticket.
 - **Right-click the app → Open → Open** once. That records your consent and
   every later launch is a normal double-click.
 - Or strip the flag yourself:
@@ -137,7 +139,7 @@ Apple developer account. For a maintainer who has one, the three commands are:
 
 ```sh
 scripts/package-app.sh
-codesign --deep --force --options runtime --timestamp \
+codesign --force --options runtime --timestamp \
     --sign "Developer ID Application: NAME (TEAMID)" dist/Ara.app
 scripts/package-dmg.sh                       # rebuild the image around the signed app
 xcrun notarytool submit dist/Ara-<version>.dmg \
@@ -145,7 +147,10 @@ xcrun notarytool submit dist/Ara-<version>.dmg \
 xcrun stapler staple dist/Ara-<version>.dmg
 ```
 
-The DMG has to be rebuilt between signing and submission — an image built
+(`--deep` is deliberately absent: Apple documents it as a verification
+convenience and discourages it for signing. Ara's bundle has no nested code,
+so there is nothing for it to reach anyway.) The DMG has to be rebuilt between
+signing and submission — an image built
 around the unsigned app stays unsigned no matter what happens to `dist/Ara.app`
 afterwards. With the ticket stapled, Gatekeeper stops objecting. Note
 that `--options runtime` (the hardened runtime) is required for notarization
