@@ -134,6 +134,24 @@ struct ModifierEdgeDetector {
         return edge(pressed: pressed)
     }
 
+    /// Forgets everything, for use after a gap in the event stream — macOS
+    /// disabling the tap for Secure Input or a timeout — during which any
+    /// number of presses and releases went unobserved.
+    ///
+    /// Returns `.released` when a hold was being tracked, and that return
+    /// value *is* the in-flight-recording decision: the caller forwards it
+    /// through the ordinary release path, so the capture stops the way it
+    /// always stops and the transcript is kept. Everything else is cleared
+    /// because it is now a guess: a learned device bit that survived the gap
+    /// would let the sibling's next release read as our key going up — a
+    /// fabricated edge for a key nobody let go of — and a stale `lastFlags`
+    /// would poison the next press's learning diff the same way.
+    mutating func reset() -> Edge? {
+        lastFlags = 0
+        learnedDeviceBits = 0
+        return edge(pressed: false)
+    }
+
     /// Records the new state and reports it only when it changed.
     private mutating func edge(pressed: Bool) -> Edge? {
         guard pressed != isPressed else { return nil }
