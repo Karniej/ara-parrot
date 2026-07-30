@@ -35,16 +35,22 @@ records a result.
 3. Run the daemon with a log you can read afterwards:
 
    ```sh
-   ./.build/release/parrot run --hotkey right-command --mode verbatim 2>&1 | tee /tmp/ara-verify.log
+   ./.build/release/parrot run --hotkey right-command --mode verbatim --echo-transcripts 2>&1 | tee /tmp/ara-verify.log
    ```
+
+   `--echo-transcripts` is what makes the `→`/`↦` lines below quote the text;
+   several steps compare the log against what was injected, so verification
+   needs it. Without the flag — the default, and always the case for the
+   LaunchAgent — those lines carry a character count instead
+   (`→ 0.42s · 63 chars`), so no transcript text ever reaches a log file.
 
    Throughout, the log lines mean:
 
    | Line | Meaning |
    | --- | --- |
    | `○ captured …` | audio was recorded |
-   | `→ <time> · <text>` | the raw transcript, with the transcription time |
-   | `↦ <time> · <text>` | the formatted text with the total time. Appears **only when formatting produced something and changed it** — identical text and cancelled requests both stay silent here |
+   | `→ <time> · <text>` | the raw transcript, with the transcription time (`<text>` is `N chars` without `--echo-transcripts`) |
+   | `↦ <time> · <text>` | the formatted text with the total time (`N chars` without `--echo-transcripts`). Appears **only when formatting produced something and changed it** — identical text and cancelled requests both stay silent here |
    | `⨯ <time> · cancelled; nothing injected` | the request was withdrawn mid-format and nothing was typed. Unreachable today (see section 9) |
    | `formatting: …` | the chain fell through from one engine to the next |
    | `dictation: …` | the session itself fell back to the raw transcript |
