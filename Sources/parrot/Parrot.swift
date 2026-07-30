@@ -223,8 +223,15 @@ struct Run: ParsableCommand {
             }
         }
         // Hardware events arrive on the store's listener queue; the menu is
-        // main-actor state, so hop before repainting.
+        // main-actor state, so hop before repainting. The retry comes first
+        // and needs no hop: it is the recovery path for the race where the
+        // engine's own configuration-change fired before the store had
+        // re-enumerated — the rebuild read the dead device and degraded while
+        // a healthy fallback was milliseconds away. The store firing again is
+        // the only signal that the device world actually changed, so a
+        // degraded capture re-resolves here or not at all.
         micStore.onChange = {
+            capture.retryIfDegraded()
             Task { @MainActor in refreshMicrophoneMenu() }
         }
 

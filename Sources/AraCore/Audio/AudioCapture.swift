@@ -28,6 +28,13 @@ import Foundation
 /// nothing usable remains it degrades to a state where `stop()` still returns
 /// everything captured so far. Captured audio is never lost.
 ///
+/// Degraded is not terminal: the engine's notification can race the device
+/// store's own listener, so the rebuild may have read a stale provider while
+/// a healthy fallback was milliseconds from being resolved. The store's
+/// change signal calls `retryIfDegraded()`, which re-runs the same start path
+/// into the same buffer — recovery is event-driven, no polling. Engine
+/// notifications while degraded stay a no-op; only the store signal retries.
+///
 /// ## The seam
 ///
 /// Everything the class does to AVFoundation goes through a `Backend` — a
@@ -79,6 +86,13 @@ public final class AudioCapture {
     private let makeBackend: MakeBackend
     private var backend: Backend?
     private var state: State = .idle
+    /// Bumped (under `stateLock`) every time a backend is built. Each
+    /// backend's notification closure carries the generation it was built
+    /// under, so a notification enqueued by an engine that has since been
+    /// torn down — `stop()` then a fresh `start()` can both happen before the
+    /// hop runs — identifies itself as stale and is ignored instead of
+    /// rebuilding a healthy new engine.
+    private var generation: UInt64 = 0
     private var samples: [Float] = []
     private let lock = NSLock()
 
@@ -172,10 +186,17 @@ public final class AudioCapture {
     /// samples buffer — or degrade, keeping what was captured, when nothing
     /// usable remains. Production reaches this via `rebuildQueue` from the
     /// engine's configuration-change notification; tests call it directly.
-    func handleConfigurationChange() {
+    ///
+    /// `generation` is the token the notifying backend was built under; `nil`
+    /// (the direct-call form) means "the current backend". A mismatch means
+    /// the notification outlived its engine and must not touch whatever is
+    /// recording now.
+    func handleConfigurationChange(generation: UInt64? = nil) {
         stateLock.lock()
         defer { stateLock.unlock() }
-        guard state == .recording, let old = backend else { return }
+        guard state == .recording, let old = backend,
+              generation == nil || generation == self.generation
+        else { return }
 
         old.tearDown()
         old.removeTap()
@@ -193,12 +214,50 @@ public final class AudioCapture {
         }
     }
 
+    // MARK: - Recovery from degraded
+
+    /// The device world changed — re-attempt recording iff a mid-utterance
+    /// loss degraded the capture. Wired to the device store's change signal,
+    /// which fires only on real changes, so this is event-driven with no
+    /// polling and no loop: a failed retry leaves the capture degraded,
+    /// silently, and the *next* store change is the next retry.
+    ///
+    /// On success recording resumes into the same samples buffer — nothing
+    /// captured before the loss is dropped. A no-op while idle or recording.
+    /// Safe to call from any thread.
+    public func retryIfDegraded() {
+        rebuildQueue.async { self.handleRetryIfDegraded() }
+    }
+
+    /// The retry decision, runnable without hardware; production reaches it
+    /// via `rebuildQueue`, tests call it directly (the same split as
+    /// `handleConfigurationChange`).
+    func handleRetryIfDegraded() {
+        stateLock.lock()
+        defer { stateLock.unlock() }
+        guard state == .degraded else { return }
+
+        let fresh = newBackend()
+        do {
+            try startRecording(on: fresh, device: deviceProvider?())
+            backend = fresh
+            state = .recording
+        } catch {
+            fresh.tearDown()
+            // Still degraded; the next store change retries.
+        }
+    }
+
     // MARK: - Shared start path
 
+    /// Callers hold `stateLock` (every path that builds a backend is a
+    /// control operation), which is what makes the `generation` bump safe.
     private func newBackend() -> Backend {
-        makeBackend { [weak self] in
+        generation &+= 1
+        let gen = generation
+        return makeBackend { [weak self] in
             guard let self else { return }
-            self.rebuildQueue.async { self.handleConfigurationChange() }
+            self.rebuildQueue.async { self.handleConfigurationChange(generation: gen) }
         }
     }
 

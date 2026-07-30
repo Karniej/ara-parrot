@@ -287,6 +287,142 @@ struct AudioCaptureTests {
         #expect(harness.built == 2)  // degraded: no further engines
     }
 
+    // MARK: - Recovery from degraded
+
+    /// The race this pins: the engine's configuration-change and the store's
+    /// Core Audio listener have no ordering guarantee, so the rebuild can read
+    /// the store while it still names the dead device and degrade — even
+    /// though the store resolves a healthy fallback milliseconds later. The
+    /// store's change signal is the second chance.
+    @Test("a retry after degrading resumes recording into the same buffer")
+    func retryAfterDegradeResumes() throws {
+        let first = FakeEngine(format: Self.live48kMono)
+        let second = FakeEngine(format: Self.dead)  // rebuild raced the store: still the dead device
+        let third = FakeEngine(format: Self.live48kMono)  // the store has since re-resolved
+        let harness = Harness([first, second, third])
+        let capture = harness.capture()
+        nonisolated(unsafe) var device: AudioDeviceID? = 42
+        capture.deviceProvider = { device }
+        try capture.start()
+        feed(first, frames: 4800)  // ~1360 samples at 16 kHz
+
+        capture.handleConfigurationChange()  // dead probe → degraded
+        #expect(!second.started)
+
+        device = 77  // the healthy fallback the store now resolves
+        capture.handleRetryIfDegraded()
+
+        #expect(third.routed == [77])
+        #expect(third.order == ["route", "probe", "tap", "start"])
+        #expect(third.started)
+
+        feed(third, frames: 2400)  // ~560 more
+        let samples = capture.stop()
+        // Both halves: either alone stays under 1800 (~1360 / ~560).
+        #expect(samples.count > 1800 && samples.count < 2600)
+    }
+
+    @Test("a retry with no usable device stays degraded and keeps the samples")
+    func retryWithoutDeviceStaysDegraded() throws {
+        let first = FakeEngine(format: Self.live48kMono)
+        let second = FakeEngine(format: Self.dead)
+        let third = FakeEngine(format: Self.dead)
+        let harness = Harness([first, second, third])
+        let capture = harness.capture()
+        try capture.start()
+        feed(first, frames: 4800)
+        capture.handleConfigurationChange()
+
+        capture.handleRetryIfDegraded()  // no provider; the probe is dead
+
+        #expect(!third.started)
+        #expect(third.toreDown)  // the failed retry backend is not leaked
+        #expect(harness.built == 3)
+
+        // Still degraded: an engine notification remains a pinned no-op…
+        capture.handleConfigurationChange()
+        #expect(harness.built == 3)
+
+        // …and stop still returns everything captured before the loss.
+        let samples = capture.stop()
+        #expect(samples.count > 1200 && samples.count < 1700)
+    }
+
+    @Test("a retry while idle builds nothing")
+    func retryWhileIdle() {
+        let harness = Harness([])
+        let capture = harness.capture()
+        capture.handleRetryIfDegraded()
+        #expect(harness.built == 0)
+        #expect(capture.stop().isEmpty)
+    }
+
+    @Test("a retry while recording leaves the live engine untouched")
+    func retryWhileRecording() throws {
+        let engine = FakeEngine(format: Self.live48kMono)
+        let harness = Harness([engine])
+        let capture = harness.capture()
+        try capture.start()
+
+        capture.handleRetryIfDegraded()
+
+        #expect(harness.built == 1)  // no new backend
+        #expect(!engine.toreDown)  // no teardown
+        #expect(!engine.tapRemoved)
+        feed(engine, frames: 4800)  // the original tap still records
+        #expect(capture.stop().count > 1200)
+    }
+
+    /// The production wiring: `retryIfDegraded` is what the store's `onChange`
+    /// calls, from the store's listener queue; it must reach the retry
+    /// decision asynchronously via the rebuild queue.
+    @Test("the public retryIfDegraded reaches the retry decision")
+    func publicRetryHopsToTheRebuildQueue() throws {
+        let first = FakeEngine(format: Self.live48kMono)
+        let second = FakeEngine(format: Self.dead)
+        let third = FakeEngine(format: Self.live48kMono)
+        let capture = Harness([first, second, third]).capture()
+        try capture.start()
+        capture.handleConfigurationChange()
+
+        capture.retryIfDegraded()
+
+        // The hop is async by design; poll briefly for the recovery.
+        for _ in 0..<200 where !third.started {
+            Thread.sleep(forTimeInterval: 0.01)
+        }
+        #expect(third.started)
+        _ = capture.stop()
+    }
+
+    // MARK: - Stale notifications
+
+    /// A dying engine's notification is *enqueued* before `stop()` removes
+    /// the observer; by the time the hop runs, a new utterance may already be
+    /// recording on a fresh healthy engine. The stale hop must not tear that
+    /// engine down.
+    @Test("a stale notification from a torn-down backend cannot disturb the next recording")
+    func staleNotificationIsIgnored() throws {
+        let first = FakeEngine(format: Self.live48kMono)
+        let second = FakeEngine(format: Self.live48kMono)
+        let third = FakeEngine(format: Self.live48kMono)
+        let harness = Harness([first, second, third])
+        let capture = harness.capture()
+        try capture.start()
+        let stale = first.onConfigurationChange!  // delivered, its hop not yet run
+        _ = capture.stop()
+        try capture.start()  // the next utterance, on the second engine
+
+        stale()
+
+        // The hop is async; give it ample time, then prove it did nothing.
+        Thread.sleep(forTimeInterval: 0.3)
+        #expect(harness.built == 2)
+        #expect(!second.toreDown)
+        feed(second, frames: 4800)
+        #expect(capture.stop().count > 1200)  // the live tap was never replaced
+    }
+
     /// The production wiring: the closure handed to the backend factory is
     /// what the engine's configuration-change notification invokes. It must
     /// reach `handleConfigurationChange` (asynchronously, off the notifying
