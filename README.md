@@ -69,5 +69,14 @@ See [docs/architecture.md](docs/architecture.md) for design notes.
 
 ```sh
 swift build -c release
+scripts/build-metallib.sh    # compile the Metal kernels SwiftPM can't (needs Xcode)
 .build/release/parrot --help
 ```
+
+The second step exists because the default formatting engine runs a bundled
+language model on MLX, and SwiftPM cannot compile MLX's Metal shaders — a
+plain `swift build` binary starts fine but formats with rule-based cleanup
+only, and `parrot doctor` will say so. The script compiles the kernel library
+once through `xcodebuild` and drops `mlx.metallib` next to the binary. The
+model itself is a separate one-time download:
+`parrot models download-formatter` (~900 MB).
