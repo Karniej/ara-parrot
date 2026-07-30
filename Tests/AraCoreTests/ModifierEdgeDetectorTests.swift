@@ -3,7 +3,7 @@ import Testing
 @testable import AraCore
 
 /// Raw `CGEventFlags` values captured from a real keyboard on the development
-/// machine with `parrot run --debug-hotkey`, reused here so the tests exercise
+/// machine with `ara run --debug-hotkey`, reused here so the tests exercise
 /// the bit patterns macOS actually emits rather than a reconstruction of them.
 private enum Flags {
     static let none: UInt64 = 0x0000_0000

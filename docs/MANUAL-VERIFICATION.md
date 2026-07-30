@@ -30,12 +30,12 @@ records a result.
 2. 👤 Grant permissions. The binary is **unsigned**, so macOS treats every
    rebuild as a new application: Accessibility and Microphone approvals do not
    survive a rebuild, and neither do keychain ACL decisions (see step 7).
-   Run `./.build/release/parrot doctor` and follow it until every check passes.
+   Run `./.build/release/ara doctor` and follow it until every check passes.
 
 3. Run the daemon with a log you can read afterwards:
 
    ```sh
-   ./.build/release/parrot run --hotkey right-command --mode verbatim --echo-transcripts 2>&1 | tee /tmp/ara-verify.log
+   ./.build/release/ara run --hotkey right-command --mode verbatim --echo-transcripts 2>&1 | tee /tmp/ara-verify.log
    ```
 
    `--echo-transcripts` is what makes the `→`/`↦` lines below quote the text;
@@ -115,7 +115,7 @@ the whole first-launch experience.
       `formatting: apple formatter failed (engine unavailable); falling back`
       line, or no `formatting:` line at all if no local engine was constructed.
       Both are correct behaviour; note which you saw. When there is no
-      `formatting:` line, `parrot doctor` is where the explanation lives — see
+      `formatting:` line, `ara doctor` is where the explanation lives — see
       5e, which is the only place this state is reported.
 
 ## 2bis. The default MLX engine — the first check this machine can actually pass
@@ -125,7 +125,7 @@ machine does not have (Apple Intelligence on, or an API key). The bundled MLX
 engine needs neither, so this is the first end-to-end dictation check that can
 produce genuinely formatted text here. Its non-dictation half has already been
 run on this machine: the model loads, and the six-transcript benchmark
-(`PARROT_MLX_BENCH=1 swift test --filter MLXLatency`) measures real
+(`ARA_MLX_BENCH=1 swift test --filter MLXLatency`) measures real
 generations through the exact code `format` runs. What remains human-only is
 the microphone-to-cursor path.
 
@@ -134,8 +134,8 @@ Setup, once (already verified to work here):
 ```sh
 swift build -c release
 scripts/build-metallib.sh                            # SwiftPM cannot compile Metal shaders
-./.build/release/parrot models download-formatter    # ~900 MB, one time
-./.build/release/parrot doctor                       # expect: ✓ local formatting model
+./.build/release/ara models download-formatter       # ~900 MB, one time
+./.build/release/ara doctor                          # expect: ✓ local formatting model
 ```
 
 - [ ] 👤 **2bis-a.** Start the daemon as in step 0.3 but with `--mode default`
@@ -156,12 +156,12 @@ scripts/build-metallib.sh                            # SwiftPM cannot compile Me
       daemon must **start**, print `! local formatting unavailable:` naming
       `mlx.metallib` and `scripts/build-metallib.sh`, and dictation must still
       inject rule-based text with one `formatting: mlx formatter failed
-      (engine unavailable); falling back` line per utterance. `parrot doctor`
+      (engine unavailable); falling back` line per utterance. `ara doctor`
       must warn with the same remediation. Move the metallib back afterwards.
 - [ ] 👤 **2bis-d.** The same with the model: with the metallib in place but
       `~/Documents/huggingface/models/mlx-community/Qwen2.5-1.5B-Instruct-4bit`
       renamed away, the startup warning must name
-      `parrot models download-formatter`, and text must still appear. Restore
+      `ara models download-formatter`, and text must still appear. Restore
       it afterwards.
 - [ ] 👤 **2bis-e.** Repeat section 3's adversarial dictations under the MLX
       engine. **The joke injection is a fixed regression, not an open one:**
@@ -356,12 +356,12 @@ usable).
       string that a guardrail violation can populate from the offending input,
       and the daemon renders only its own fixed phrases. Anything resembling
       what you just said appearing on that line is a leak.
-- [ ] **5e. `doctor` explains the silence.** Run `./.build/release/parrot doctor`
+- [ ] **5e. `doctor` explains the silence.** Run `./.build/release/ara doctor`
       with Apple Intelligence **off**. It must print a line like
       `! on-device formatting: Apple Intelligence is turned off` with a
       remediation pointing at System Settings — and it must be a **warning**,
       not a failure: the command's other checks decide the exit code, and
-      `parrot run` must still start. This is the only place the state is
+      `ara run` must still start. This is the only place the state is
       surfaced; with the model unavailable there is no local engine in the chain
       at all, so there is not even a fall-through line to read (see 2b).
       With Apple Intelligence **on**, the same line must read `✓ on-device
@@ -389,7 +389,7 @@ Requires: a real Anthropic API key, and it will spend money.
       ```
 
       An item created this way has an ACL trusting `/usr/bin/security`, not
-      `parrot`, so the first read from the daemon will prompt. That is expected
+      `ara`, so the first read from the daemon will prompt. That is expected
       and is exactly the state section 7 tests.
 - [ ] 🔑 **6b.** Put `{"engine": "cloud", "cloud": {"provider": "anthropic",
       "model": "<a model id that exists today>"}}` in `~/.config/ara/config.json`.
@@ -711,7 +711,7 @@ the way so any correction seen is unambiguously the dictionary's.
       no restart — the editor's save *is* the apply mechanism. Click the
       item again with the file present (or with the file deliberately
       broken): the editor must open the file **unchanged** — the starter is
-      only ever written where nothing exists. `parrot dictionary` must print
+      only ever written where nothing exists. `ara dictionary` must print
       the path and every entry as `canonical ← variants` (or "no dictionary
       yet" plus the path when you still have the file moved aside).
 
@@ -774,7 +774,7 @@ Setup: put this in `~/.config/ara/snippets.json` (create it by hand, or via
       scheduling link`, expansion a visibly-placeholder URL. Dictate the
       trigger: the placeholder must be typed verbatim (the starter is live,
       which is the demonstration). Click the item again with the file
-      present: it must open **unchanged**. `parrot snippets` must print the
+      present: it must open **unchanged**. `ara snippets` must print the
       path and each entry as `trigger → expansion` — a multiline expansion
       showing only its first line plus `…` — or "no snippets yet" plus the
       path when the file is absent.
@@ -825,7 +825,7 @@ restart, and each submenu's caption says which.
       any pick (the label says so), which is the resolver's documented
       precedence, not a bug.
 - [ ] 👤 **9sp-b. A model pick lands in the config, not in the session.**
-      Menu bar → **Model**: every id from `parrot models list` with its size,
+      Menu bar → **Model**: every id from `ara models list` with its size,
       the running model checked, the caption reading "applies on restart —
       downloads if not on disk". Pick `whisper-small.en`: the check moves,
       `config.json` gains `"model": "whisper-small.en"` with every other key
@@ -837,7 +837,7 @@ restart, and each submenu's caption says which.
       downloaded`, disabled. With the model directory renamed away (as in
       2bis-d) and the daemon restarted, it must read `Download formatting
       model… (900 MB, applies on restart)`; clicking it must show an alert
-      naming `parrot models download-formatter`, and **Copy command** must
+      naming `ara models download-formatter`, and **Copy command** must
       put exactly that on the pasteboard. Nothing may download in-process.
 - [ ] 👤 **9sp-d. A hotkey pick persists and waits for restart.** Menu bar →
       **Hotkey**: all eight keys under their labels (`fn`, `left ⌥`, …), the
@@ -856,19 +856,19 @@ restart, and each submenu's caption says which.
       restarted daemon formats rule-based only.
 - [ ] 👤 **9sp-f. Start at Login toggles the real agent, and says what it
       did.** With no agent installed, the item must be uncheckmarked. Click
-      it: the checkmark appears, `~/Library/LaunchAgents/com.digimata.parrot.plist`
+      it: the checkmark appears, `~/Library/LaunchAgents/com.silpho.ara.plist`
       exists, and an alert must state the login copy **has started now** —
       and warn that a terminal-run daemon should be quit, since two daemons
       both answer the hotkey (verify: hold the hotkey and check for a double
       `● recording` in the terminal log while both run). Click it again: the
       checkmark clears and the plist is gone (`launchctl print
-      gui/$UID/com.digimata.parrot` must fail). Make the failure path
+      gui/$UID/com.silpho.ara` must fail). Make the failure path
       honest too: `chmod -w ~/Library/LaunchAgents`, toggle on — an alert
       must report the failure and the checkmark must stay **off** (the
       state is re-read from disk, never assumed). `chmod +w` afterwards.
 - [ ] 👤 **9sp-g. Run Diagnostics is doctor in a window.** Click **Run
       Diagnostics…**. An alert must appear in front with the same lines
-      `parrot doctor` prints, monospaced and aligned, and the menu bar must
+      `ara doctor` prints, monospaced and aligned, and the menu bar must
       stay responsive while the checks run (they spawn processes off the
       main thread). **Copy report** must put the full text on the
       pasteboard. No keychain prompt may appear — the report has no
@@ -957,7 +957,7 @@ utterance untouched. Only the spoken end-to-end path (section 9quinquies)
 is manual.
 
 One hardware check is automated but opt-in, because it needs a working input
-device and microphone permission: `PARROT_AUDIO_HW=1 swift test --filter
+device and microphone permission: `ARA_AUDIO_HW=1 swift test --filter
 AudioCaptureHardware` proves audio actually flows through the *routed* live
 path. It exists because the fake-backend suite cannot see inside the real
 engine, and the two bugs it pins — the stale cached tap format after routing,

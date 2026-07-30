@@ -191,7 +191,7 @@ public final class MenuBarController {
         menu.addItem(.separator())
 
         let quit = NSMenuItem(
-            title: "Quit parrot",
+            title: "Quit Ara",
             action: #selector(quitClicked),
             keyEquivalent: "q"
         )
@@ -465,7 +465,7 @@ public final class MenuBarController {
         alert.messageText = "Download the formatting model"
         alert.informativeText = "The download is ~\(MLXModel.sizeMB) MB and "
             + "runs in a terminal:\n\n\(MLXModel.downloadCommand)\n\n"
-            + "Restart parrot afterwards — the model is loaded at startup."
+            + "Restart Ara afterwards — the model is loaded at startup."
         alert.addButton(withTitle: "Copy command")
         alert.addButton(withTitle: "Cancel")
         NSApp.activate(ignoringOtherApps: true)
@@ -475,7 +475,7 @@ public final class MenuBarController {
         pasteboard.setString(MLXModel.downloadCommand, forType: .string)
     }
 
-    /// The doctor report in a window: the exact text `parrot doctor` prints
+    /// The doctor report in a window: the exact text `ara doctor` prints
     /// (`DoctorReport.rendered`), monospaced so its alignment survives, with
     /// a button that copies it — a bug report should not require a terminal.
     public func showDiagnosticsReport(_ text: String) {

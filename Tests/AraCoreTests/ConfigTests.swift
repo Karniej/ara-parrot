@@ -219,7 +219,7 @@ struct ConfigTests {
     }
 
     /// The critical property: a menu pick must not destroy keys this version
-    /// of parrot does not know about. A user running a newer config against an
+    /// of ara does not know about. A user running a newer config against an
     /// older binary would otherwise lose settings by touching a menu.
     @Test("setting the key preserves every other key, known and unknown")
     func persistPreservesUnknownKeys() throws {
@@ -303,7 +303,7 @@ struct ConfigTests {
     // MARK: - persistCleanup: the same one-key rewrite, for the Cleanup menu
 
     /// The same critical property `persistMicrophone` pins: a menu pick must
-    /// not destroy keys this version of parrot does not know about.
+    /// not destroy keys this version of ara does not know about.
     @Test("persisting cleanup preserves every other key, known and unknown")
     func persistCleanupPreservesUnknownKeys() throws {
         let url = write(#"""

@@ -363,7 +363,7 @@ public final class AudioCapture {
             // 48 kHz device). A tap installed with that stale format never
             // fires — the engine runs and zero buffers arrive. The input
             // side reports the routed hardware's true format. Pinned by
-            // AudioCaptureHardwareTests (opt-in, PARROT_AUDIO_HW=1).
+            // AudioCaptureHardwareTests (opt-in, ARA_AUDIO_HW=1).
             inputFormat: { engine.inputNode.inputFormat(forBus: 0) },
             setInputDevice: { deviceID in
                 // Per-engine routing via the input unit's current-device

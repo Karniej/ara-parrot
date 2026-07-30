@@ -72,7 +72,7 @@ public enum StartupResolution {
         if let raw = config {
             if let found = ModelRegistry.find(raw) { return .chosen(found) }
             warn("unknown model in config: \(raw) — using the recommended model")
-            warn("run `parrot models list` to see options.")
+            warn("run `ara models list` to see options.")
         }
         guard let recommended = ModelRegistry.recommended() else { return .noModelsRegistered }
         return .chosen(recommended)

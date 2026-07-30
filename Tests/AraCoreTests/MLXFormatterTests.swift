@@ -356,7 +356,7 @@ struct MLXFormatterTests {
 
     /// The one-time download must land in the cache the daemon already uses for
     /// Whisper weights, not a second one — a user who has run
-    /// `parrot models download` should not discover a separate multi-gigabyte
+    /// `ara models download` should not discover a separate multi-gigabyte
     /// directory somewhere else.
     @Test("the model directory sits in the same hub cache as the Whisper models")
     func modelDirectoryIsTheWhisperCache() {

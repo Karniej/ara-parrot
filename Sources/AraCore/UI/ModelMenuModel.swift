@@ -18,7 +18,7 @@ public struct ModelMenuModel: Equatable, Sendable {
     /// The formatting-model line under the picker. Informational when the
     /// model is downloaded; an offer when it is not. The offer never fetches
     /// anything in-process — 0.9 GB is a CLI action (`MLXModel` is reachable
-    /// only from `parrot models download-formatter`, by design), so clicking
+    /// only from `ara models download-formatter`, by design), so clicking
     /// it shows the exact command instead. Honest beats magic.
     public struct FormatterItem: Equatable, Sendable {
         public let title: String

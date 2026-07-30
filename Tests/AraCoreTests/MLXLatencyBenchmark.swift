@@ -6,13 +6,13 @@ import Testing
 /// comment, kept in the repository so they can be re-taken rather than trusted.
 ///
 /// **Opt-in**: it loads a 0.9 GB model and runs six real generations, so it is
-/// inert unless `PARROT_MLX_BENCH=1` is set. Run it with
+/// inert unless `ARA_MLX_BENCH=1` is set. Run it with
 ///
 /// ```
-/// PARROT_MLX_BENCH=1 swift test --filter MLXLatency
+/// ARA_MLX_BENCH=1 swift test --filter MLXLatency
 /// ```
 ///
-/// after `parrot models download-formatter`.
+/// after `ara models download-formatter`.
 @Suite("MLXLatency")
 struct MLXLatencyBenchmark {
     /// Six transcripts of the kind Whisper actually produces from dictated
@@ -35,7 +35,7 @@ struct MLXLatencyBenchmark {
 
     @Test("six real transcripts, per-case latency")
     func measure() async throws {
-        guard ProcessInfo.processInfo.environment["PARROT_MLX_BENCH"] == "1" else { return }
+        guard ProcessInfo.processInfo.environment["ARA_MLX_BENCH"] == "1" else { return }
         guard #available(macOS 15.4, *) else { return }
         try #require(MLXModel.isPresent,
                      "run `\(MLXModel.downloadCommand)` first")

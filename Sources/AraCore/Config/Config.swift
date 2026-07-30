@@ -235,7 +235,7 @@ public struct Config: Codable, Sendable {
     }
 
     /// Sets or removes the `microphone` key in the config file, touching
-    /// nothing else — *including keys this version of parrot does not know
+    /// nothing else — *including keys this version of ara does not know
     /// about*. The file is read back as generic JSON, one key is changed, and
     /// the object is rewritten; decoding through `Config` and re-encoding
     /// would silently drop every field the struct has never heard of, which

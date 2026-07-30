@@ -15,7 +15,7 @@ import Tokenizers
 /// through to rule-based cleanup on every utterance.
 ///
 /// Model: `mlx-community/Qwen2.5-1.5B-Instruct-4bit`, ~0.9 GB. Measured
-/// through this class's own `format` — `PARROT_MLX_BENCH=1 swift test --filter
+/// through this class's own `format` — `ARA_MLX_BENCH=1 swift test --filter
 /// MLXLatency`, release build, M3 Pro, shipped `TranscriptPrompt` (medium
 /// intensity, post-hardening), six realistic transcripts: **787 ms median,
 /// 888 ms max** against the chain's 2500 ms deadline, deterministic at
@@ -86,7 +86,7 @@ public final class MLXFormatter: Formatter, @unchecked Sendable {
     /// loop — never from the dictation path.
     ///
     /// Fails rather than downloading. A 0.9 GB fetch is a thing a user opts
-    /// into by name, mirroring `parrot models download` for Whisper weights, so
+    /// into by name, mirroring `ara models download` for Whisper weights, so
     /// the failure message names the command that performs it. `Run` treats
     /// that failure as a warning and carries on: the chain still has the
     /// rule-based floor, and refusing to start the daemon because an optional
@@ -240,7 +240,7 @@ public final class MLXFormatter: Formatter, @unchecked Sendable {
     static var missingMetallibMessage: String {
         "this build has no Metal kernel library (mlx.metallib) — "
             + "`swift build` cannot compile one; run `\(MLXRuntime.buildCommand)` "
-            + "to compile it and place it next to the parrot binary"
+            + "to compile it and place it next to the ara binary"
     }
 
     /// Copy editing is not a creative task and the output is typed straight at
@@ -353,7 +353,7 @@ public enum MLXModel {
 
     /// Named in every message that reports the model missing, so the fix is in
     /// the failure rather than in documentation the user has to go and find.
-    public static let downloadCommand = "parrot models download-formatter"
+    public static let downloadCommand = "ara models download-formatter"
 
     public static let sizeMB = 900
 
@@ -365,7 +365,7 @@ public enum MLXModel {
 
     /// The same hub cache WhisperKit downloads into — `~/Documents/huggingface`
     /// by default, laid out as `models/<org>/<repo>`. Sharing it is the point:
-    /// a user who has run `parrot models download` should not later discover a
+    /// a user who has run `ara models download` should not later discover a
     /// second multi-gigabyte directory somewhere else.
     ///
     /// Note that this is **not** the Python `huggingface_hub` cache at
@@ -417,14 +417,14 @@ public enum MLXModel {
 /// the other is a build step.
 ///
 /// SwiftPM cannot compile Metal shaders, so a plain `swift build` produces a
-/// parrot binary with **no** kernel library; `warmUp` then fails (gracefully,
+/// ara binary with **no** kernel library; `warmUp` then fails (gracefully,
 /// via the `withError` scope in `loadBundledModel`) and formatting falls back
 /// to rules. `xcodebuild` can compile them, and `scripts/build-metallib.sh`
 /// runs it once and copies the result next to the binary.
 ///
 /// Used by `Doctor` only, as a heuristic: the authoritative check is MLX's own
 /// loader, whose C++ search (dladdr on the running image, then SwiftPM bundle
-/// lookups) this mirrors for the layouts a parrot binary actually has — a bare
+/// lookups) this mirrors for the layouts an ara binary actually has — a bare
 /// CLI next to its metallib, or a test bundle. A miss here is one wrong `warn`
 /// line in `doctor`, never a disabled engine: `warmUp` itself asks MLX and
 /// believes only the real loader.

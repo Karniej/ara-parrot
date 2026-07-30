@@ -3,7 +3,7 @@ import Testing
 
 @testable import AraCore
 
-/// Opt-in hardware test: `PARROT_AUDIO_HW=1 swift test --filter AudioCaptureHardware`.
+/// Opt-in hardware test: `ARA_AUDIO_HW=1 swift test --filter AudioCaptureHardware`.
 ///
 /// Exists because the fake-backend suite cannot see inside `liveBackend`, and
 /// the one bug it can't see broke every recording: routing the input unit to a
@@ -19,7 +19,7 @@ import Testing
 @Suite("AudioCaptureHardware") struct AudioCaptureHardwareTests {
     @Test("routed live capture delivers audio frames")
     func routedLiveCaptureDeliversFrames() async throws {
-        guard ProcessInfo.processInfo.environment["PARROT_AUDIO_HW"] == "1" else { return }
+        guard ProcessInfo.processInfo.environment["ARA_AUDIO_HW"] == "1" else { return }
 
         let store = MicrophoneStore(preferredUID: nil)
         guard let device = store.effective.device else {

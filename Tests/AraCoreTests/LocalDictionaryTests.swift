@@ -393,7 +393,7 @@ struct LocalDictionaryTests {
         #expect(try Data(contentsOf: broken) == Data("not json".utf8))
     }
 
-    // MARK: - listingLines: what `parrot dictionary` prints
+    // MARK: - listingLines: what `ara dictionary` prints
 
     @Test("the listing is the path, then one canonical ← variants line per entry")
     func listingLinesForEntries() {

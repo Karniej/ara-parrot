@@ -34,10 +34,10 @@ These are not bugs — they are things no automated test in this repo can reach.
 
 ## Deferred work
 
-- **`--dump-wav` writes raw recorded audio to world-readable `/tmp/parrot-last.wav`**
-  (`Parrot.swift`, the release path). Recorded audio is as sensitive as the
+- **`--dump-wav` writes raw recorded audio to world-readable `/tmp/ara-last.wav`**
+  (`Ara.swift`, the release path). Recorded audio is as sensitive as the
   transcript text the logging work just took out of /tmp; the same fix applies —
-  a `0600` file in `~/Library/Caches/parrot/` instead. Bounded: debug-only flag,
+  a `0600` file in `~/Library/Caches/ara/` instead. Bounded: debug-only flag,
   never set by the LaunchAgent, one utterance retained at a time.
 
 - **The synthesized ⌘V assumes keycode 9 is `v`.** True on ANSI QWERTY and on

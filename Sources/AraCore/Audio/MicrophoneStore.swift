@@ -1,7 +1,7 @@
 import CoreAudio
 import Foundation
 
-/// Tracks the connected audio *input* devices and resolves which one parrot
+/// Tracks the connected audio *input* devices and resolves which one ara
 /// should record from, given an optional preferred device UID.
 ///
 /// The store never touches the system default input — routing is per-engine,
@@ -74,7 +74,7 @@ public final class MicrophoneStore {
         return _devices
     }
 
-    /// The device parrot should record from right now, and why.
+    /// The device ara should record from right now, and why.
     public var effective: Effective {
         lock.lock()
         defer { lock.unlock() }
@@ -217,7 +217,7 @@ enum CoreAudioInputs {
         }
     }
 
-    /// The system default input, or nil when there is none. Read-only: parrot
+    /// The system default input, or nil when there is none. Read-only: ara
     /// never *sets* the system default.
     static func defaultInputID() -> AudioDeviceID? {
         var addr = address(kAudioHardwarePropertyDefaultInputDevice)

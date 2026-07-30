@@ -2,7 +2,7 @@
   <img src="docs/assets/ara.png" alt="Ara — free, open, on-device dictation" width="720">
 </p>
 
-# Ara (parrot)
+# Ara
 
 A free macOS dictation daemon. Push-to-talk, on-device transcription, AI
 cleanup on an open model, text inserted at the cursor. A fork of
@@ -41,48 +41,47 @@ or reading your screen.
 ## Install
 
 ```sh
-curl -fsSL https://digimata.github.io/parrot/install.sh | sh
-parrot setup                       # grants mic + accessibility, downloads the model
-parrot install --launch-at-login   # optional — runs in the background on login
+curl -fsSL https://raw.githubusercontent.com/Karniej/ara-parrot/master/scripts/install.sh | sh
+ara setup                       # grants mic + accessibility, downloads the model
+ara install --launch-at-login   # optional — runs in the background on login
 ```
 
 **Requires:** macOS 14+ on Apple Silicon (M1 or newer). Transcription runs on the Apple Neural Engine via CoreML — so the installer refuses to run on Intel.
 
-The installer drops the binary in `/usr/local/bin/parrot`. Builds are unsigned for now, so the installer strips the quarantine xattr — once you've inspected the script you'll see exactly what it does.
+The installer drops the binary in `/usr/local/bin/ara`. Builds are unsigned for now, so the installer strips the quarantine xattr — once you've inspected the script you'll see exactly what it does.
 
-> **Fork note:** the curl installer above ships the *upstream* parrot binary.
-> Ara's additions — the local formatting engine, dictionary, microphone
-> picker — are currently source-only: use [Build from
-> source](#build-from-source) below. A signed Ara release pipeline is on the
-> roadmap.
+> **Fork note:** an Ara release pipeline exists but has not shipped a tagged
+> build yet, so the curl installer above has nothing to fetch until it does.
+> Until then Ara is source-only: use [Build from
+> source](#build-from-source) below. Builds will stay unsigned for now.
 
 ## How to use
 
-1. **Run it.** Either `parrot install --launch-at-login` (daemonized, runs forever, lives in the menu bar), or `parrot` in any terminal tab.
+1. **Run it.** Either `ara install --launch-at-login` (daemonized, runs forever, lives in the menu bar), or `ara` in any terminal tab.
 2. **Click into the text field you want to dictate into** — Messages, the address bar, a Slack thread, anywhere a cursor blinks.
 3. **Hold the `fn` key, speak, release.** A small pill appears at the bottom of the screen while the mic is hot.
 4. **The transcript types itself in at the cursor** when you release. Usually within 200-300ms.
 
 That's it. There is no record button, no stop button, no "send" — `fn` is the whole interface.
 
-> **Note:** on most modern Macs the `fn` key is the bottom-left key. If yours is set to "Change input source" or "Show emoji & symbols," `parrot setup` will tell you how to flip it back to plain `fn`.
+> **Note:** on most modern Macs the `fn` key is the bottom-left key. If yours is set to "Change input source" or "Show emoji & symbols," `ara setup` will tell you how to flip it back to plain `fn`.
 
 ## CLI
 
 ```sh
-parrot                                 # run in the foreground (^C to quit)
-parrot setup                           # one-time setup: permissions + model download
-parrot install --launch-at-login       # register a LaunchAgent (background daemon)
-parrot install --uninstall             # remove the LaunchAgent
-parrot install --purge-legacy-logs     # delete the /tmp transcript logs older versions wrote
-parrot doctor                          # check permissions, fn key, on-device formatting
-parrot models list                     # list available models
-parrot models download <id>            # pre-download a model
-parrot --model whisper-large-v3-turbo  # bigger, multilingual, slower first-run
-parrot --hotkey right-option           # change the push-to-talk key
-parrot --inject type                   # force typing (or: paste); default is auto
-parrot --no-overlay                    # disable the bottom-of-screen pill
-parrot --echo-transcripts              # log full transcript text (off by default)
+ara                                 # run in the foreground (^C to quit)
+ara setup                           # one-time setup: permissions + model download
+ara install --launch-at-login       # register a LaunchAgent (background daemon)
+ara install --uninstall             # remove the LaunchAgent
+ara install --purge-legacy-logs     # delete the /tmp transcript logs older versions wrote
+ara doctor                          # check permissions, fn key, on-device formatting
+ara models list                     # list available models
+ara models download <id>            # pre-download a model
+ara --model whisper-large-v3-turbo  # bigger, multilingual, slower first-run
+ara --hotkey right-option           # change the push-to-talk key
+ara --inject type                   # force typing (or: paste); default is auto
+ara --no-overlay                    # disable the bottom-of-screen pill
+ara --echo-transcripts              # log full transcript text (off by default)
 ```
 
 ### Privacy
@@ -92,14 +91,15 @@ a character count only (`→ 0.42s · 63 chars`); `--echo-transcripts` opts back
 into the full text for interactive runs, and the LaunchAgent never uses it —
 its output goes to `/dev/null`.
 
-> If you installed parrot before this change, the background daemon was writing
-> every transcript to world-readable `/tmp/parrot.{out,err}.log` — and its old
-> LaunchAgent plist keeps doing so until it is rewritten. Upgrade in this order:
-> re-run `parrot install --launch-at-login` first (this rewrites the agent and
-> restarts the daemon), **then** `parrot install --purge-legacy-logs` to delete
-> the old files. Purging first is pointless — the still-loaded old agent
-> recreates them. `parrot doctor` flags both the leftover files and a stale
-> plist.
+> If you installed this tool before this change — under its old name, `parrot` —
+> the background daemon was writing every transcript to world-readable
+> `/tmp/parrot.{out,err}.log`, and its old LaunchAgent plist keeps doing so until
+> it is rewritten. Those filenames are what is on your disk, so they are what the
+> cleanup still looks for. Upgrade in this order: re-run
+> `ara install --launch-at-login` first (this rewrites the agent and restarts the
+> daemon), **then** `ara install --purge-legacy-logs` to delete the old files.
+> Purging first is pointless — the still-loaded old agent recreates them.
+> `ara doctor` flags both the leftover files and a stale plist.
 
 ### The menu bar
 
@@ -115,13 +115,13 @@ and — the part worth reading — *when* it takes effect:
 | **Cleanup** | editing intensity none→high; saved to `cleanup` | on restart |
 | **Mode** | pin a mode, or **Auto (per app)**; deliberately *never* saved — it is a session override, and the `mode` key stays your startup default | next utterance |
 | **Model** | pick a transcription model; saved to `model`; a model not on disk is downloaded by the next launch | on restart |
-| **Model → formatting model line** | says "✓ downloaded", or offers the `parrot models download-formatter` command with a copy button — the 900 MB fetch stays an explicit CLI action | on restart |
+| **Model → formatting model line** | says "✓ downloaded", or offers the `ara models download-formatter` command with a copy button — the 900 MB fetch stays an explicit CLI action | on restart |
 | **Hotkey** | pick the push-to-talk key; saved to `hotkey` | on restart |
 | **Engine** | mlx / apple / cloud / rules / off; saved to `engine`; the cloud row reads "(no API key set)" when the daemon started without one | on restart |
 | **Add dictionary correction…** / **Edit dictionary…** / **Edit snippets…** | the vocabulary doors — see their sections below | next utterance |
 | **Start at Login** | installs or removes the LaunchAgent; the checkmark is the plist on disk. Enabling *starts the login copy immediately* — quit a terminal-run daemon after enabling, or two daemons answer the hotkey | immediately |
-| **Run Diagnostics…** | `parrot doctor`'s report in a window, monospaced, with a Copy report button | — |
-| **Quit parrot** | quits | immediately |
+| **Run Diagnostics…** | `ara doctor`'s report in a window, monospaced, with a Copy report button | — |
+| **Quit Ara** | quits | immediately |
 
 Every submenu whose pick is not immediate states its timing in a caption, so
 the menu never claims a restart-bound pick changed the running session; the
@@ -148,7 +148,7 @@ take effect.
 
 ### Injection: typing vs paste
 
-Parrot has two ways to deliver a transcript, controlled by the `inject` key
+Ara has two ways to deliver a transcript, controlled by the `inject` key
 (or `--inject`):
 
 - **`type`** synthesizes the characters as keyboard events. It leaves your
@@ -204,7 +204,7 @@ else in the menu it takes effect on the next launch, not the next utterance
 
 ### Microphone
 
-By default parrot records from the system default input, live — change it in
+By default Ara records from the system default input, live — change it in
 System Settings and the next dictation follows. To pin a specific mic instead,
 use the menu bar item → **Microphone** and pick one; the choice is saved to
 the config file (the `microphone` key above — a Core Audio device UID, which
@@ -212,7 +212,7 @@ survives replug and reboot; the menu writes it so there is no reason to type
 one by hand) and only that key is touched. Picking **System default** clears
 it.
 
-If the picked mic is unplugged, parrot falls back — to the system default
+If the picked mic is unplugged, Ara falls back — to the system default
 input, or to the first available input when the default is not usable — until
 it returns; the submenu says so. A mic that dies mid-dictation does not lose
 the utterance: recording continues on whatever input remains. When none does,
@@ -261,7 +261,7 @@ until the file parses again.
 **Edit dictionary…**, right below the correction form in the menu, opens the
 file in whatever edits JSON on your Mac — writing it first with the example
 entry above if it does not exist yet, so the format explains itself. To see
-what is there without opening anything, `parrot dictionary` prints the path
+what is there without opening anything, `ara dictionary` prints the path
 and every correction.
 
 ### Snippets
@@ -307,7 +307,7 @@ and like the config and dictionary, a broken file never stops dictation: one
 
 **Edit snippets…** in the menu bar opens the file in your default editor —
 writing it first with a one-entry example if it does not exist yet — and
-`parrot snippets` prints the path and every trigger without opening anything.
+`ara snippets` prints the path and every trigger without opening anything.
 
 ## Feature parity
 
@@ -357,13 +357,13 @@ See [docs/architecture.md](docs/architecture.md) for design notes.
 ```sh
 swift build -c release
 scripts/build-metallib.sh    # compile the Metal kernels SwiftPM can't (needs Xcode)
-.build/release/parrot --help
+.build/release/ara --help
 ```
 
 The second step exists because the default formatting engine runs a bundled
 language model on MLX, and SwiftPM cannot compile MLX's Metal shaders — a
 plain `swift build` binary starts fine but formats with rule-based cleanup
-only, and `parrot doctor` will say so. The script compiles the kernel library
+only, and `ara doctor` will say so. The script compiles the kernel library
 once through `xcodebuild` and drops `mlx.metallib` next to the binary. The
 model itself is a separate one-time download:
-`parrot models download-formatter` (~900 MB).
+`ara models download-formatter` (~900 MB).

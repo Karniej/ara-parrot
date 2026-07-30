@@ -16,7 +16,7 @@ python3 -m venv .venv
 
 The model is the one the daemon ships, `mlx-community/Qwen2.5-1.5B-Instruct-4bit`
 (~0.9 GB); `mlx_lm.load` fetches it into the Hugging Face cache on first run —
-already present if you have run `parrot models download-formatter`.
+already present if you have run `ara models download-formatter`.
 
 ## Run
 

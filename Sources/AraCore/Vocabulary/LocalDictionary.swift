@@ -306,7 +306,7 @@ public struct LocalDictionary: Sendable, Equatable {
 
     // MARK: - Listing
 
-    /// The `parrot dictionary` printout, pure so it is testable: the path
+    /// The `ara dictionary` printout, pure so it is testable: the path
     /// (the one thing the menu never shows), then one `canonical ← variants`
     /// line per entry, in file order — the same order every other reader of
     /// this file preserves. Empty collapses to a single line that still names

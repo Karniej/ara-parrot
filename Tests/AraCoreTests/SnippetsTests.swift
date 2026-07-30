@@ -312,7 +312,7 @@ struct SnippetsTests {
         #expect(try Data(contentsOf: broken) == Data("not json".utf8))
     }
 
-    // MARK: - listingLines: what `parrot snippets` prints
+    // MARK: - listingLines: what `ara snippets` prints
 
     @Test("the listing is the path, then one trigger → expansion line per entry")
     func listingLinesForEntries() {

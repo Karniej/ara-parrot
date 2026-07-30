@@ -4,9 +4,9 @@ import AraCore
 import Foundation
 
 @main
-struct Parrot: ParsableCommand {
+struct Ara: ParsableCommand {
     static let configuration = CommandConfiguration(
-        commandName: "parrot",
+        commandName: "ara",
         abstract: "Minimal macOS dictation daemon. Hold Fn, speak, release.",
         subcommands: [Run.self, Setup.self, Doctor.self, Models.self,
                       DictionaryCommand.self, SnippetsCommand.self, Install.self],
@@ -26,7 +26,7 @@ struct Run: ParsableCommand {
     @Flag(name: .long, help: "Print every keyboard event the tap sees (debug).")
     var debugHotkey: Bool = false
 
-    @Flag(name: .long, help: "Write each capture to /tmp/parrot-last.wav for inspection.")
+    @Flag(name: .long, help: "Write each capture to /tmp/ara-last.wav for inspection.")
     var dumpWav: Bool = false
 
     // Off by default because stderr is a file under launchd, and a file that
@@ -109,7 +109,7 @@ struct Run: ParsableCommand {
             chosenModel = m
         case .unknownFlag(let id):
             FileHandle.standardError.write(Data("unknown model: \(id)\n".utf8))
-            FileHandle.standardError.write(Data("run `parrot models list` to see options.\n".utf8))
+            FileHandle.standardError.write(Data("run `ara models list` to see options.\n".utf8))
             throw ExitCode(1)
         case .noModelsRegistered:
             FileHandle.standardError.write(Data("no models registered\n".utf8))
@@ -541,7 +541,7 @@ struct Run: ParsableCommand {
                             String(format: "○ captured %.2fs · rms %.3f\n", seconds, rms).utf8
                         ))
                         if dumpWav, !samples.isEmpty {
-                            let path = "/tmp/parrot-last.wav"
+                            let path = "/tmp/ara-last.wav"
                             do {
                                 try WAVWriter.write(samples: samples, sampleRate: 16_000, to: path)
                                 FileHandle.standardError.write(Data("  wrote \(path)\n".utf8))
@@ -625,7 +625,7 @@ struct Run: ParsableCommand {
                 }
             } catch {
                 FileHandle.standardError.write(Data("failed to register hotkey tap: \(error)\n".utf8))
-                FileHandle.standardError.write(Data("run `parrot setup` to configure permissions.\n".utf8))
+                FileHandle.standardError.write(Data("run `ara setup` to configure permissions.\n".utf8))
                 // Not `ExitCode`: the run loop is already pumping, so there is
                 // no `throws` path left to ride out of `run()` on.
                 Darwin.exit(1)
@@ -805,10 +805,10 @@ struct Models: ParsableCommand {
     /// A separate subcommand rather than an entry in `ModelRegistry`, because
     /// that registry is typed `TranscriptionModel` — engine, WhisperKit id,
     /// languages — and none of those fields mean anything for a formatting
-    /// model. Bending the type to fit would make `parrot models list` offer a
+    /// model. Bending the type to fit would make `ara models list` offer a
     /// model that `--model` cannot accept.
     ///
-    /// Explicit and user-initiated, mirroring `parrot models download`: a
+    /// Explicit and user-initiated, mirroring `ara models download`: a
     /// default install performs no network I/O for formatting, and 0.9GB is not
     /// something to fetch behind a user's back on first launch.
     struct DownloadFormatter: ParsableCommand {

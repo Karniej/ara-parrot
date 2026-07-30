@@ -138,8 +138,8 @@ struct DoctorTests {
         // so purging before re-installing is a treadmill. The remediation must
         // name the re-install first and the purge second.
         let remediation = try #require(check.remediation)
-        let reinstall = try #require(remediation.range(of: "parrot install --launch-at-login"))
-        let purge = try #require(remediation.range(of: "parrot install --purge-legacy-logs"))
+        let reinstall = try #require(remediation.range(of: "ara install --launch-at-login"))
+        let purge = try #require(remediation.range(of: "ara install --purge-legacy-logs"))
         #expect(reinstall.lowerBound < purge.lowerBound)
     }
 
@@ -147,7 +147,7 @@ struct DoctorTests {
 
     /// The half of the upgrade path the log files cannot tell you about: an
     /// agent installed before the fix keeps its old plist — std paths at
-    /// /tmp — until `parrot install --launch-at-login` is re-run, and the
+    /// /tmp — until `ara install --launch-at-login` is re-run, and the
     /// running daemon keeps writing there.
     @Test("an installed plist still pointing its output at /tmp is flagged")
     func oldAgentPlistIsFlagged() throws {
@@ -155,9 +155,9 @@ struct DoctorTests {
             .appendingPathComponent("doctor-plist-\(UUID().uuidString)", isDirectory: true)
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: dir) }
-        let plist = dir.appendingPathComponent("com.digimata.parrot.plist")
+        let plist = dir.appendingPathComponent("com.silpho.ara.plist")
         let old: [String: Any] = [
-            "Label": "com.digimata.parrot",
+            "Label": "com.silpho.ara",
             "StandardOutPath": "/tmp/parrot.out.log",
             "StandardErrorPath": "/tmp/parrot.err.log",
         ]
@@ -170,7 +170,7 @@ struct DoctorTests {
             return
         }
         #expect(reason.contains("/tmp"))
-        #expect(check.remediation?.contains("parrot install --launch-at-login") == true)
+        #expect(check.remediation?.contains("ara install --launch-at-login") == true)
     }
 
     @Test("a current plist, or none at all, passes the log-path check")
@@ -187,9 +187,9 @@ struct DoctorTests {
             .appendingPathComponent("doctor-plist-\(UUID().uuidString)", isDirectory: true)
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: dir) }
-        let plist = dir.appendingPathComponent("com.digimata.parrot.plist")
+        let plist = dir.appendingPathComponent("com.silpho.ara.plist")
         try PropertyListSerialization.data(
-            fromPropertyList: Install.agentPlist(binary: "/usr/local/bin/parrot"),
+            fromPropertyList: Install.agentPlist(binary: "/usr/local/bin/ara"),
             format: .xml, options: 0
         ).write(to: plist)
         if case .warn = DoctorReport.checkLaunchAgentLogPaths(plistPath: plist.path).status {
@@ -203,7 +203,7 @@ struct DoctorTests {
             .appendingPathComponent("doctor-plist-\(UUID().uuidString)", isDirectory: true)
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: dir) }
-        let plist = dir.appendingPathComponent("com.digimata.parrot.plist")
+        let plist = dir.appendingPathComponent("com.silpho.ara.plist")
         try PropertyListSerialization.data(
             fromPropertyList: ["StandardErrorPath": "/tmp/parrot.err.log"],
             format: .xml, options: 0

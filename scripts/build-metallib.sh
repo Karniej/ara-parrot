@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 # Compiles the Metal kernel library the MLX formatting engine needs and places
-# it next to every SwiftPM-built parrot binary.
+# it next to every SwiftPM-built ara binary.
 #
 # Why this exists: SwiftPM cannot compile Metal shaders, so a plain
-# `swift build` produces a parrot binary with no `mlx.metallib`. The MLX
+# `swift build` produces an ara binary with no `mlx.metallib`. The MLX
 # runtime then fails at warm-up ("Failed to load the default metallib"),
-# `parrot doctor` warns, and formatting falls back to rule-based cleanup.
+# `ara doctor` warns, and formatting falls back to rule-based cleanup.
 # xcodebuild *can* compile the shaders; this script builds the package once
 # through xcodebuild to get mlx-swift's compiled kernel library, then copies it
 # as `mlx.metallib` into the SwiftPM build directories — the first place MLX's
@@ -22,7 +22,7 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-DERIVED="${PARROT_METALLIB_DD:-.build/metallib-derived-data}"
+DERIVED="${ARA_METALLIB_DD:-.build/metallib-derived-data}"
 METALLIB="$DERIVED/Build/Products/Release/mlx-swift_Cmlx.bundle/Contents/Resources/default.metallib"
 
 if [ ! -f "$METALLIB" ]; then
@@ -31,7 +31,7 @@ if [ ! -f "$METALLIB" ]; then
     # (CudaBuild) that xcodebuild refuses to run non-interactively without
     # per-user approval; it never runs for macOS builds, but validation alone
     # fails the build. SwiftPM itself runs the same package without asking.
-    xcodebuild build -scheme parrot -configuration Release \
+    xcodebuild build -scheme ara -configuration Release \
         -destination 'platform=macOS,arch=arm64' -derivedDataPath "$DERIVED" \
         -skipPackagePluginValidation -quiet
 fi
@@ -45,8 +45,8 @@ copied=0
 for dir in \
     .build/arm64-apple-macosx/debug \
     .build/arm64-apple-macosx/release \
-    .build/arm64-apple-macosx/debug/parrotPackageTests.xctest/Contents/MacOS \
-    .build/arm64-apple-macosx/release/parrotPackageTests.xctest/Contents/MacOS \
+    .build/arm64-apple-macosx/debug/araPackageTests.xctest/Contents/MacOS \
+    .build/arm64-apple-macosx/release/araPackageTests.xctest/Contents/MacOS \
     "$@"
 do
     if [ -d "$dir" ]; then

@@ -30,7 +30,7 @@ public enum DoctorReport {
 
     /// The other half of the legacy-logs upgrade path: an agent installed
     /// before the fix keeps its old plist — std paths at /tmp — until
-    /// `parrot install --launch-at-login` is re-run, and the running daemon
+    /// `ara install --launch-at-login` is re-run, and the running daemon
     /// keeps writing transcripts there. Purging the files without fixing the
     /// plist is a treadmill; this check is what points at the plist.
     ///
@@ -57,8 +57,8 @@ public enum DoctorReport {
             name: name,
             status: .warn("the installed agent still sends daemon output to "
                 + stale.joined(separator: ", ")),
-            remediation: "re-run `parrot install --launch-at-login` to rewrite the agent, "
-                + "then `parrot install --purge-legacy-logs`"
+            remediation: "re-run `ara install --launch-at-login` to rewrite the agent, "
+                + "then `ara install --purge-legacy-logs`"
         )
     }
 
@@ -82,8 +82,8 @@ public enum DoctorReport {
             // the re-install that rewrites its plist has to come first or the
             // purge is a treadmill.
             remediation: "if the background daemon is installed, re-run "
-                + "`parrot install --launch-at-login` first (the old agent keeps "
-                + "writing there), then `parrot install --purge-legacy-logs`"
+                + "`ara install --launch-at-login` first (the old agent keeps "
+                + "writing there), then `ara install --purge-legacy-logs`"
         )
     }
 
@@ -135,7 +135,7 @@ public enum DoctorReport {
                 status: .warn("the Metal kernel library (mlx.metallib) is missing from this build"),
                 remediation: "`swift build` cannot compile Metal shaders; run "
                     + "`\(MLXRuntime.buildCommand)` once to compile it and place "
-                    + "it next to the parrot binary. Until then, formatting "
+                    + "it next to the ara binary. Until then, formatting "
                     + "falls back to rule-based cleanup."
             )
         }
@@ -183,7 +183,7 @@ public enum DoctorReport {
             return Check(
                 name: "microphone",
                 status: .warn("not yet requested — will prompt on first recording"),
-                remediation: "run parrot and hold Fn once; macOS will prompt"
+                remediation: "run ara and hold Fn once; macOS will prompt"
             )
         case .denied, .restricted:
             return Check(
@@ -321,7 +321,7 @@ public enum DoctorReport {
         }
     }
 
-    /// True only if every check passed cleanly (used by `parrot doctor` exit code).
+    /// True only if every check passed cleanly (used by `ara doctor` exit code).
     static func allClean(_ checks: [Check]) -> Bool {
         checks.allSatisfy {
             if case .ok = $0.status { return true }

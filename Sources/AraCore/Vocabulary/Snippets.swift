@@ -200,7 +200,7 @@ public struct Snippets: Sendable, Equatable {
 
     // MARK: - Listing
 
-    /// The `parrot snippets` printout, pure so it is testable: the path, then
+    /// The `ara snippets` printout, pure so it is testable: the path, then
     /// one `trigger → expansion` line per entry, in file order. Expansions
     /// are multiline by design and a listing is not the place to unspool
     /// them, so only the first line is shown, with an ellipsis owning up to

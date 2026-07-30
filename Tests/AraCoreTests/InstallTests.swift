@@ -13,7 +13,7 @@ struct InstallTests {
 
     @Test("the agent discards the daemon's output")
     func agentOutputGoesToDevNull() {
-        let plist = Install.agentPlist(binary: "/usr/local/bin/parrot")
+        let plist = Install.agentPlist(binary: "/usr/local/bin/ara")
         #expect(plist["StandardOutPath"] as? String == "/dev/null")
         #expect(plist["StandardErrorPath"] as? String == "/dev/null")
     }
@@ -23,16 +23,16 @@ struct InstallTests {
     /// configured to write transcript text to a log it cannot show anyone.
     @Test("the agent is never started with --echo-transcripts")
     func agentNeverEchoesTranscripts() {
-        let plist = Install.agentPlist(binary: "/usr/local/bin/parrot")
+        let plist = Install.agentPlist(binary: "/usr/local/bin/ara")
         let args = plist["ProgramArguments"] as? [String]
-        #expect(args == ["/usr/local/bin/parrot", "run", "--skip-doctor"])
+        #expect(args == ["/usr/local/bin/ara", "run", "--skip-doctor"])
         #expect(args?.contains("--echo-transcripts") == false)
     }
 
     @Test("the agent still keeps its launchd identity")
     func agentKeepsItsIdentity() {
-        let plist = Install.agentPlist(binary: "/usr/local/bin/parrot")
-        #expect(plist["Label"] as? String == "com.digimata.parrot")
+        let plist = Install.agentPlist(binary: "/usr/local/bin/ara")
+        #expect(plist["Label"] as? String == "com.silpho.ara")
         #expect(plist["RunAtLoad"] as? Bool == true)
     }
 
