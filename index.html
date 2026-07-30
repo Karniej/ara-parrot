@@ -3,48 +3,49 @@
     <head>
         <meta charset="utf-8" />
         <meta name="viewport" content="width=device-width,initial-scale=1" />
-        <title>parrot · push-to-talk dictation for macOS</title>
+        <title>Ara · free, on-device dictation for macOS</title>
         <meta
             name="description"
-            content="On-device push-to-talk dictation for macOS. Hold Fn, speak, release."
+            content="Free, MIT-licensed push-to-talk dictation for macOS. Whisper on the Neural Engine, cleanup on a local open model. No account, no subscription, no server."
         />
 
         <!-- Open Graph / link previews -->
         <meta property="og:type" content="website" />
-        <meta property="og:url" content="https://digimata.github.io/parrot/" />
+        <meta property="og:url" content="https://karniej.github.io/ara-parrot/" />
         <meta
             property="og:title"
-            content="parrot · push-to-talk dictation for macOS"
+            content="Ara · free, on-device dictation for macOS"
         />
         <meta
             property="og:description"
-            content="On-device push-to-talk dictation for macOS. Hold Fn, speak, release."
+            content="Free, MIT-licensed push-to-talk dictation for macOS. Whisper on the Neural Engine, cleanup on a local open model. No account, no subscription, no server."
         />
         <meta
             property="og:image"
-            content="https://digimata.github.io/parrot/og.png"
+            content="https://karniej.github.io/ara-parrot/og.png"
         />
         <meta property="og:image:width" content="1200" />
         <meta property="og:image:height" content="630" />
+        <meta
+            property="og:image:alt"
+            content="Ara — free, open, on-device dictation"
+        />
         <meta name="twitter:card" content="summary_large_image" />
         <meta
             name="twitter:title"
-            content="parrot · push-to-talk dictation for macOS"
+            content="Ara · free, on-device dictation for macOS"
         />
         <meta
             name="twitter:description"
-            content="On-device push-to-talk dictation for macOS. Hold Fn, speak, release."
+            content="Free, MIT-licensed push-to-talk dictation for macOS. Whisper on the Neural Engine, cleanup on a local open model. No account, no subscription, no server."
         />
         <meta
             name="twitter:image"
-            content="https://digimata.github.io/parrot/og.png"
+            content="https://karniej.github.io/ara-parrot/og.png"
         />
 
-        <link
-            rel="icon"
-            type="image/svg+xml"
-            href='data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="black" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M16 7h.01"/><path d="M3.4 18H12a8 8 0 0 0 8-8V7a4 4 0 0 0-7.28-2.3L2 20"/><path d="m20 7 2 .5-2 .5"/><path d="M10 18v3"/><path d="M14 17.75V21"/><path d="M7 18a6 6 0 0 0 3.84-10.61"/></svg>'
-        />
+        <link rel="icon" type="image/png" href="mark.png" />
+        <link rel="apple-touch-icon" href="mark.png" />
         <style>
             :root {
                 --bg: #ffffff;
@@ -60,6 +61,9 @@
                     ui-rounded, "SF Pro Rounded", "Hiragino Maru Gothic ProN",
                     "Quicksand", "Comfortaa", "Arial Rounded MT Bold",
                     var(--font-sans);
+                --font-mono:
+                    ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas,
+                    monospace;
             }
 
             * {
@@ -79,6 +83,7 @@
             /* Headings + brand wordmark get SF Pro Rounded (ui-rounded). */
             h1,
             .philosophy h2,
+            .features h2,
             nav .brand span {
                 font-family: var(--font-rounded);
             }
@@ -100,9 +105,11 @@
                 text-decoration: none;
                 font-size: 16px;
             }
-            nav .brand svg {
-                width: 22px;
-                height: 22px;
+            nav .brand img {
+                width: 24px;
+                height: 24px;
+                border-radius: 6px;
+                display: block;
             }
             nav .links {
                 display: flex;
@@ -131,15 +138,16 @@
             }
             @media (min-width: 768px) {
                 main {
-                    padding-top: 112px;
-                    padding-bottom: 120px;
+                    padding-top: 96px;
+                    padding-bottom: 112px;
                 }
             }
 
-            .philosophy {
+            .philosophy,
+            .features {
                 max-width: 1180px;
                 margin: 0 auto;
-                padding: 0 24px 160px;
+                padding: 0 24px 120px;
             }
             .philosophy .grid {
                 display: grid;
@@ -147,13 +155,19 @@
                 gap: 48px;
                 align-items: start;
             }
+            /* Without this the nowrap terminal lines set the column's
+               min-content width and the page scrolls sideways on a phone. */
+            .philosophy .grid > * {
+                min-width: 0;
+            }
             @media (min-width: 768px) {
                 .philosophy .grid {
                     grid-template-columns: 5fr 7fr;
                     gap: 64px;
                 }
             }
-            .philosophy h2 {
+            .philosophy h2,
+            .features h2 {
                 font-size: 30px;
                 line-height: 1.15;
                 font-weight: 500;
@@ -161,7 +175,8 @@
                 margin: 0 0 24px;
             }
             @media (min-width: 768px) {
-                .philosophy h2 {
+                .philosophy h2,
+                .features h2 {
                     font-size: 36px;
                 }
             }
@@ -179,6 +194,54 @@
                 color: var(--muted);
             }
 
+            .features h2 {
+                max-width: 520px;
+            }
+            .features .lede {
+                font-size: 17px;
+                line-height: 1.55;
+                color: var(--muted-strong);
+                max-width: 620px;
+                margin: 0 0 48px;
+            }
+            .features .grid {
+                display: grid;
+                grid-template-columns: 1fr;
+                gap: 36px;
+            }
+            @media (min-width: 700px) {
+                .features .grid {
+                    grid-template-columns: 1fr 1fr;
+                    gap: 40px 64px;
+                }
+            }
+            @media (min-width: 1000px) {
+                .features .grid {
+                    grid-template-columns: 1fr 1fr 1fr;
+                }
+            }
+            .features h3 {
+                font-size: 16px;
+                font-weight: 600;
+                letter-spacing: -0.005em;
+                margin: 0 0 8px;
+            }
+            .features p {
+                font-size: 15px;
+                line-height: 1.6;
+                color: var(--muted-strong);
+                margin: 0;
+            }
+            .features code,
+            .terminal-note code,
+            footer code {
+                font-family: var(--font-mono);
+                font-size: 0.88em;
+                background: var(--pill-bg);
+                padding: 1px 5px;
+                border-radius: 5px;
+                white-space: nowrap;
+            }
 
             .terminal {
                 border: 1px solid #e5e5e5;
@@ -204,15 +267,15 @@
             }
             .terminal .body {
                 padding: 20px 22px 24px;
-                font-family:
-                    ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas,
-                    monospace;
+                font-family: var(--font-mono);
                 font-size: 13px;
                 line-height: 1.7;
                 color: #404040;
+                overflow-x: auto;
             }
             .terminal .body p {
                 margin: 0;
+                white-space: nowrap;
             }
             .terminal .body .dim {
                 color: #a3a3a3;
@@ -226,6 +289,11 @@
             .terminal .body .pad-top {
                 margin-top: 10px;
             }
+            .terminal-note {
+                font-size: 13px;
+                color: var(--muted);
+                margin: 12px 0 0;
+            }
 
             .hero {
                 display: flex;
@@ -235,14 +303,16 @@
             }
 
             .mark {
-                width: 96px;
-                height: 96px;
-                margin-bottom: 24px;
-                color: #111;
+                width: 100%;
+                max-width: 440px;
+                height: auto;
+                margin-bottom: 28px;
+                border-radius: 14px;
+                display: block;
             }
 
             h1 {
-                font-size: 38px;
+                font-size: 34px;
                 line-height: 1.1;
                 font-weight: 500;
                 letter-spacing: -0.015em;
@@ -250,7 +320,7 @@
             }
             @media (min-width: 768px) {
                 h1 {
-                    font-size: 56px;
+                    font-size: 50px;
                 }
             }
 
@@ -259,7 +329,7 @@
                 line-height: 1.5;
                 color: var(--text);
                 margin: 0 auto 40px;
-                max-width: 560px;
+                max-width: 580px;
             }
             @media (min-width: 768px) {
                 .subhead {
@@ -276,6 +346,7 @@
                 flex-direction: column;
                 align-items: center;
                 margin-top: 8px;
+                max-width: 100%;
             }
 
             .pill {
@@ -284,13 +355,12 @@
                 background: var(--pill-bg);
                 border: 1px solid var(--border);
                 border-radius: 12px;
-                font-family:
-                    ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas,
-                    monospace;
+                font-family: var(--font-mono);
                 font-size: 14px;
                 color: var(--text);
                 margin: 0;
                 overflow: hidden;
+                max-width: 100%;
             }
             .pill code {
                 padding: 12px 4px 12px 16px;
@@ -328,7 +398,9 @@
             .install .caption {
                 font-size: 14px;
                 color: var(--muted);
-                margin: 12px 0 0;
+                margin: 16px 0 0;
+                max-width: 560px;
+                line-height: 1.55;
             }
             .install .caption a {
                 color: var(--muted);
@@ -338,10 +410,18 @@
             .install .caption a:hover {
                 color: var(--muted-strong);
             }
+            .install .caption code {
+                font-family: var(--font-mono);
+                font-size: 12.5px;
+                background: var(--pill-bg);
+                padding: 1px 5px;
+                border-radius: 5px;
+                white-space: nowrap;
+            }
             .install .caption.requirements {
                 font-size: 13px;
                 color: #a3a3a3;
-                margin-top: 6px;
+                margin-top: 10px;
                 font-variant: all-small-caps;
                 letter-spacing: 0.04em;
             }
@@ -361,42 +441,54 @@
             .cta-mobile:hover {
                 background: #000000;
             }
-            @media (max-width: 480px) {
+            @media (max-width: 520px) {
                 .pill,
-                .install .caption {
+                .install .caption:not(.requirements) {
                     display: none;
                 }
                 .cta-mobile {
                     display: inline-flex;
                 }
             }
+
+            footer {
+                border-top: 1px solid var(--border);
+                max-width: 1180px;
+                margin: 0 auto;
+                padding: 32px 24px 64px;
+                font-size: 14px;
+                line-height: 1.6;
+                color: var(--muted);
+            }
+            footer p {
+                margin: 0 0 10px;
+                max-width: 720px;
+            }
+            footer a {
+                color: var(--muted-strong);
+                text-decoration: underline;
+                text-underline-offset: 2px;
+            }
+            footer a:hover {
+                color: var(--text);
+            }
         </style>
     </head>
     <body>
         <nav>
-            <a class="brand" href="/parrot/">
-                <svg
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    stroke-width="1.5"
-                    stroke-linecap="round"
-                    stroke-linejoin="round"
-                >
-                    <path d="M16 7h.01" />
-                    <path
-                        d="M3.4 18H12a8 8 0 0 0 8-8V7a4 4 0 0 0-7.28-2.3L2 20"
-                    />
-                    <path d="m20 7 2 .5-2 .5" />
-                    <path d="M10 18v3" />
-                    <path d="M14 17.75V21" />
-                    <path d="M7 18a6 6 0 0 0 3.84-10.61" />
-                </svg>
-                <span>parrot</span>
+            <a class="brand" href="/ara-parrot/">
+                <img
+                    src="mark.png"
+                    alt=""
+                    width="512"
+                    height="512"
+                    aria-hidden="true"
+                />
+                <span>Ara</span>
             </a>
             <div class="links">
                 <a
-                    href="https://github.com/digimata/parrot"
+                    href="https://github.com/Karniej/ara-parrot"
                     aria-label="GitHub repository"
                 >
                     <svg
@@ -416,39 +508,30 @@
 
         <main>
             <section class="hero">
-                <svg
+                <img
                     class="mark"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    stroke-width="1.5"
-                    stroke-linecap="round"
-                    stroke-linejoin="round"
-                >
-                    <path d="M16 7h.01" />
-                    <path
-                        d="M3.4 18H12a8 8 0 0 0 8-8V7a4 4 0 0 0-7.28-2.3L2 20"
-                    />
-                    <path d="m20 7 2 .5-2 .5" />
-                    <path d="M10 18v3" />
-                    <path d="M14 17.75V21" />
-                    <path d="M7 18a6 6 0 0 0 3.84-10.61" />
-                </svg>
+                    src="ara.png"
+                    width="1440"
+                    height="720"
+                    alt="Ara — free, open, on-device dictation"
+                />
 
-                <h1>Don't type. Speak.</h1>
+                <h1>Dictation that never leaves your Mac.</h1>
 
                 <p class="subhead">
-                    Open-source push-to-talk dictation for macOS.
+                    Hold <strong>fn</strong>, speak, release — the text lands at
+                    your cursor, cleaned up.
                     <span class="muted"
-                        >On-device, ultrafast. No account, no subscription, no
-                        cloud.</span
+                        >Whisper transcribes on the Apple Neural Engine, an open
+                        1.5B model does the editing, both on your machine. Free,
+                        MIT, no account, no subscription, no server.</span
                     >
                 </p>
 
                 <div class="install">
                     <pre
                         class="pill"
-                    ><code id="install-cmd">curl -fsSL https://digimata.github.io/parrot/install.sh | sh</code><button type="button" aria-label="Copy install command" onclick="copyInstall(this)">
+                    ><code id="install-cmd">curl -fsSL https://karniej.github.io/ara-parrot/install.sh | sh</code><button type="button" aria-label="Copy install command" onclick="copyInstall(this)">
         <svg class="copy" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
           <path d="M16.5 8.25V6a2.25 2.25 0 00-2.25-2.25H6A2.25 2.25 0 003.75 6v8.25A2.25 2.25 0 006 16.5h2.25m8.25-8.25H18a2.25 2.25 0 012.25 2.25V18A2.25 2.25 0 0118 20.25h-7.5A2.25 2.25 0 018.25 18v-1.5m8.25-8.25h-6a2.25 2.25 0 00-2.25 2.25v6"/>
         </svg>
@@ -457,10 +540,22 @@
         </svg>
       </button></pre>
                     <p class="caption">
-                        paste this in terminal, or
-                        <a href="https://github.com/digimata/parrot/releases"
-                            >download from GitHub</a
-                        >
+                        It fetches the latest DMG, prints its checksum, and
+                        installs <code>Ara.app</code>. Or
+                        <a
+                            href="https://github.com/Karniej/ara-parrot/releases/latest"
+                            >download it yourself</a
+                        >, or
+                        <a
+                            href="https://github.com/Karniej/ara-parrot#from-source"
+                            >build from source</a
+                        >.
+                    </p>
+                    <p class="caption build">
+                        Builds are <strong>unsigned</strong> — no Apple
+                        Developer ID — so the first launch needs
+                        right-click&nbsp;→&nbsp;Open. Cleanup runs on a local
+                        model that is a separate one-time ~900&nbsp;MB download.
                     </p>
                     <p class="caption requirements">
                         macOS 14+ · Apple Silicon
@@ -469,7 +564,7 @@
 
                 <a
                     class="cta-mobile"
-                    href="https://github.com/digimata/parrot/releases"
+                    href="https://github.com/Karniej/ara-parrot/releases/latest"
                     >Download →</a
                 >
             </section>
@@ -478,56 +573,220 @@
         <section class="philosophy">
             <div class="grid">
                 <div>
-                    <h2>Minimally ultrafast</h2>
+                    <h2>Free, local, open</h2>
                     <p class="body">
-                        Audio goes straight to the Apple Neural Engine via
-                        CoreML, transcribes on-device, and types the result at
-                        your cursor. The first word lands in
-                        <strong>under 300ms</strong> — every utterance, every
-                        length.
+                        Everything that touches your voice runs on your machine,
+                        on open-weights models, at no cost. Whisper transcribes
+                        through WhisperKit on the Apple Neural Engine; Qwen 2.5
+                        1.5B — Apache-licensed — strips fillers, punctuates and
+                        capitalises on MLX.
+                        <strong>No audio and no transcript leaves the Mac.</strong>
                     </p>
-                    <p class="body">Hold fn, speak, release.</p>
+                    <p class="body">
+                        If a model is missing, slow or wrong, the transcript
+                        falls through to rule-based cleanup and is typed anyway.
+                        The language model is polish, not a dependency — nothing
+                        on any path loses your words.
+                    </p>
                     <a
                         class="meta"
-                        href="https://github.com/digimata/parrot#readme"
+                        href="https://github.com/Karniej/ara-parrot#readme"
                         style="
                             text-decoration: underline;
                             text-underline-offset: 4px;
                         "
-                        >Read the design notes →</a
+                        >Read the README →</a
                     >
                 </div>
-                <div class="terminal">
-                    <div class="titlebar">
-                        <span style="background: #ff5f57"></span>
-                        <span style="background: #febc2e"></span>
-                        <span style="background: #28c840"></span>
+                <div>
+                    <div class="terminal">
+                        <div class="titlebar">
+                            <span style="background: #ff5f57"></span>
+                            <span style="background: #febc2e"></span>
+                            <span style="background: #28c840"></span>
+                        </div>
+                        <div class="body">
+                            <p>
+                                <span class="dim">$</span> ara
+                                --echo-transcripts
+                            </p>
+                            <p class="dim">
+                                loading mlx-community/Qwen2.5-1.5B-Instruct-4bit
+                                (formatting)...
+                            </p>
+                            <p class="ok">
+                                ✓ mlx-community/Qwen2.5-1.5B-Instruct-4bit ready
+                                (1.0s)
+                            </p>
+                            <p class="dim">
+                                listening on fn hold · model: whisper-base.en ·
+                                ^C to quit
+                            </p>
+                            <p class="rec pad-top">● recording</p>
+                            <p class="dim">○ captured 3.90s · rms 0.041</p>
+                            <p>
+                                → 1.08s · um so we ship tuesday no wait
+                                wednesday
+                            </p>
+                            <p>↦ 1.62s · We ship Wednesday.</p>
+                            <p class="rec pad-top">● recording</p>
+                            <p class="dim">○ captured 2.30s · rms 0.036</p>
+                            <p>
+                                → 0.71s · lets ship it in krakuf on friday
+                            </p>
+                            <p>↦ 0.98s · Let's ship it in Kraków on Friday.</p>
+                        </div>
                     </div>
-                    <div class="body">
-                        <p><span class="dim">$</span> parrot</p>
-                        <p class="dim pad-top">
-                            listening on fn hold · model: whisper-base.en
-                        </p>
-                        <p class="rec pad-top">● recording</p>
-                        <p class="dim">○ captured 2.40s · rms 0.041</p>
-                        <p class="pad-top">
-                            → 0.21s · the quick brown fox jumps over the lazy
-                            dog
-                        </p>
-                        <p class="rec pad-top">● recording</p>
-                        <p class="dim">○ captured 5.80s · rms 0.038</p>
-                        <p class="pad-top">
-                            → 0.27s · native swift, no electron, no python, no
-                            cloud round trip
-                        </p>
-                    </div>
+                    <p class="terminal-note">
+                        <code>○</code> audio captured, <code>→</code> raw
+                        transcript, <code>↦</code> after the dictionary and
+                        cleanup — printed only when they changed something.
+                        Illustrative session;
+                        times depend on the machine and the utterance. Without
+                        <code>--echo-transcripts</code> — the default, and
+                        always the case for the background daemon — those lines
+                        carry a character count instead of the text.
+                    </p>
                 </div>
             </div>
         </section>
 
+        <section class="features">
+            <h2>Speed is not the argument. This is.</h2>
+            <p class="lede">
+                Ara is a fork of
+                <a href="https://github.com/digimata/parrot">digimata/parrot</a>
+                that grew a formatting layer, a vocabulary, and a menu bar. Here
+                is what it does beyond turning speech into characters.
+            </p>
+            <div class="grid">
+                <div>
+                    <h3>Cleanup on a local model</h3>
+                    <p>
+                        Fillers out, punctuation and capitalisation in, spoken
+                        self-corrections collapsed — “we ship Tuesday, no wait,
+                        Wednesday” becomes “We ship Wednesday.” Qwen 2.5 1.5B on
+                        MLX, on your Mac. No API key, no account, no request.
+                    </p>
+                </div>
+                <div>
+                    <h3>A cleanup dial, not a switch</h3>
+                    <p>
+                        <code>none</code> strips fillers only. <code>light</code>
+                        punctuates and keeps every spoken word.
+                        <code>medium</code> (default) removes fillers and obeys
+                        dictated “comma”, “period”, “question mark”.
+                        <code>high</code> restructures fragments into sentences
+                        and turns spoken enumerations into numbered lists.
+                    </p>
+                </div>
+                <div>
+                    <h3>Per-app tone</h3>
+                    <p>
+                        Default, email, chat and code modes, resolved from the
+                        app you are dictating into — or pinned for the session
+                        from the menu bar, which never overwrites your startup
+                        default.
+                    </p>
+                </div>
+                <div>
+                    <h3>A dictionary that sticks</h3>
+                    <p>
+                        Your name, your product, your city. Corrections are a
+                        deterministic pass that runs before any model sees the
+                        transcript, matched whole-word and case-insensitively.
+                        Plain JSON, re-read every utterance — add one and the
+                        next sentence is already fixed.
+                    </p>
+                </div>
+                <div>
+                    <h3>Voice snippets</h3>
+                    <p>
+                        Say a trigger phrase, get a block of text typed
+                        verbatim: a scheduling link, a sign-off, an address. It
+                        fires only when the whole utterance is the trigger, so a
+                        sentence that merely mentions it is formatted normally.
+                    </p>
+                </div>
+                <div>
+                    <h3>Paste or type, per app</h3>
+                    <p>
+                        Terminals and Electron apps silently mangle synthesized
+                        typing, so Ara pastes into those and types everywhere
+                        else. The paste path snapshots your pasteboard, keeps
+                        every representation of every item, refuses to restore a
+                        password manager's concealed copy, and stands down
+                        rather than clobber a ⌘C you just made.
+                    </p>
+                </div>
+                <div>
+                    <h3>A microphone that can be unplugged</h3>
+                    <p>
+                        Pin an input from the menu bar and it survives replug
+                        and reboot. Lose it mid-sentence and the utterance is
+                        not lost: recording continues on whatever input remains,
+                        and plugging one back in before you release resumes the
+                        same utterance.
+                    </p>
+                </div>
+                <div>
+                    <h3>A menu bar with every door</h3>
+                    <p>
+                        Microphone, cleanup, mode, model, hotkey, engine,
+                        dictionary, snippets, start at login, diagnostics. Each
+                        submenu states whether a pick applies to the next
+                        utterance or the next launch, so the menu never claims a
+                        change that has not happened.
+                    </p>
+                </div>
+                <div>
+                    <h3>Transcripts stay off disk</h3>
+                    <p>
+                        Log lines carry timing and a character count
+                        (<code>→ 0.42s · 63 chars</code>), never the words,
+                        unless you ask for them with
+                        <code>--echo-transcripts</code>. The background daemon
+                        never does. There is no server to send anything to.
+                    </p>
+                </div>
+            </div>
+        </section>
+
+        <footer>
+            <p>
+                <strong>Ara</strong> is free and MIT-licensed, forever. It is a
+                fork of
+                <a href="https://github.com/digimata/parrot">digimata/parrot</a>
+                by Digimata — the push-to-talk core, the Neural Engine
+                transcription path and this page's design are theirs, and both
+                projects stay MIT.
+            </p>
+            <p>
+                Builds are unsigned: there is no Apple Developer ID behind them,
+                so the first launch of a downloaded app needs
+                <strong>right-click → Open</strong>. What is honestly imperfect
+                is written down rather than hidden —
+                <a
+                    href="https://github.com/Karniej/ara-parrot/blob/master/docs/KNOWN-ISSUES.md"
+                    >known issues</a
+                >.
+            </p>
+            <p>
+                <a href="https://github.com/Karniej/ara-parrot">GitHub</a> ·
+                <a href="https://github.com/Karniej/ara-parrot#readme">README</a>
+                ·
+                <a
+                    href="https://github.com/Karniej/ara-parrot/blob/master/LICENSE"
+                    >MIT licence</a
+                >
+                ·
+                <a href="https://github.com/digimata/parrot">upstream</a>
+            </p>
+        </footer>
+
         <script>
             function copyInstall(button) {
-                const text = document.getElementById("install-cmd").textContent;
+                const text = document.getElementById("install-cmd").innerText;
                 navigator.clipboard.writeText(text).then(() => {
                     button.classList.add("copied");
                     setTimeout(() => button.classList.remove("copied"), 1500);
