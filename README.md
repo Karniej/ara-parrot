@@ -165,6 +165,11 @@ numbered lists. Dictated "new line"/"new paragraph" currently become a
 sentence break, not a real line break — a measured limit of the local model,
 recorded in docs/KNOWN-ISSUES.md.
 
+The menu bar's **Cleanup** submenu shows the four intensities with a check on
+the active one and writes a pick back to the config — but unlike everything
+else in the menu it takes effect on the next launch, not the next utterance
+(the intensity is baked into the session at startup), and the submenu says so.
+
 ### Microphone
 
 By default parrot records from the system default input, live — change it in
@@ -221,6 +226,12 @@ the same way a menu addition does. And like the config, a broken file never
 stops dictation: one `dictionary:` line on stderr, and corrections sit out
 until the file parses again.
 
+**Edit dictionary…**, right below the correction form in the menu, opens the
+file in whatever edits JSON on your Mac — writing it first with the example
+entry above if it does not exist yet, so the format explains itself. To see
+what is there without opening anything, `parrot dictionary` prints the path
+and every correction.
+
 ### Snippets
 
 Dictate a trigger phrase, get a block of text typed instead — a scheduling
@@ -262,6 +273,10 @@ fresh on every utterance — edits apply to the next dictation, no restart —
 and like the config and dictionary, a broken file never stops dictation: one
 `snippets:` line on stderr, and snippets sit out until the file parses again.
 
+**Edit snippets…** in the menu bar opens the file in your default editor —
+writing it first with a one-entry example if it does not exist yet — and
+`parrot snippets` prints the path and every trigger without opening anything.
+
 ## Feature parity
 
 Where Ara stands against the two best-known paid dictation apps,
@@ -275,7 +290,7 @@ both move fast, so treat the paid columns as a snapshot.
 | Price | Free tier + paid | Free tier + paid | **Free, MIT, forever** |
 | Push-to-talk on a modifier key | ✅ | ✅ | ✅ |
 | AI cleanup (fillers, punctuation, caps) | ✅ paid models | ✅ cloud | ✅ local open model |
-| Cleanup intensity dial (none→high) | ❌ | ✅ | ✅ `cleanup` config key |
+| Cleanup intensity dial (none→high) | ❌ | ✅ | ✅ `cleanup` config key + menu |
 | Reliable delivery into terminals/Electron | ✅ option | ✅ | ✅ auto per-app paste |
 | Transcripts kept out of world-readable logs | ❌ audio kept forever | cloud-side | ✅ length-only logs by default |
 | Per-app formatting modes | ✅ | ✅ | ✅ (default/email/chat/code) |

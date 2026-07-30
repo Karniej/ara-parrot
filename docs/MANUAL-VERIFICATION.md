@@ -702,6 +702,18 @@ the way so any correction seen is unambiguously the dictionary's.
       then add any further correction through the menu: the file must gain
       *both* — the repaired content, the in-memory backlog, and the new
       addition all merged.
+- [ ] 👤 **9q-g. "Edit dictionary…" opens the file, starter included.** Move
+      `~/.config/ara/dictionary.json` aside, then menu bar → **Edit
+      dictionary…**. Your default JSON editor must open on a freshly created
+      file containing exactly the one example entry (`Ara` ← `arra`, `aara`,
+      pretty-printed — the README's own example). Add a real entry in the
+      editor, save, and dictate its heard form: the correction must apply,
+      no restart — the editor's save *is* the apply mechanism. Click the
+      item again with the file present (or with the file deliberately
+      broken): the editor must open the file **unchanged** — the starter is
+      only ever written where nothing exists. `parrot dictionary` must print
+      the path and every entry as `canonical ← variants` (or "no dictionary
+      yet" plus the path when you still have the file moved aside).
 
 ## 9quinquies. Voice snippets: the spoken end-to-end path
 
@@ -709,11 +721,13 @@ The engine is tested end to end — normalization, whole-utterance matching,
 the tolerant per-utterance load, and that a hit through the session the
 daemon assembles bypasses every formatting engine while a near-miss does
 not. What no test can do is speak a trigger or watch a multiline expansion
-land in a real text field; that half is below. Snippets are file-only in
-v1 — there is deliberately no menu form, because expansions are multiline
-and an `NSAlert` text field is the wrong editor for them.
+land in a real text field; that half is below. Snippets remain file-edited
+in v1 — there is deliberately no menu form, because expansions are multiline
+and an `NSAlert` text field is the wrong editor for them; **Edit snippets…**
+in the menu just opens the file (9v-d).
 
-Setup: put this in `~/.config/ara/snippets.json` (create it by hand):
+Setup: put this in `~/.config/ara/snippets.json` (create it by hand, or via
+**Edit snippets…** and replace the starter entry):
 
 ```json
 [
@@ -753,6 +767,40 @@ Setup: put this in `~/.config/ara/snippets.json` (create it by hand):
       utterance. Fix the file: the very next utterance fires the snippet
       again, with no restart. Break it a second time: one fresh warning,
       because a repaired file resets the ledger.
+- [ ] 👤 **9v-d. "Edit snippets…" opens the file, starter included.** Move
+      `~/.config/ara/snippets.json` aside, then menu bar → **Edit
+      snippets…**. Your default JSON editor must open on a freshly created
+      file containing exactly one example entry — trigger `insert my
+      scheduling link`, expansion a visibly-placeholder URL. Dictate the
+      trigger: the placeholder must be typed verbatim (the starter is live,
+      which is the demonstration). Click the item again with the file
+      present: it must open **unchanged**. `parrot snippets` must print the
+      path and each entry as `trigger → expansion` — a multiline expansion
+      showing only its first line plus `…` — or "no snippets yet" plus the
+      path when the file is absent.
+
+## 9sexies. The Cleanup submenu: persisted now, applied at the next launch
+
+`CleanupMenuModel` (ordering, checkmark, caption) and `Config.persistCleanup`
+(one-key rewrite sparing every other key, malformed files untouched) are
+unit-tested. What no test can do is click the submenu and restart the daemon;
+that half is below. The one deliberate oddity to hold in mind: unlike every
+other menu action, a cleanup pick does **not** apply to the next utterance —
+the session's intensity is stamped at startup — and the submenu's caption
+says so.
+
+- [ ] 👤 **9x-a. A pick lands in the config and says when it applies.** With
+      the daemon running, open menu bar → **Cleanup**. The four intensities
+      must be listed none → high, exactly one checked — `medium` on a config
+      without a `cleanup` key — with a disabled "applies on restart" caption
+      under them. Pick `high`: the check must move to `high`, `cat
+      ~/.config/ara/config.json` must show `"cleanup": "high"` with every
+      other key intact, and dictation must behave **unchanged** (still the
+      old intensity — that is the documented semantics, not a bug).
+- [ ] 👤 **9x-b. The pick survives restart and takes effect.** Quit and
+      relaunch the daemon. **Cleanup** must open with `high` checked, and
+      dictating a rambling sentence must now show `high`'s restructuring.
+      Set it back to `medium` when done.
 
 ## 10. Judgement calls to make with real dictation
 
