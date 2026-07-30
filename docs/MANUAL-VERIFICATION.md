@@ -49,6 +49,7 @@ records a result.
    | `formatting: …` | the chain fell through from one engine to the next |
    | `dictation: …` | the session itself fell back to the raw transcript |
    | `dictionary: …` | `dictionary.json` could not be read or parsed and corrections are sitting out, or a menu-added correction could not be written back to it |
+   | `snippets: …` | `snippets.json` could not be read or parsed and voice snippets are sitting out |
    | `unknown mode in config: …` | the `mode` key in `config.json` names a mode that does not exist; the daemon warns and continues on `default` |
    | `config: …` | the config file was ignored, or a value in it was out of range. **Any line starting `config:` means part of your file did not take effect** |
 
@@ -604,6 +605,51 @@ the way so any correction seen is unambiguously the dictionary's.
       *both* — the repaired content, the in-memory backlog, and the new
       addition all merged.
 
+## 9quinquies. Voice snippets: the spoken end-to-end path
+
+The engine is tested end to end — normalization, whole-utterance matching,
+the tolerant per-utterance load, and that a hit through the session the
+daemon assembles bypasses every formatting engine while a near-miss does
+not. What no test can do is speak a trigger or watch a multiline expansion
+land in a real text field; that half is below. Snippets are file-only in
+v1 — there is deliberately no menu form, because expansions are multiline
+and an `NSAlert` text field is the wrong editor for them.
+
+Setup: put this in `~/.config/ara/snippets.json` (create it by hand):
+
+```json
+[
+  {
+    "trigger": "sign off formal",
+    "expansion": "Best regards,\nPawel Karniej\nSilpho"
+  }
+]
+```
+
+- [ ] 👤 **9v-a. A dictated trigger types the exact expansion.** With the
+      daemon running (any mode, any engine — a hit bypasses them all), focus
+      a multiline text field (Notes, TextEdit), hold the hotkey, say
+      *"sign off formal"*, release. The expansion must appear **exactly as
+      authored**: three lines, the newlines real, capitalisation untouched,
+      nothing reworded — no `↦` formatting happened, the expansion *is* the
+      output. Say it with trailing inflection so Whisper appends a period
+      ("Sign off formal."); it must still fire. No restart after creating
+      the file: it is read fresh per utterance.
+- [ ] 👤 **9v-b. A sentence containing the trigger formats normally.**
+      Dictate *"I will sign off formal emails tomorrow"*. The expansion must
+      **not** appear anywhere; the sentence must be formatted exactly as it
+      would be without the snippets file. A trigger may only fire on the
+      whole utterance.
+- [ ] 👤 **9v-c. A broken file is loud once, and harmless.** Truncate
+      `snippets.json` mid-entry (delete the closing `]`), then dictate
+      several times — both the trigger phrase and ordinary sentences. Every
+      utterance must type normally (the trigger phrase arrives as formatted
+      text, since no snippet can load), and the log must show **exactly
+      one** `snippets: ignoring …/snippets.json: …` line, not one per
+      utterance. Fix the file: the very next utterance fires the snippet
+      again, with no restart. Break it a second time: one fresh warning,
+      because a repaired file resets the ledger.
+
 ## 10. Judgement calls to make with real dictation
 
 These are not pass/fail; they need a human's ear over a few days of real use.
@@ -661,6 +707,20 @@ write→load round trip; the unsaved-corrections overlay for failed writes; and
 that the session the daemon assembles corrects upstream of every engine,
 verbatim mode and engine `.off` included. Only the AppKit alert and the
 spoken end-to-end path (section 9quater) are manual.
+
+✅ For voice snippets: the normalization contract (case folding including
+Polish diacritics, trimming, terminal-punctuation stripping in every
+variant, internal-whitespace collapse — and that diacritics are significant,
+not folded away); whole-utterance-only matching with expansions returned
+byte-for-byte, newlines included; substring near-misses never firing;
+duplicate triggers resolving to the first entry; empty expansions inert;
+the tolerant per-utterance load with once-per-failure warnings that reset
+on repair; and through the assembled session, that a hit skips the
+formatter, mode resolution, and the mode callback while a near-miss takes
+the normal path, that dictionary corrections run first so a misheard
+trigger word still fires, and that a broken `snippets.json` leaves the
+utterance untouched. Only the spoken end-to-end path (section 9quinquies)
+is manual.
 
 One hardware check is automated but opt-in, because it needs a working input
 device and microphone permission: `PARROT_AUDIO_HW=1 swift test --filter

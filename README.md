@@ -111,6 +111,44 @@ the same way a menu addition does. And like the config, a broken file never
 stops dictation: one `dictionary:` line on stderr, and corrections sit out
 until the file parses again.
 
+### Snippets
+
+Dictate a trigger phrase, get a block of text typed instead — a scheduling
+link, an email sign-off, an address. Snippets live at
+`~/.config/ara/snippets.json`, next to the config and dictionary, and the
+file is the whole interface in v1 (no menu form — expansions are multiline,
+and a single-line alert field is the wrong editor for them):
+
+```json
+[
+  {
+    "trigger": "insert my scheduling link",
+    "expansion": "https://cal.com/pawel/30min"
+  },
+  {
+    "trigger": "sign off formal",
+    "expansion": "Best regards,\nPawel Karniej\nSilpho"
+  }
+]
+```
+
+A snippet fires only when the **whole utterance** is the trigger — say
+*"insert my scheduling link"* and release. Matching is forgiving about how
+speech gets transcribed: case does not matter, surrounding whitespace and
+sentence-ending punctuation are ignored (`Insert my scheduling link.`
+matches), and runs of spaces collapse. It is deliberately *not* fuzzy beyond
+that: a sentence that merely *contains* the trigger ("could you insert my
+scheduling link here") is formatted normally, because a snippet firing inside
+a real sentence would replace words you actually wanted.
+
+On a hit the expansion is typed **verbatim** — newlines, URLs, and exact
+capitalisation survive, because no formatting engine ever sees it. Dictionary
+corrections still apply first, so a trigger word Whisper always mishears can
+be fixed by a dictionary entry and the snippet still fires. The file is read
+fresh on every utterance — edits apply to the next dictation, no restart —
+and like the config and dictionary, a broken file never stops dictation: one
+`snippets:` line on stderr, and snippets sit out until the file parses again.
+
 ## Stack
 
 - **Swift** — single SPM executable target
