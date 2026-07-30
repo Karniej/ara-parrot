@@ -1,5 +1,7 @@
 .build/
 .swiftpm/
+# scripts/package-app.sh and scripts/package-dmg.sh output
+dist/
 *.xcodeproj
 *.xcworkspace
 .DS_Store
