@@ -35,16 +35,22 @@ records a result.
 3. Run the daemon with a log you can read afterwards:
 
    ```sh
-   ./.build/release/parrot run --hotkey right-command --mode verbatim 2>&1 | tee /tmp/ara-verify.log
+   ./.build/release/parrot run --hotkey right-command --mode verbatim --echo-transcripts 2>&1 | tee /tmp/ara-verify.log
    ```
+
+   `--echo-transcripts` is what makes the `→`/`↦` lines below quote the text;
+   several steps compare the log against what was injected, so verification
+   needs it. Without the flag — the default, and always the case for the
+   LaunchAgent — those lines carry a character count instead
+   (`→ 0.42s · 63 chars`), so no transcript text ever reaches a log file.
 
    Throughout, the log lines mean:
 
    | Line | Meaning |
    | --- | --- |
    | `○ captured …` | audio was recorded |
-   | `→ <time> · <text>` | the raw transcript, with the transcription time |
-   | `↦ <time> · <text>` | the formatted text with the total time. Appears **only when formatting produced something and changed it** — identical text and cancelled requests both stay silent here |
+   | `→ <time> · <text>` | the raw transcript, with the transcription time (`<text>` is `N chars` without `--echo-transcripts`) |
+   | `↦ <time> · <text>` | the formatted text with the total time (`N chars` without `--echo-transcripts`). Appears **only when formatting produced something and changed it** — identical text and cancelled requests both stay silent here |
    | `⨯ <time> · cancelled; nothing injected` | the request was withdrawn mid-format and nothing was typed. Unreachable today (see section 9) |
    | `formatting: …` | the chain fell through from one engine to the next |
    | `dictation: …` | the session itself fell back to the raw transcript |
@@ -285,6 +291,20 @@ unverified is that a physical keyboard produces those values.
       left/right sibling and must be decided by the class bit alone. Worth doing
       with left-command and left-option held too, since fn re-evaluates every
       modifier event rather than only its own.
+- [ ] 👤 **4o. Tap recovery through Secure Input.** The unit tests prove the
+      state reset; that macOS actually delivers `tapDisabledByUserInput` and
+      accepts the re-enable is only provable here. Hold the hotkey and start
+      speaking, then — still holding — click into a password field (Safari on
+      any login page, or `sudo` in another terminal tab, both engage Secure
+      Input). Expect, in order: one
+      `hotkey tap disabled by macOS (secure input); re-enabled` line, then the
+      ordinary `○ captured …` → `→ …` lines — the utterance up to the
+      interruption is transcribed and injected, not lost. Then click out of the
+      password field, release, and verify the hotkey still works: hold, speak,
+      release must produce a fresh `● recording` → `○ captured` cycle with no
+      restart of the daemon. If recording continues after the click instead,
+      Secure Input did not engage (some fields only engage it when focused via
+      keyboard) — use the `sudo` prompt variant.
 
 ## 5. ⚙️ On-device formatting — **never executed on this machine**
 

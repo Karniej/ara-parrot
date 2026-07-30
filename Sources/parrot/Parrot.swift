@@ -28,6 +28,13 @@ struct Run: ParsableCommand {
     @Flag(name: .long, help: "Write each capture to /tmp/parrot-last.wav for inspection.")
     var dumpWav: Bool = false
 
+    // Off by default because stderr is a file under launchd, and a file that
+    // quotes the transcript accumulates everything ever dictated. The install
+    // command never writes this flag into the LaunchAgent plist.
+    @Flag(name: .long,
+          help: "Print full transcript text to stderr. Everything you dictate will appear in any log that captures stderr.")
+    var echoTranscripts: Bool = false
+
     @Flag(name: .long, help: "Disable the on-screen recording overlay.")
     var noOverlay: Bool = false
 
@@ -133,6 +140,7 @@ struct Run: ParsableCommand {
         let micStore = MicrophoneStore(preferredUID: config.microphone)
         capture.deviceProvider = { micStore.effective.device?.id }
         let dumpWav = self.dumpWav
+        let echoTranscripts = self.echoTranscripts
         let overlay: RecordingOverlay? = noOverlay ? nil : MainActor.assumeIsolated { RecordingOverlay() }
         if let overlay {
             capture.onLevel = { level in overlay.pushLevel(level) }
@@ -350,7 +358,8 @@ struct Run: ParsableCommand {
                                 let text = try await transcriber.transcribe(samples)
                                 let transcribed = Date().timeIntervalSince(started)
                                 FileHandle.standardError.write(Data(
-                                    String(format: "→ %.2fs · %@\n", transcribed, text).utf8
+                                    (TranscriptLog.raw(seconds: transcribed, text: text,
+                                                       echoTranscript: echoTranscripts) + "\n").utf8
                                 ))
                                 // Never `try?`, and never a throwing call: `process`
                                 // returns a String and cannot fail, so a broken
@@ -371,7 +380,8 @@ struct Run: ParsableCommand {
                                     ))
                                 } else if !cleaned.isEmpty, cleaned != text {
                                     FileHandle.standardError.write(Data(
-                                        String(format: "↦ %.2fs · %@\n", total, cleaned).utf8
+                                        (TranscriptLog.cleaned(seconds: total, text: cleaned,
+                                                               echoTranscript: echoTranscripts) + "\n").utf8
                                     ))
                                 }
                                 await MainActor.run {

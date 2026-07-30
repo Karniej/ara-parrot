@@ -23,7 +23,68 @@ public enum DoctorReport {
             checkFnKeyMapping(),
             checkLocalFormattingModel(),
             checkOnDeviceFormatting(),
+            checkLegacyLogs(),
+            checkLaunchAgentLogPaths(),
         ]
+    }
+
+    /// The other half of the legacy-logs upgrade path: an agent installed
+    /// before the fix keeps its old plist — std paths at /tmp — until
+    /// `parrot install --launch-at-login` is re-run, and the running daemon
+    /// keeps writing transcripts there. Purging the files without fixing the
+    /// plist is a treadmill; this check is what points at the plist.
+    ///
+    /// A **warning, never a failure**, like every migration finding: the
+    /// daemon itself works fine, it is the leftover configuration that leaks.
+    static func checkLaunchAgentLogPaths(
+        plistPath: String = Install.plistURL.path
+    ) -> Check {
+        let name = "launch agent log paths"
+        guard let data = FileManager.default.contents(atPath: plistPath),
+              let plist = try? PropertyListSerialization.propertyList(
+                  from: data, format: nil) as? [String: Any]
+        else {
+            // No agent installed (or unreadable) — nothing writing anywhere.
+            return Check(name: name, status: .ok, remediation: nil)
+        }
+        let stale = ["StandardOutPath", "StandardErrorPath"]
+            .compactMap { plist[$0] as? String }
+            .filter { $0.hasPrefix("/tmp/") }
+        guard !stale.isEmpty else {
+            return Check(name: name, status: .ok, remediation: nil)
+        }
+        return Check(
+            name: name,
+            status: .warn("the installed agent still sends daemon output to "
+                + stale.joined(separator: ", ")),
+            remediation: "re-run `parrot install --launch-at-login` to rewrite the agent, "
+                + "then `parrot install --purge-legacy-logs`"
+        )
+    }
+
+    /// Flags the world-readable /tmp files earlier versions sent the
+    /// LaunchAgent's stderr to — files that quote every transcript dictated
+    /// while that agent ran. The plist no longer writes there, but the files
+    /// outlive the fix, so this line is how a user learns they exist.
+    ///
+    /// A **warning, never a failure**: `Run` gates startup on `allOK`, and a
+    /// leftover log is something to clean up, not a reason to refuse to start.
+    static func checkLegacyLogs(paths: [String] = LegacyLogs.defaultPaths) -> Check {
+        let found = LegacyLogs.existing(at: paths)
+        guard !found.isEmpty else {
+            return Check(name: "legacy logs", status: .ok, remediation: nil)
+        }
+        return Check(
+            name: "legacy logs",
+            status: .warn("world-readable transcript logs from an earlier version: "
+                + found.joined(separator: ", ")),
+            // Order matters: a still-loaded old agent recreates the files, so
+            // the re-install that rewrites its plist has to come first or the
+            // purge is a treadmill.
+            remediation: "if the background daemon is installed, re-run "
+                + "`parrot install --launch-at-login` first (the old agent keeps "
+                + "writing there), then `parrot install --purge-legacy-logs`"
+        )
     }
 
     /// Reports whether the **default** formatting engine can run.

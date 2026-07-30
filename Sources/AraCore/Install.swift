@@ -17,46 +17,84 @@ public struct Install: ParsableCommand {
     @Flag(name: .long, help: "Remove the launch-at-login agent.")
     var uninstall: Bool = false
 
+    @Flag(name: .long,
+          help: "Delete the world-readable /tmp/parrot.{out,err}.log files earlier versions wrote transcripts to.")
+    var purgeLegacyLogs: Bool = false
+
     public init() {}
 
     public func run() throws {
-        if launchAtLogin == uninstall {
+        guard Self.flagsAreValid(launchAtLogin: launchAtLogin, uninstall: uninstall,
+                                 purgeLegacyLogs: purgeLegacyLogs)
+        else {
             FileHandle.standardError.write(Data(
-                "specify exactly one of --launch-at-login or --uninstall\n".utf8
+                "specify --launch-at-login, --uninstall, or --purge-legacy-logs (purge combines with either)\n"
+                    .utf8
             ))
             throw ExitCode(64)
         }
 
+        if purgeLegacyLogs {
+            purgeLegacyLogFiles()
+        }
         if uninstall {
             try removeAgent()
-        } else {
+        } else if launchAtLogin {
             try writeAgent()
         }
+    }
+
+    /// The flag contract, pure so it is testable: exactly one of the two
+    /// mutually exclusive agent actions, or none of them if the purge — which
+    /// combines with either — is what the user came for.
+    static func flagsAreValid(launchAtLogin: Bool, uninstall: Bool,
+                              purgeLegacyLogs: Bool) -> Bool {
+        if launchAtLogin && uninstall { return false }
+        return launchAtLogin || uninstall || purgeLegacyLogs
     }
 
     // MARK: -
 
     private static let label = "com.digimata.parrot"
 
-    private var plistURL: URL {
+    /// Where the agent plist lives. Static so `doctor` can inspect the
+    /// installed file without constructing the command.
+    static var plistURL: URL {
         let home = FileManager.default.homeDirectoryForCurrentUser
         return home
             .appendingPathComponent("Library/LaunchAgents", isDirectory: true)
-            .appendingPathComponent("\(Self.label).plist")
+            .appendingPathComponent("\(label).plist")
     }
 
-    private func writeAgent() throws {
-        let binary = try resolveBinaryPath()
+    private var plistURL: URL { Self.plistURL }
 
-        let plist: [String: Any] = [
-            "Label": Self.label,
+    /// The plist content, separated from the write so tests can hold it to
+    /// its privacy contract:
+    ///
+    /// - The std paths are `/dev/null`, not files. Under launchd, stderr is a
+    ///   log; earlier versions pointed it at world-readable /tmp and — with
+    ///   transcripts then quoted per utterance — accumulated everything the
+    ///   user ever dictated. The daemon now logs counts, not text, but a
+    ///   background process nobody watches has no reader for its output
+    ///   either way.
+    /// - `ProgramArguments` must never grow `--echo-transcripts`. The flag
+    ///   exists for interactive runs; combined with a log file it recreates
+    ///   the defect this layout exists to end.
+    static func agentPlist(binary: String) -> [String: Any] {
+        [
+            "Label": label,
             "ProgramArguments": [binary, "run", "--skip-doctor"],
             "RunAtLoad": true,
             "KeepAlive": ["SuccessfulExit": false] as [String: Any],
             "ProcessType": "Interactive",
-            "StandardOutPath": "/tmp/parrot.out.log",
-            "StandardErrorPath": "/tmp/parrot.err.log",
+            "StandardOutPath": "/dev/null",
+            "StandardErrorPath": "/dev/null",
         ]
+    }
+
+    private func writeAgent() throws {
+        let binary = try resolveBinaryPath()
+        let plist = Self.agentPlist(binary: binary)
 
         let url = plistURL
         try FileManager.default.createDirectory(
@@ -82,7 +120,24 @@ public struct Install: ParsableCommand {
         print("✓ launch-at-login installed")
         print("  plist:  \(url.path)")
         print("  binary: \(binary)")
-        print("  logs:   /tmp/parrot.out.log, /tmp/parrot.err.log")
+        print("  logs:   discarded (/dev/null) — run `parrot` in a terminal to watch output")
+    }
+
+    /// `--purge-legacy-logs`. Best-effort like the rest of the cleanup paths:
+    /// a file that will not delete gets a line naming it, not an abort.
+    private func purgeLegacyLogFiles() {
+        let found = LegacyLogs.existing()
+        guard !found.isEmpty else {
+            print("no legacy /tmp logs to remove")
+            return
+        }
+        let removed = LegacyLogs.purge()
+        for path in removed {
+            print("✓ removed \(path)")
+        }
+        for path in found where !removed.contains(path) {
+            FileHandle.standardError.write(Data("couldn't remove \(path)\n".utf8))
+        }
     }
 
     private func removeAgent() throws {

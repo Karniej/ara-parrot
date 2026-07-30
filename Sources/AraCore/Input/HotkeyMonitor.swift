@@ -21,6 +21,13 @@ public final class HotkeyMonitor {
     /// this class contributes only the event tap around it.
     private var edges: ModifierEdgeDetector
 
+    /// `flagsChanged` only — deliberately narrowed, don't widen it. Modifier
+    /// keycodes, the only keys any `Hotkey` case can be, arrive on
+    /// `flagsChanged`; subscribing to keyDown/keyUp would hand this process
+    /// the keycode of every keystroke typed system-wide, for events `handle`
+    /// then discards unread.
+    static let eventMask: CGEventMask = 1 << CGEventType.flagsChanged.rawValue
+
     public init(hotkey: Hotkey = .fn, debug: Bool = false) {
         self.hotkey = hotkey
         self.debug = debug
@@ -39,10 +46,6 @@ public final class HotkeyMonitor {
             throw HotkeyError.tapCreateFailed
         }
 
-        let mask: CGEventMask =
-            (1 << CGEventType.flagsChanged.rawValue)
-            | (1 << CGEventType.keyDown.rawValue)
-            | (1 << CGEventType.keyUp.rawValue)
         let userInfo = Unmanaged.passUnretained(self).toOpaque()
 
         // .cgSessionEventTap is the right level for an accessibility-granted
@@ -52,7 +55,7 @@ public final class HotkeyMonitor {
                 tap: .cgSessionEventTap,
                 place: .headInsertEventTap,
                 options: .listenOnly,
-                eventsOfInterest: mask,
+                eventsOfInterest: Self.eventMask,
                 callback: hotkeyCallback,
                 userInfo: userInfo
             )
@@ -102,6 +105,28 @@ public final class HotkeyMonitor {
         case nil: break
         }
     }
+
+    /// Recovery from macOS disabling the tap — a Secure Input session (any
+    /// password field) or a callback that ran too long. Without this the
+    /// hotkey silently dies until the daemon is restarted.
+    ///
+    /// The re-enable is the glue; the decisions live in
+    /// `ModifierEdgeDetector.reset()`, which clears everything learned before
+    /// the gap and answers the one question that matters: was a hold being
+    /// tracked? If so, the synthesized `.released` goes through the same
+    /// handler a real release would, so an in-flight recording stops through
+    /// the ordinary capture path and the transcript is preserved.
+    fileprivate func handleTapDisabled(_ type: CGEventType) {
+        if let tap {
+            CGEvent.tapEnable(tap: tap, enable: true)
+        }
+        let reason = type == .tapDisabledByUserInput ? "secure input" : "timeout"
+        FileHandle.standardError.write(Data(
+            "hotkey tap disabled by macOS (\(reason)); re-enabled\n".utf8))
+        if edges.reset() == .released {
+            onEvent?(.released)
+        }
+    }
 }
 
 private func hotkeyCallback(
@@ -113,9 +138,13 @@ private func hotkeyCallback(
     guard let userInfo else { return Unmanaged.passUnretained(event) }
     let monitor = Unmanaged<HotkeyMonitor>.fromOpaque(userInfo).takeUnretainedValue()
 
+    // Delivered out of band, whatever eventsOfInterest says. Recovery happens
+    // on the main queue like every other event, so it is ordered with the
+    // handler calls it may synthesize a release into.
     if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
-        // System disabled our tap; we'll need to re-enable. For now just no-op
-        // and let the user restart parrot.
+        DispatchQueue.main.async {
+            monitor.handleTapDisabled(type)
+        }
         return Unmanaged.passUnretained(event)
     }
 

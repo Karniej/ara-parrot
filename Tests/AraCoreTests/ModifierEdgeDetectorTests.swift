@@ -1,3 +1,4 @@
+import CoreGraphics
 import Testing
 @testable import AraCore
 
@@ -196,6 +197,70 @@ struct ModifierEdgeDetectorTests {
         // First event ever: both shifts already down.
         #expect(d.handle(keyCode: Keys.rightShift, flags: Flags.bothShifts) == .pressed)
         #expect(d.handle(keyCode: Keys.rightShift, flags: Flags.leftShift) == .released)
+    }
+
+    // MARK: - reset, for tap recovery
+
+    /// When macOS disables the event tap (Secure Input, a timeout) the events
+    /// between disable and re-enable are gone for good, so whatever the
+    /// detector believed about a key mid-hold is now a guess. `reset()` is the
+    /// monitor's way of saying "start over" — and its return value is the
+    /// in-flight-hold decision: a tracked press ends as a release edge, so the
+    /// recording it started ends through the ordinary stop path and the
+    /// transcript survives.
+    @Test("resetting a tracked hold yields the release edge")
+    func resetEndsATrackedHold() {
+        var d = ModifierEdgeDetector(hotkey: .rightShift)
+        #expect(d.handle(keyCode: Keys.rightShift, flags: Flags.rightShift) == .pressed)
+        #expect(d.reset() == .released)
+    }
+
+    @Test("resetting with nothing tracked is silent")
+    func resetWithoutAHoldIsSilent() {
+        var d = ModifierEdgeDetector(hotkey: .rightShift)
+        #expect(d.reset() == nil)
+        // And after a completed press/release cycle there is nothing to end.
+        #expect(d.handle(keyCode: Keys.rightShift, flags: Flags.rightShift) == .pressed)
+        #expect(d.handle(keyCode: Keys.rightShift, flags: Flags.idle) == .released)
+        #expect(d.reset() == nil)
+    }
+
+    /// The half-tracked-hold hazard reset exists to prevent: bits learned
+    /// before the gap must not survive it. Left over, the sibling's release
+    /// after re-enable would read as our key's own bit going away — a
+    /// fabricated release for a key nobody let go of.
+    @Test("state learned before the reset cannot fabricate a release after it")
+    func resetClearsLearnedState() {
+        var d = ModifierEdgeDetector(hotkey: .rightShift)
+        #expect(d.handle(keyCode: Keys.leftShift, flags: Flags.leftShift) == nil)
+        #expect(d.handle(keyCode: Keys.rightShift, flags: Flags.bothShifts) == .pressed)
+        #expect(d.reset() == .released)
+        // The tap comes back with right-shift released but left-shift still
+        // physically down. Its release must be nobody's edge.
+        #expect(d.handle(keyCode: Keys.leftShift, flags: Flags.idle) == nil)
+        // And the key still works: the next real press is a fresh edge.
+        #expect(d.handle(keyCode: Keys.rightShift, flags: Flags.rightShift) == .pressed)
+        #expect(d.handle(keyCode: Keys.rightShift, flags: Flags.idle) == .released)
+    }
+
+    @Test("reset also ends a tracked fn hold")
+    func resetEndsAnFnHold() {
+        let fnDown: UInt64 = 0x0080_0100
+        var d = ModifierEdgeDetector(hotkey: .fn)
+        #expect(d.handle(keyCode: 63, flags: fnDown) == .pressed)
+        #expect(d.reset() == .released)
+        #expect(d.reset() == nil)
+    }
+}
+
+/// The tap subscribes to the one event type the detector consumes.
+/// `flagsChanged` is where modifier keycodes arrive; keyDown/keyUp would hand
+/// this process the content of every keystroke typed system-wide, for nothing.
+@Suite("HotkeyMonitor event mask")
+struct HotkeyMonitorMaskTests {
+    @Test("the tap listens to flagsChanged only")
+    func maskIsFlagsChangedOnly() {
+        #expect(HotkeyMonitor.eventMask == CGEventMask(1) << CGEventType.flagsChanged.rawValue)
     }
 }
 

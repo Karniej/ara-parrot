@@ -70,13 +70,31 @@ parrot                                 # run in the foreground (^C to quit)
 parrot setup                           # one-time setup: permissions + model download
 parrot install --launch-at-login       # register a LaunchAgent (background daemon)
 parrot install --uninstall             # remove the LaunchAgent
+parrot install --purge-legacy-logs     # delete the /tmp transcript logs older versions wrote
 parrot doctor                          # check permissions, fn key, on-device formatting
 parrot models list                     # list available models
 parrot models download <id>            # pre-download a model
 parrot --model whisper-large-v3-turbo  # bigger, multilingual, slower first-run
 parrot --hotkey right-option           # change the push-to-talk key
 parrot --no-overlay                    # disable the bottom-of-screen pill
+parrot --echo-transcripts              # log full transcript text (off by default)
 ```
+
+### Privacy
+
+Transcripts are never written to disk. The daemon's log lines carry timing and
+a character count only (`→ 0.42s · 63 chars`); `--echo-transcripts` opts back
+into the full text for interactive runs, and the LaunchAgent never uses it —
+its output goes to `/dev/null`.
+
+> If you installed parrot before this change, the background daemon was writing
+> every transcript to world-readable `/tmp/parrot.{out,err}.log` — and its old
+> LaunchAgent plist keeps doing so until it is rewritten. Upgrade in this order:
+> re-run `parrot install --launch-at-login` first (this rewrites the agent and
+> restarts the daemon), **then** `parrot install --purge-legacy-logs` to delete
+> the old files. Purging first is pointless — the still-loaded old agent
+> recreates them. `parrot doctor` flags both the leftover files and a stale
+> plist.
 
 ### Configuration
 

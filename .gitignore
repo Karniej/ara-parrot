@@ -6,3 +6,4 @@
 
 # kdb auto-rendered task index (regenerate with `kdb render`)
 .tasks/
+.claude/
