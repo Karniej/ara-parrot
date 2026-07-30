@@ -14,7 +14,7 @@ struct ConfigTests {
     @Test("missing file yields defaults")
     func missingFile() {
         let cfg = Config.load(from: URL(fileURLWithPath: "/nonexistent/x.json"))
-        #expect(cfg.engine == .local)
+        #expect(cfg.engine == .mlx)
         #expect(cfg.timeoutMs == 2500)
         #expect(cfg.mode == "default")
     }
@@ -29,7 +29,7 @@ struct ConfigTests {
     @Test("malformed file falls back to defaults rather than crashing")
     func malformedFile() {
         let cfg = Config.load(from: write("not json at all"))
-        #expect(cfg.engine == .local)
+        #expect(cfg.engine == .mlx)
     }
 
     // MARK: - A file that is ignored says so
@@ -50,7 +50,7 @@ struct ConfigTests {
         // The whole file is still discarded — one bad value cannot be repaired
         // into a good config — but the user is told, which is the difference
         // between a mystery and a typo.
-        #expect(cfg.engine == .local)
+        #expect(cfg.engine == .mlx)
         #expect(cfg.cloud == nil)
         #expect(warnings.lines.count == 1)
         #expect(warnings.joined.contains(url.path))
@@ -118,6 +118,31 @@ struct ConfigTests {
         let cfg = Config.load(from: write(#"{"timeoutMs":50}"#), warn: warnings.sink)
         #expect(cfg.timeoutMs == 50)
         #expect(warnings.lines.isEmpty)
+    }
+
+    // MARK: - the engine rename
+
+    /// `local` was renamed `apple` when the bundled MLX engine arrived. This is
+    /// not a courtesy: `Config.load` discards the *whole file* on any decoding
+    /// failure, so without the alias an existing
+    /// `{"engine": "local", "cloud": {...}}` would silently lose its cloud
+    /// section and its timeout as well as its engine.
+    @Test("a config written before the rename still decodes, and keeps its siblings")
+    func legacyLocalEngineStillDecodes() {
+        let warnings = Warnings()
+        let cfg = Config.load(
+            from: write(#"{"engine":"local","timeoutMs":900,"cloud":{}}"#),
+            warn: warnings.sink)
+        #expect(cfg.engine == .apple)
+        #expect(cfg.timeoutMs == 900)
+        #expect(cfg.cloud?.provider == "anthropic")
+        #expect(warnings.lines.isEmpty)
+    }
+
+    @Test("the new engine names decode")
+    func newEngineNamesDecode() {
+        #expect(Config.load(from: write(#"{"engine":"mlx"}"#)).engine == .mlx)
+        #expect(Config.load(from: write(#"{"engine":"apple"}"#)).engine == .apple)
     }
 
     @Test("reads every field")

@@ -23,11 +23,28 @@ public enum Pipeline {
     /// unmeasured on hardware that is eligible but still downloading. That is
     /// fine once, on the CLI's own thread, and would not be per utterance on a
     /// cooperative-pool thread.
-    public static func localFormatter() -> (any Formatter)? {
+    public static func appleFormatter() -> (any Formatter)? {
         if #available(macOS 26.0, *), FoundationModelsFormatter.isAvailable {
             return FoundationModelsFormatter()
         }
         return nil
+    }
+
+    /// The bundled MLX formatter — the default engine.
+    ///
+    /// Deliberately **not** gated on whether the model is on disk. The gate
+    /// belongs in `warmUp`, and a chain built without the formatter would have
+    /// nothing to log when the user's default engine does nothing — the same
+    /// silent-degradation trap `Doctor.checkOnDeviceFormatting` exists to
+    /// close. An MLX formatter that was never warmed up throws `.unavailable`
+    /// in microseconds, so the cost of keeping it in the chain is one stderr
+    /// line per utterance that names the missing engine.
+    ///
+    /// Nor is it gated on macOS version. `MLXFormatter` refuses the work
+    /// itself below macOS 15.4 — see `runOffCooperativePool` — which keeps the
+    /// reason next to the constraint instead of duplicating it here.
+    public static func mlxFormatter() -> MLXFormatter {
+        MLXFormatter()
     }
 
     /// Builds the formatter chain described by `config`.
@@ -45,9 +62,12 @@ public enum Pipeline {
     ///     they answer, and this binary is unsigned, so the legacy keychain's
     ///     ACL re-prompts after every rebuild. Read it once, at startup, on the
     ///     caller's own thread — never on the dictation path.
-    ///   - local: The on-device formatter, or `nil`. Not defaulted: silently
-    ///     getting `nil` because a call site forgot the argument would disable
-    ///     on-device formatting with no symptom other than plainer text.
+    ///   - mlx: The bundled MLX formatter, or `nil`. Not defaulted, for the
+    ///     same reason as `apple`.
+    ///   - apple: Apple's on-device formatter, or `nil`. Not defaulted:
+    ///     silently getting `nil` because a call site forgot the argument would
+    ///     disable on-device formatting with no symptom other than plainer
+    ///     text.
     ///   - rules: The terminal fallback. Defaulted, because there is exactly one
     ///     right answer and substituting another is a test-only affair.
     ///   - cloudTransport: Overrides `CloudFormatter`'s production transport.
@@ -61,7 +81,8 @@ public enum Pipeline {
     /// bare chain, and only the tests reach for this directly.
     static func makeChain(config: Config,
                           apiKey: String?,
-                          local: (any Formatter)?,
+                          mlx: (any Formatter)?,
+                          apple: (any Formatter)?,
                           rules: any Formatter = RuleBasedFormatter(),
                           cloudTransport: CloudFormatter.Transport? = nil)
         -> FormatterChain
@@ -77,7 +98,7 @@ public enum Pipeline {
         }
         return FormatterChain(engine: config.engine,
                               timeout: .milliseconds(config.timeoutMs),
-                              local: local, cloud: cloud, rules: rules)
+                              mlx: mlx, apple: apple, cloud: cloud, rules: rules)
     }
 
     /// Builds the session the daemon routes every transcript through.
@@ -89,7 +110,8 @@ public enum Pipeline {
     /// `process`.
     public static func makeSession(config: Config,
                                    apiKey: String?,
-                                   local: (any Formatter)?,
+                                   mlx: (any Formatter)?,
+                                   apple: (any Formatter)?,
                                    registry: ModeRegistry = ModeRegistry(userModes: []),
                                    rules: any Formatter = RuleBasedFormatter(),
                                    cloudTransport: CloudFormatter.Transport? = nil,
@@ -97,8 +119,9 @@ public enum Pipeline {
         -> DictationSession
     {
         DictationSession(
-            formatter: makeChain(config: config, apiKey: apiKey, local: local,
-                                 rules: rules, cloudTransport: cloudTransport),
+            formatter: makeChain(config: config, apiKey: apiKey, mlx: mlx,
+                                 apple: apple, rules: rules,
+                                 cloudTransport: cloudTransport),
             resolver: ModeResolver(registry: registry, defaultID: config.mode),
             onModeResolved: onModeResolved)
     }

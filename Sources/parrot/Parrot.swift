@@ -100,13 +100,33 @@ struct Run: ParsableCommand {
         }
 
         let transcriber = WhisperKitTranscriber(model: chosenModel)
+        // The formatting model is loaded here too, before the hotkey loop, and
+        // never on the dictation path: a warm load is ~1s and a cold one ~38s
+        // against a 2500ms per-engine deadline, so a lazy first load would be
+        // abandoned every time — and abandoning compute-bound work does not
+        // stop it, it only stops waiting for it.
+        //
+        // Built unconditionally so the chain always has the candidate, but only
+        // *warmed* under the engines that will consult it: `apple`, `rules` and
+        // `off` would otherwise pay a second of startup and 0.9GB of resident
+        // memory for a model they never call.
+        let mlx = Pipeline.mlxFormatter()
+        let warmsMLX = config.engine == .mlx || config.engine == .cloud
         let warmupSemaphore = DispatchSemaphore(value: 0)
-        var warmupError: Error?
+        nonisolated(unsafe) var warmupError: Error?
+        nonisolated(unsafe) var mlxWarmupError: Error?
         Task.detached {
             do {
                 try await transcriber.warmUp()
             } catch {
                 warmupError = error
+            }
+            if warmsMLX {
+                do {
+                    try await mlx.warmUp()
+                } catch {
+                    mlxWarmupError = error
+                }
             }
             warmupSemaphore.signal()
         }
@@ -114,6 +134,22 @@ struct Run: ParsableCommand {
         if let warmupError {
             FileHandle.standardError.write(Data("warmup failed: \(warmupError)\n".utf8))
             throw ExitCode(1)
+        }
+        // A warning, not a failure. Transcription without formatting is the
+        // whole app minus its polish; formatting without transcription is
+        // nothing. So a missing Whisper model is fatal above and a missing
+        // formatting model is one line here, with the command that fixes it.
+        if let mlxWarmupError {
+            let detail: String
+            if case .transportFailure(let message)? = mlxWarmupError as? FormatterError {
+                detail = message
+            } else {
+                detail = "\(mlxWarmupError)"
+            }
+            FileHandle.standardError.write(Data(
+                "! local formatting unavailable: \(detail)\n".utf8))
+            FileHandle.standardError.write(Data(
+                "  dictation will use rule-based cleanup until then\n".utf8))
         }
 
         let app = NSApplication.shared
@@ -153,7 +189,8 @@ struct Run: ParsableCommand {
         let session = Pipeline.makeSession(
             config: config,
             apiKey: apiKey,
-            local: Pipeline.localFormatter(),
+            mlx: mlx,
+            apple: Pipeline.appleFormatter(),
             registry: registry,
             onModeResolved: { resolved in
                 Task { @MainActor in menuBar.setMode(resolved.id) }
@@ -298,8 +335,8 @@ struct Doctor: ParsableCommand {
 
 struct Models: ParsableCommand {
     static let configuration = CommandConfiguration(
-        abstract: "Manage transcription models.",
-        subcommands: [List.self, Download.self]
+        abstract: "Manage transcription and formatting models.",
+        subcommands: [List.self, Download.self, DownloadFormatter.self]
     )
 
     struct List: ParsableCommand {
@@ -312,6 +349,57 @@ struct Models: ParsableCommand {
                 let size = String(format: "%5d MB", m.sizeMB)
                 print("\(star) \(id) \(size)  \(langs)  \(m.displayName)")
             }
+        }
+    }
+
+    /// The one-time fetch of the local formatting model.
+    ///
+    /// A separate subcommand rather than an entry in `ModelRegistry`, because
+    /// that registry is typed `TranscriptionModel` — engine, WhisperKit id,
+    /// languages — and none of those fields mean anything for a formatting
+    /// model. Bending the type to fit would make `parrot models list` offer a
+    /// model that `--model` cannot accept.
+    ///
+    /// Explicit and user-initiated, mirroring `parrot models download`: a
+    /// default install performs no network I/O for formatting, and 0.9GB is not
+    /// something to fetch behind a user's back on first launch.
+    struct DownloadFormatter: ParsableCommand {
+        static let configuration = CommandConfiguration(
+            commandName: "download-formatter",
+            abstract: "Download the local formatting model (~900 MB, one time)."
+        )
+
+        func run() throws {
+            if MLXModel.isPresent {
+                print("✓ \(MLXModel.id) already at \(MLXModel.directory.path)")
+                return
+            }
+            print("downloading \(MLXModel.id) (~\(MLXModel.sizeMB) MB)...")
+
+            let sem = DispatchSemaphore(value: 0)
+            nonisolated(unsafe) var capturedError: Error?
+            nonisolated(unsafe) var directory: URL?
+            Task.detached {
+                do {
+                    directory = try await MLXModel.download { fraction in
+                        FileHandle.standardError.write(Data(
+                            String(format: "\r  %3.0f%%", fraction * 100).utf8))
+                    }
+                } catch {
+                    capturedError = error
+                }
+                sem.signal()
+            }
+            sem.wait()
+            FileHandle.standardError.write(Data("\r".utf8))
+            if let capturedError {
+                // The type name only, following the rule the formatters follow:
+                // a foreign error's message is a channel its producer controls,
+                // and a Hub error can quote URLs and paths.
+                print("download failed: \(type(of: capturedError))")
+                throw ExitCode(1)
+            }
+            print("✓ \(MLXModel.id) ready at \(directory?.path ?? MLXModel.directory.path)")
         }
     }
 

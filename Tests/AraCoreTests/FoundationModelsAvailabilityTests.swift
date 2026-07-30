@@ -99,10 +99,21 @@ struct FoundationModelsAvailabilityTests {
                 return
             }
         }
-        // ~5ms measured, including the cold framework read. 30ms leaves headroom
-        // for a cold start while still failing if real work moves in front of
-        // the guard.
-        #expect(ContinuousClock.now - start < .milliseconds(30))
+        // ~5ms measured on an idle machine, including the cold framework read.
+        //
+        // The budget is 1s rather than the 30ms that measurement would suggest,
+        // and the gap is contention, not slack. Four suites now deliberately
+        // block every core — this file's occupancy test, `PipelineTests`', and
+        // both of `MLXFormatterTests`' — and swift-testing runs suites in
+        // parallel, so this stopwatch is read on a machine with more runnable
+        // threads than cores. Observed here at 0.15s and 0.41s while those were
+        // in flight, with no change to the code under test.
+        //
+        // 1s still catches the regression it is for. "Waiting for a model that
+        // will not arrive" is either a hang or a real generation, and a real
+        // Foundation Models generation on this hardware is seconds; nothing
+        // between 30ms and 1s is a plausible way for this to break.
+        #expect(ContinuousClock.now - start < .seconds(1))
     }
 
     @Test("format keeps its inference call off the cooperative thread pool")

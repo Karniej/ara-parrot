@@ -45,12 +45,13 @@ struct PipelineTests {
 
     private func session(_ config: Config,
                          apiKey: String? = nil,
-                         local: (any AraCore.Formatter)? = nil,
+                         mlx: (any AraCore.Formatter)? = nil,
+                         apple: (any AraCore.Formatter)? = nil,
                          cloudTransport: CloudFormatter.Transport? = nil)
         -> DictationSession
     {
-        Pipeline.makeSession(config: config, apiKey: apiKey, local: local,
-                             cloudTransport: cloudTransport)
+        Pipeline.makeSession(config: config, apiKey: apiKey, mlx: mlx,
+                             apple: apple, cloudTransport: cloudTransport)
     }
 
     // MARK: - engine
@@ -59,7 +60,7 @@ struct PipelineTests {
     func engineOff() async {
         var config = Config()
         config.engine = .off
-        let out = await session(config, local: PipelineStub { _, _ in
+        let out = await session(config, apple: PipelineStub { _, _ in
             Issue.record("an engine ran under engine .off")
             return "x"
         }).process(Self.filler, override: nil, manual: nil, frontmostBundleID: nil)
@@ -70,18 +71,54 @@ struct PipelineTests {
     func engineRules() async {
         var config = Config()
         config.engine = .rules
-        let out = await session(config, local: PipelineStub { _, _ in
+        let out = await session(config, apple: PipelineStub { _, _ in
             Issue.record("an engine ran under engine .rules")
             return "x"
         }).process(Self.filler, override: nil, manual: nil, frontmostBundleID: nil)
         #expect(out == Self.cleaned)
     }
 
-    @Test("engine .local routes through the local formatter")
-    func engineLocal() async {
+    @Test("engine .apple routes through the Apple on-device formatter")
+    func engineApple() async {
         var config = Config()
-        config.engine = .local
-        let out = await session(config, local: PipelineStub { _, _ in "Hello there friend." })
+        config.engine = .apple
+        let out = await session(config, apple: PipelineStub { _, _ in "Hello there friend." })
+            .process(Self.filler, override: nil, manual: nil, frontmostBundleID: nil)
+        #expect(out == "Hello there friend.")
+    }
+
+    /// The default engine, and therefore the one a fresh install runs. A
+    /// pipeline that built the chain correctly for every *named* engine while
+    /// dropping the default would ship as "formatting silently does nothing".
+    @Test("the default engine routes through the MLX formatter")
+    func defaultEngineIsMLX() async {
+        let config = Config()
+        #expect(config.engine == .mlx)
+        let out = await session(config,
+                                mlx: PipelineStub { _, _ in "Hello there friend." },
+                                apple: PipelineStub { _, _ in
+                                    Issue.record("the Apple model ran under the default engine")
+                                    return "APPLE"
+                                })
+            .process(Self.filler, override: nil, manual: nil, frontmostBundleID: nil)
+        #expect(out == "Hello there friend.")
+    }
+
+    @Test("engine .cloud falls back to MLX, not to the Apple model")
+    func cloudFallsBackToMLX() async {
+        var config = Config()
+        config.engine = .cloud
+        config.cloud = CloudConfig()
+        let out = await session(config,
+                                apiKey: "sk-test",
+                                mlx: PipelineStub { _, _ in "Hello there friend." },
+                                apple: PipelineStub { _, _ in
+                                    Issue.record("the Apple model ran under engine .cloud")
+                                    return "APPLE"
+                                },
+                                cloudTransport: { _ in
+                                    throw FormatterError.transportFailure("offline")
+                                })
             .process(Self.filler, override: nil, manual: nil, frontmostBundleID: nil)
         #expect(out == "Hello there friend.")
     }
@@ -95,10 +132,10 @@ struct PipelineTests {
     @Test("timeoutMs becomes the chain's per-engine deadline")
     func timeoutIsWired() async {
         var config = Config()
-        config.engine = .local
+        config.engine = .apple
         config.timeoutMs = 60
         let started = ContinuousClock.now
-        let out = await session(config, local: PipelineStub { _, _ in
+        let out = await session(config, apple: PipelineStub { _, _ in
             try await Task.sleep(for: .seconds(30))
             return "never"
         }).process(Self.filler, override: nil, manual: nil, frontmostBundleID: nil)
@@ -114,9 +151,9 @@ struct PipelineTests {
     @Test("config.mode becomes the default mode")
     func configModeIsTheDefault() async {
         var config = Config()
-        config.engine = .local
+        config.engine = .apple
         config.mode = "verbatim"
-        let out = await session(config, local: PipelineStub { _, _ in
+        let out = await session(config, apple: PipelineStub { _, _ in
             Issue.record("the language model ran in verbatim mode")
             return "REWRITTEN"
         }).process(Self.filler, override: nil, manual: nil, frontmostBundleID: nil)
@@ -126,9 +163,9 @@ struct PipelineTests {
     @Test("a per-utterance override outranks config.mode")
     func overrideOutranksConfigMode() async {
         var config = Config()
-        config.engine = .local
+        config.engine = .apple
         config.mode = "default"
-        let out = await session(config, local: PipelineStub { _, _ in
+        let out = await session(config, apple: PipelineStub { _, _ in
             Issue.record("the language model ran under a verbatim override")
             return "REWRITTEN"
         }).process(Self.filler, override: "verbatim", manual: nil, frontmostBundleID: nil)
@@ -138,11 +175,11 @@ struct PipelineTests {
     @Test("the frontmost application still selects a mode through the built session")
     func frontmostAppSelectsMode() async {
         var config = Config()
-        config.engine = .local
+        config.engine = .apple
         // Four words out for four words in: a bare mode id would be discarded by
         // the chain's plausibility guard before it could be asserted on.
         let out = await session(config,
-                                local: PipelineStub { _, mode in
+                                apple: PipelineStub { _, mode in
                                     "formatted for \(mode.id) mode"
                                 })
             .process(Self.filler, override: nil, manual: nil,
@@ -172,7 +209,7 @@ struct PipelineTests {
         let cores = ProcessInfo.processInfo.activeProcessorCount
         let occupancy = Occupancy()
         var config = Config()
-        config.engine = .local
+        config.engine = .apple
         config.timeoutMs = 5_000
 
         let engine = FoundationModelsFormatter(
@@ -183,7 +220,7 @@ struct PipelineTests {
                 occupancy.leave()
                 return Self.cleaned
             })
-        let session = session(config, local: engine)
+        let session = session(config, apple: engine)
 
         await withTaskGroup(of: Void.self) { group in
             for _ in 0..<(cores * 2) {
@@ -208,7 +245,7 @@ struct PipelineTests {
         config.engine = .cloud
         config.cloud = nil
         let out = await session(config, apiKey: "sk-should-not-be-used",
-                                local: nil,
+                                apple: nil,
                                 cloudTransport: { _ in
                                     Issue.record("a cloud request was built with no cloud config")
                                     throw FormatterError.unavailable
@@ -236,7 +273,7 @@ struct PipelineTests {
         """#
 
         let out = await session(config, apiKey: "sk-ant-startup-key",
-                                local: PipelineStub { _, _ in
+                                apple: PipelineStub { _, _ in
                                     Issue.record("the local engine ran after cloud succeeded")
                                     return "LOCAL"
                                 },

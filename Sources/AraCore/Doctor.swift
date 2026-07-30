@@ -21,8 +21,64 @@ public enum DoctorReport {
             checkMicrophone(),
             checkAccessibility(),
             checkFnKeyMapping(),
+            checkLocalFormattingModel(),
             checkOnDeviceFormatting(),
         ]
+    }
+
+    /// Reports whether the **default** formatting engine can run.
+    ///
+    /// This is the check that matters most now: `engine` defaults to `mlx`, and
+    /// the bundled model is a 0.9 GB explicit download. Without this line, a
+    /// fresh install formats with rule-based cleanup only, and the sole clue is
+    /// one stderr line per utterance that a user watching their cursor will
+    /// never see.
+    ///
+    /// A **warning, never a failure**, for the same reason as the check below:
+    /// `Run` gates startup on `allOK`, and refusing to start the daemon because
+    /// an optional model has not been fetched would make a working install
+    /// unusable.
+    ///
+    /// The macOS-15.4 floor is reported separately from the missing model,
+    /// because they have different fixes — one is a download, the other is not
+    /// something the user can do anything about.
+    static func checkLocalFormattingModel() -> Check {
+        let name = "local formatting model"
+        guard #available(macOS 15.4, *) else {
+            return Check(
+                name: name,
+                status: .warn("requires macOS 15.4"),
+                remediation: "The MLX engine cannot be kept off the cooperative "
+                    + "thread pool before macOS 15.4, so it is not run. "
+                    + "Rule-based cleanup is used instead; no action needed on "
+                    + "this macOS."
+            )
+        }
+        guard MLXModel.isPresent else {
+            return Check(
+                name: name,
+                status: .warn("\(MLXModel.id) is not downloaded"),
+                remediation: "run `\(MLXModel.downloadCommand)` "
+                    + "(~\(MLXModel.sizeMB) MB, one time). Until then, "
+                    + "formatting falls back to rule-based cleanup."
+            )
+        }
+        // The other half of "can the default engine run": the compiled Metal
+        // kernels. Release binaries ship with `mlx.metallib` beside them, but
+        // `swift build` cannot compile Metal shaders, so a source build is
+        // missing it until the build script has run once — and the only other
+        // symptom is one warm-up warning at daemon startup.
+        guard MLXRuntime.metallibIsLocatable else {
+            return Check(
+                name: name,
+                status: .warn("the Metal kernel library (mlx.metallib) is missing from this build"),
+                remediation: "`swift build` cannot compile Metal shaders; run "
+                    + "`\(MLXRuntime.buildCommand)` once to compile it and place "
+                    + "it next to the parrot binary. Until then, formatting "
+                    + "falls back to rule-based cleanup."
+            )
+        }
+        return Check(name: name, status: .ok, remediation: nil)
     }
 
     /// Reports whether on-device formatting can run, and why not when it cannot.
@@ -42,7 +98,8 @@ public enum DoctorReport {
     static func checkOnDeviceFormatting() -> Check {
         let name = "on-device formatting"
         let remediation = "System Settings → Apple Intelligence & Siri → turn on. "
-            + "Without it, formatting falls back to rule-based cleanup."
+            + "Only `engine: \"apple\"` uses this; the default `mlx` engine does "
+            + "not, and without either, formatting falls back to rule-based cleanup."
         if #available(macOS 26.0, *) {
             guard let reason = FoundationModelsFormatter.unavailableReason else {
                 return Check(name: name, status: .ok, remediation: nil)

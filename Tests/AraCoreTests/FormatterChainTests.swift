@@ -35,21 +35,21 @@ struct FormatterChainTests {
                     appBundleIDs: [], usesLLM: true)
     fileprivate let rules = StubFormatter { _ in "RULES" }
 
-    @Test("local engine uses local when it succeeds")
+    @Test("apple engine uses the Apple model when it succeeds")
     func localSucceeds() async throws {
         let chain = FormatterChain(
-            engine: .local, timeout: .seconds(1),
-            local: StubFormatter { _ in "one two three four" },
+            engine: .apple, timeout: .seconds(1),
+            mlx: nil, apple: StubFormatter { _ in "one two three four" },
             cloud: nil, rules: rules)
         #expect(try await chain.format("one two three four five", mode: mode)
                 == "one two three four")
     }
 
-    @Test("local failure falls through to rules")
+    @Test("apple failure falls through to rules")
     func localFallsBack() async throws {
         let chain = FormatterChain(
-            engine: .local, timeout: .seconds(1),
-            local: StubFormatter { _ in throw FormatterError.unavailable },
+            engine: .apple, timeout: .seconds(1),
+            mlx: nil, apple: StubFormatter { _ in throw FormatterError.unavailable },
             cloud: nil, rules: rules)
         #expect(try await chain.format("hello there friend", mode: mode) == "RULES")
     }
@@ -57,8 +57,8 @@ struct FormatterChainTests {
     @Test("a hung formatter is abandoned at the deadline")
     func deadlineFires() async throws {
         let chain = FormatterChain(
-            engine: .local, timeout: .milliseconds(80),
-            local: StubFormatter { _ in
+            engine: .apple, timeout: .milliseconds(80),
+            mlx: nil, apple: StubFormatter { _ in
                 try await Task.sleep(for: .seconds(30))
                 return "never"
             },
@@ -78,8 +78,8 @@ struct FormatterChainTests {
     @Test("a formatter that ignores cancellation is still abandoned")
     func deadlineFiresOnUncooperativeWork() async throws {
         let chain = FormatterChain(
-            engine: .local, timeout: .milliseconds(80),
-            local: StubFormatter { _ in
+            engine: .apple, timeout: .milliseconds(80),
+            mlx: nil, apple: StubFormatter { _ in
                 usleep(3_000_000)
                 return "never"
             },
@@ -93,32 +93,119 @@ struct FormatterChainTests {
     @Test("implausible output is discarded")
     func guardsOutput() async throws {
         let chain = FormatterChain(
-            engine: .local, timeout: .seconds(1),
-            local: StubFormatter { _ in "Paris" },
+            engine: .apple, timeout: .seconds(1),
+            mlx: nil, apple: StubFormatter { _ in "Paris" },
             cloud: nil, rules: rules)
         #expect(try await chain.format("what is the capital of France", mode: mode)
                 == "RULES")
     }
 
-    @Test("cloud engine falls through cloud, then local, then rules")
+    @Test("cloud engine falls through cloud, then mlx, then rules")
     func cloudChain() async throws {
         let chain = FormatterChain(
             engine: .cloud, timeout: .seconds(1),
-            local: StubFormatter { _ in throw FormatterError.unavailable },
+            mlx: StubFormatter { _ in throw FormatterError.unavailable },
+            apple: nil,
             cloud: StubFormatter { _ in throw FormatterError.refused },
             rules: rules)
         #expect(try await chain.format("hello there friend", mode: mode) == "RULES")
     }
 
-    /// A default install performs no network I/O, so `.local` must never reach
+    // MARK: - the engines the MLX formatter added
+
+    @Test("mlx engine uses mlx when it succeeds")
+    func mlxSucceeds() async throws {
+        let chain = FormatterChain(
+            engine: .mlx, timeout: .seconds(1),
+            mlx: StubFormatter { _ in "one two three four" },
+            apple: nil, cloud: nil, rules: rules)
+        #expect(try await chain.format("one two three four five", mode: mode)
+                == "one two three four")
+    }
+
+    @Test("mlx failure falls through to rules")
+    func mlxFallsBack() async throws {
+        let chain = FormatterChain(
+            engine: .mlx, timeout: .seconds(1),
+            mlx: StubFormatter { _ in throw FormatterError.unavailable },
+            apple: nil, cloud: nil, rules: rules)
+        #expect(try await chain.format("hello there friend", mode: mode) == "RULES")
+    }
+
+    /// The user named an engine. An install with the MLX model missing should
+    /// be told its chosen engine is unavailable — one stderr line per
+    /// utterance — not quietly served by a different local model whose output
+    /// and privacy properties they did not ask for.
+    @Test("mlx engine never reaches for the Apple model, or for cloud")
+    func mlxNeverUsesAnotherEngine() async throws {
+        let chain = FormatterChain(
+            engine: .mlx, timeout: .seconds(1),
+            mlx: StubFormatter { _ in throw FormatterError.unavailable },
+            apple: StubFormatter { _ in
+                Issue.record("the Apple model was called under the mlx engine")
+                return "APPLE"
+            },
+            cloud: StubFormatter { _ in
+                Issue.record("cloud was called under the mlx engine")
+                return "CLOUD"
+            },
+            rules: rules)
+        #expect(try await chain.format("hello there friend", mode: mode) == "RULES")
+    }
+
+    /// The mirror image, and the one the switch in `route` exists to protect:
+    /// the previous implementation appended the local formatter under every
+    /// engine, so a second local engine bolted onto it would have made `apple`
+    /// fall through to MLX for free.
+    @Test("apple engine never reaches for mlx")
+    func appleNeverUsesMLX() async throws {
+        let chain = FormatterChain(
+            engine: .apple, timeout: .seconds(1),
+            mlx: StubFormatter { _ in
+                Issue.record("mlx was called under the apple engine")
+                return "MLX"
+            },
+            apple: StubFormatter { _ in throw FormatterError.unavailable },
+            cloud: nil, rules: rules)
+        #expect(try await chain.format("hello there friend", mode: mode) == "RULES")
+    }
+
+    @Test("cloud engine prefers cloud over mlx when it succeeds")
+    func cloudPreferredOverMLX() async throws {
+        let chain = FormatterChain(
+            engine: .cloud, timeout: .seconds(1),
+            mlx: StubFormatter { _ in
+                Issue.record("mlx was called after cloud succeeded")
+                return "MLX"
+            },
+            apple: nil,
+            cloud: StubFormatter { _ in "hello there friend." },
+            rules: rules)
+        #expect(try await chain.format("hello there friend", mode: mode)
+                == "hello there friend.")
+    }
+
+    @Test("cloud engine falls back to mlx before rules")
+    func cloudFallsBackToMLX() async throws {
+        let chain = FormatterChain(
+            engine: .cloud, timeout: .seconds(1),
+            mlx: StubFormatter { _ in "hello there friend." },
+            apple: nil,
+            cloud: StubFormatter { _ in throw FormatterError.transportFailure("offline") },
+            rules: rules)
+        #expect(try await chain.format("hello there friend", mode: mode)
+                == "hello there friend.")
+    }
+
+    /// A default install performs no network I/O, so `.apple` must never reach
     /// for a cloud formatter even when one is configured and available.
-    @Test("local engine never reaches for cloud")
+    @Test("apple engine never reaches for cloud")
     func localNeverUsesCloud() async throws {
         let chain = FormatterChain(
-            engine: .local, timeout: .seconds(1),
-            local: StubFormatter { _ in throw FormatterError.unavailable },
+            engine: .apple, timeout: .seconds(1),
+            mlx: nil, apple: StubFormatter { _ in throw FormatterError.unavailable },
             cloud: StubFormatter { _ in
-                Issue.record("cloud was called under the local engine")
+                Issue.record("cloud was called under the apple engine")
                 return "CLOUD"
             },
             rules: rules)
@@ -129,10 +216,10 @@ struct FormatterChainTests {
     func cloudPreferred() async throws {
         let chain = FormatterChain(
             engine: .cloud, timeout: .seconds(1),
-            local: StubFormatter { _ in
-                Issue.record("local was called after cloud succeeded")
-                return "LOCAL"
-            },
+            mlx: StubFormatter { _ in
+                Issue.record("mlx was called after cloud succeeded")
+                return "MLX"
+            }, apple: nil,
             cloud: StubFormatter { _ in "hello there friend." },
             rules: rules)
         #expect(try await chain.format("hello there friend", mode: mode)
@@ -143,7 +230,7 @@ struct FormatterChainTests {
     func rulesEngine() async throws {
         let chain = FormatterChain(
             engine: .rules, timeout: .seconds(1),
-            local: StubFormatter { _ in
+            mlx: nil, apple: StubFormatter { _ in
                 Issue.record("LLM was called under the rules engine")
                 return "x"
             },
@@ -155,7 +242,7 @@ struct FormatterChainTests {
     func offEngine() async throws {
         let chain = FormatterChain(
             engine: .off, timeout: .seconds(1),
-            local: StubFormatter { _ in "formatted" }, cloud: nil, rules: rules)
+            mlx: nil, apple: StubFormatter { _ in "formatted" }, cloud: nil, rules: rules)
         #expect(try await chain.format("raw text here", mode: mode) == "raw text here")
     }
 
@@ -164,8 +251,8 @@ struct FormatterChainTests {
         let verbatim = Mode(id: "verbatim", name: "V", prompt: "",
                             appBundleIDs: [], usesLLM: false)
         let chain = FormatterChain(
-            engine: .local, timeout: .seconds(1),
-            local: StubFormatter { _ in Issue.record("LLM was called"); return "x" },
+            engine: .apple, timeout: .seconds(1),
+            mlx: nil, apple: StubFormatter { _ in Issue.record("LLM was called"); return "x" },
             cloud: nil, rules: rules)
         #expect(try await chain.format("hello there friend", mode: verbatim) == "RULES")
     }
@@ -178,7 +265,7 @@ struct FormatterChainTests {
     func cancellationPropagates() async throws {
         let chain = FormatterChain(
             engine: .cloud, timeout: .seconds(30),
-            local: StubFormatter { _ in
+            mlx: nil, apple: StubFormatter { _ in
                 try await Task.sleep(for: .seconds(30))
                 return "never"
             },
@@ -200,7 +287,7 @@ struct FormatterChainTests {
     func cancellationPropagatesFromRulesBranch() async throws {
         let chain = FormatterChain(
             engine: .rules, timeout: .seconds(30),
-            local: nil, cloud: nil,
+            mlx: nil, apple: nil, cloud: nil,
             rules: StubFormatter { _ in
                 try await Task.sleep(for: .seconds(30))
                 return "never"
@@ -219,8 +306,8 @@ struct FormatterChainTests {
     func loserIsCancelled() async throws {
         let probe = CancellationProbe()
         let chain = FormatterChain(
-            engine: .local, timeout: .milliseconds(50),
-            local: StubFormatter { _ in
+            engine: .apple, timeout: .milliseconds(50),
+            mlx: nil, apple: StubFormatter { _ in
                 do {
                     try await Task.sleep(for: .seconds(10))
                 } catch {
@@ -240,8 +327,8 @@ struct FormatterChainTests {
     @Test("the timer is cancelled once the formatter wins")
     func timerIsCancelledOnSuccess() async throws {
         let chain = FormatterChain(
-            engine: .local, timeout: .seconds(30),
-            local: StubFormatter { _ in "one two three four" },
+            engine: .apple, timeout: .seconds(30),
+            mlx: nil, apple: StubFormatter { _ in "one two three four" },
             cloud: nil, rules: rules)
         let started = ContinuousClock.now
         #expect(try await chain.format("one two three four five", mode: mode)
@@ -255,8 +342,8 @@ struct FormatterChainTests {
     @Test("a throwing rules formatter still yields the raw transcript")
     func brokenRulesStillReturnsText() async throws {
         let chain = FormatterChain(
-            engine: .local, timeout: .seconds(1),
-            local: StubFormatter { _ in throw FormatterError.unavailable },
+            engine: .apple, timeout: .seconds(1),
+            mlx: nil, apple: StubFormatter { _ in throw FormatterError.unavailable },
             cloud: nil,
             rules: StubFormatter { _ in throw FormatterError.transportFailure("broken") })
         #expect(try await chain.format("hello there friend", mode: mode)
@@ -276,7 +363,7 @@ struct FormatterChainTests {
     func rulesFloorIsDeadlined() async throws {
         let chain = FormatterChain(
             engine: .rules, timeout: .milliseconds(60),
-            local: nil, cloud: nil,
+            mlx: nil, apple: nil, cloud: nil,
             rules: StubFormatter { _ in
                 usleep(400_000)
                 return "RULES"
@@ -295,8 +382,8 @@ struct FormatterChainTests {
         let verbatim = Mode(id: "verbatim", name: "V", prompt: "",
                             appBundleIDs: [], usesLLM: false)
         let chain = FormatterChain(
-            engine: .local, timeout: .milliseconds(60),
-            local: nil, cloud: nil,
+            engine: .apple, timeout: .milliseconds(60),
+            mlx: nil, apple: nil, cloud: nil,
             rules: StubFormatter { _ in
                 usleep(400_000)
                 return "RULES"
@@ -311,7 +398,7 @@ struct FormatterChainTests {
     func brokenRulesOnRulesBranch() async throws {
         let chain = FormatterChain(
             engine: .rules, timeout: .seconds(1),
-            local: nil, cloud: nil,
+            mlx: nil, apple: nil, cloud: nil,
             rules: StubFormatter { _ in throw FormatterError.unavailable })
         #expect(try await chain.format("hello there friend", mode: mode)
                 == "hello there friend")
@@ -325,8 +412,8 @@ struct FormatterChainTests {
     @Test("a stray CancellationError from an engine does not lose the transcript")
     func strayCancellationFromEngineFallsThrough() async throws {
         let chain = FormatterChain(
-            engine: .local, timeout: .seconds(1),
-            local: StubFormatter { _ in throw CancellationError() },
+            engine: .apple, timeout: .seconds(1),
+            mlx: nil, apple: StubFormatter { _ in throw CancellationError() },
             cloud: nil, rules: rules)
         #expect(try await chain.format("hello there friend", mode: mode) == "RULES")
         #expect(!Task.isCancelled)
@@ -336,7 +423,7 @@ struct FormatterChainTests {
     func strayCancellationFromRulesFallsThrough() async throws {
         let chain = FormatterChain(
             engine: .rules, timeout: .seconds(1),
-            local: nil, cloud: nil,
+            mlx: nil, apple: nil, cloud: nil,
             rules: StubFormatter { _ in throw CancellationError() })
         #expect(try await chain.format("hello there friend", mode: mode)
                 == "hello there friend")
@@ -357,7 +444,7 @@ struct FormatterChainTests {
     func cancelledCallerGetsNoTextFromIgnoringFormatter() async throws {
         let chain = FormatterChain(
             engine: .rules, timeout: .seconds(5),
-            local: nil, cloud: nil,
+            mlx: nil, apple: nil, cloud: nil,
             rules: StubFormatter { _ in
                 usleep(200_000)
                 return "CLEANED"
@@ -375,8 +462,8 @@ struct FormatterChainTests {
     @Test("an already-cancelled caller never starts the engine")
     func cancelledCallerNeverStartsEngine() async throws {
         let chain = FormatterChain(
-            engine: .local, timeout: .seconds(1),
-            local: StubFormatter { _ in
+            engine: .apple, timeout: .seconds(1),
+            mlx: nil, apple: StubFormatter { _ in
                 Issue.record("engine was started for an already-cancelled request")
                 return "x"
             },
@@ -396,7 +483,7 @@ struct FormatterChainTests {
     func guaranteeHolds() async throws {
         let chain = FormatterChain(
             engine: .cloud, timeout: .milliseconds(50),
-            local: StubFormatter { _ in
+            mlx: nil, apple: StubFormatter { _ in
                 try await Task.sleep(for: .seconds(30))
                 return "never"
             },

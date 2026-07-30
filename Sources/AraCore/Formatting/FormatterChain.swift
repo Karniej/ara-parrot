@@ -36,10 +36,18 @@ import Foundation
 /// The chain per engine:
 /// - `.off` — the raw transcript, untouched; no formatter is consulted.
 /// - `.rules` — the rule-based formatter only.
-/// - `.local` — local, then rules. Deliberately *not* cloud: a default install
-///   performs no network I/O, and silently reaching for the network because
-///   the local model was missing would be a privacy surprise.
-/// - `.cloud` — cloud, then local, then rules.
+/// - `.mlx` — the bundled MLX model, then rules. The default.
+/// - `.apple` — Apple's on-device model, then rules.
+/// - `.cloud` — cloud, then MLX, then rules.
+///
+/// Neither on-device engine falls back to the other, and neither falls back to
+/// cloud. A default install performs no network I/O, and silently reaching for
+/// the network because a local model was missing would be a privacy surprise;
+/// silently reaching for the *other* local model would be a subtler version of
+/// the same thing — the user named an engine, and an install with Apple
+/// Intelligence off should be told its chosen engine is unavailable rather than
+/// quietly served by a different one. `.cloud` reaching for MLX is the one
+/// exception, and it goes the safe direction: from the network to the machine.
 ///
 /// A mode with `usesLLM == false` (verbatim dictation) skips the language
 /// model entirely regardless of engine, because the user asked for their words
@@ -47,16 +55,18 @@ import Foundation
 public struct FormatterChain: Formatter {
     private let engine: Engine
     private let timeout: Duration
-    private let local: (any Formatter)?
+    private let mlx: (any Formatter)?
+    private let apple: (any Formatter)?
     private let cloud: (any Formatter)?
     private let rules: any Formatter
 
     public init(engine: Engine, timeout: Duration,
-                local: (any Formatter)?, cloud: (any Formatter)?,
-                rules: any Formatter) {
+                mlx: (any Formatter)?, apple: (any Formatter)?,
+                cloud: (any Formatter)?, rules: any Formatter) {
         self.engine = engine
         self.timeout = timeout
-        self.local = local
+        self.mlx = mlx
+        self.apple = apple
         self.cloud = cloud
         self.rules = rules
     }
@@ -83,9 +93,25 @@ public struct FormatterChain: Formatter {
         }
 
         // Labelled so a fall-through can name the engine that failed.
+        //
+        // Written as an exhaustive switch rather than a sequence of `if`s: the
+        // previous form appended the local formatter under *every* engine, so
+        // adding a second local engine to it would have silently made `.apple`
+        // fall through to MLX and back. A switch makes adding an engine a
+        // compile error until its chain is stated.
         var candidates: [(label: Engine, formatter: any Formatter)] = []
-        if engine == .cloud, let cloud { candidates.append((.cloud, cloud)) }
-        if let local { candidates.append((.local, local)) }
+        switch engine {
+        case .mlx:
+            if let mlx { candidates.append((.mlx, mlx)) }
+        case .apple:
+            if let apple { candidates.append((.apple, apple)) }
+        case .cloud:
+            if let cloud { candidates.append((.cloud, cloud)) }
+            if let mlx { candidates.append((.mlx, mlx)) }
+        case .rules, .off:
+            // Both returned above; listed so the switch stays exhaustive.
+            break
+        }
 
         for candidate in candidates {
             do {
