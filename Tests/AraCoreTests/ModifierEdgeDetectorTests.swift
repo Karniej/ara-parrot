@@ -1,3 +1,4 @@
+import CoreGraphics
 import Testing
 @testable import AraCore
 
@@ -196,6 +197,18 @@ struct ModifierEdgeDetectorTests {
         // First event ever: both shifts already down.
         #expect(d.handle(keyCode: Keys.rightShift, flags: Flags.bothShifts) == .pressed)
         #expect(d.handle(keyCode: Keys.rightShift, flags: Flags.leftShift) == .released)
+    }
+
+}
+
+/// The tap subscribes to the one event type the detector consumes.
+/// `flagsChanged` is where modifier keycodes arrive; keyDown/keyUp would hand
+/// this process the content of every keystroke typed system-wide, for nothing.
+@Suite("HotkeyMonitor event mask")
+struct HotkeyMonitorMaskTests {
+    @Test("the tap listens to flagsChanged only")
+    func maskIsFlagsChangedOnly() {
+        #expect(HotkeyMonitor.eventMask == CGEventMask(1) << CGEventType.flagsChanged.rawValue)
     }
 }
 

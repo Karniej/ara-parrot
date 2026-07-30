@@ -21,6 +21,13 @@ public final class HotkeyMonitor {
     /// this class contributes only the event tap around it.
     private var edges: ModifierEdgeDetector
 
+    /// `flagsChanged` only — deliberately narrowed, don't widen it. Modifier
+    /// keycodes, the only keys any `Hotkey` case can be, arrive on
+    /// `flagsChanged`; subscribing to keyDown/keyUp would hand this process
+    /// the keycode of every keystroke typed system-wide, for events `handle`
+    /// then discards unread.
+    static let eventMask: CGEventMask = 1 << CGEventType.flagsChanged.rawValue
+
     public init(hotkey: Hotkey = .fn, debug: Bool = false) {
         self.hotkey = hotkey
         self.debug = debug
@@ -39,10 +46,6 @@ public final class HotkeyMonitor {
             throw HotkeyError.tapCreateFailed
         }
 
-        let mask: CGEventMask =
-            (1 << CGEventType.flagsChanged.rawValue)
-            | (1 << CGEventType.keyDown.rawValue)
-            | (1 << CGEventType.keyUp.rawValue)
         let userInfo = Unmanaged.passUnretained(self).toOpaque()
 
         // .cgSessionEventTap is the right level for an accessibility-granted
@@ -52,7 +55,7 @@ public final class HotkeyMonitor {
                 tap: .cgSessionEventTap,
                 place: .headInsertEventTap,
                 options: .listenOnly,
-                eventsOfInterest: mask,
+                eventsOfInterest: Self.eventMask,
                 callback: hotkeyCallback,
                 userInfo: userInfo
             )
@@ -102,6 +105,7 @@ public final class HotkeyMonitor {
         case nil: break
         }
     }
+
 }
 
 private func hotkeyCallback(
