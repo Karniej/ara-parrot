@@ -175,28 +175,69 @@ unsigned binary, no stable ACL identity), and a silent migration would raise
 an Allow/Deny dialog at whatever moment the fallback first fired. Re-running
 key setup writes under the new service.
 
-## Deferred: the release workflow cannot produce the artefact we ship
+## Resolved: the release workflow now produces the artefact we ship
 
-`.github/workflows/release.yml` triggers on `v*` tags and uploads exactly two
-files: `ara-macos-arm64.tar.gz` and its `.sha256`. It has no
-`scripts/package-app.sh` or `scripts/package-dmg.sh` step, so it cannot build
-an app bundle at all — and the bundle is the artefact that matters, because the
-Info.plist is what makes the microphone and accessibility grants stick to Ara
-rather than to whatever launched it.
+**Was:** `.github/workflows/release.yml` uploaded exactly two files,
+`ara-macos-arm64.tar.gz` and its `.sha256`. It had no `package-app.sh` or
+`package-dmg.sh` step, so it could not build an app bundle at all — and the
+bundle is the artefact that matters, because the Info.plist is what makes the
+microphone and accessibility grants stick to Ara rather than to whatever
+launched it. v0.1.0's `Ara-0.1.0.dmg` was attached by hand and no workflow run
+exists for that tag. The next `v*` tag would have published only the bare CLI,
+silently: `install.sh` prefers a DMG and falls back to the tarball without
+complaint.
 
-v0.1.0's `Ara-0.1.0.dmg` and `Ara-0.1.0.dmg.sha256` were therefore attached by
-hand, and no workflow run exists for that tag. Left alone, the next `v*` tag
-push publishes a release containing only the bare CLI — a silent downgrade for
-anyone who installs from it, since `install.sh` prefers a DMG and falls back to
-the tarball without complaint. The fix is a packaging step in the workflow
-(build, `build-metallib.sh`, `package-app.sh`, `package-dmg.sh`, attach both
-the image and its checksum); the metallib step is the awkward part, since it
-needs the Metal toolchain on the runner.
+**Now:** the workflow runs the full chain on a `v*` tag — `swift build -c
+release`, `build-metallib.sh`, `package-app.sh`, `package-dmg.sh` — and
+publishes `Ara-<version>.dmg` and `Ara-<version>.dmg.sha256` alongside the
+tarball, which stays because `install.sh` still falls back to it and a bare CLI
+is useful on its own. Three gates stand between a build and an upload:
 
-Docs consequence worth knowing: the `install.sh` served from gh-pages handles
-both asset shapes and is ahead of the `scripts/install.sh` committed here,
-which only knows about the tarball and installs to `/usr/local/bin` with
-`sudo`. The README points at the gh-pages URL for that reason.
+- **Version consistency.** The tag and `VERSION` must name the same release, or
+  the job fails naming both. Without it a `v0.2.0` tag could publish assets
+  called `Ara-0.1.0.dmg`.
+- **Preflight.** Asserts the runner is arm64, selects an Xcode providing Swift
+  6.3+ (mlx-swift's manifest is `swift-tools-version: 6.3`), and proves `xcrun
+  metal` runs — downloading the Metal component if the image lost it, and
+  failing if that does not take. A missing Metal compiler means no
+  `mlx.metallib`, and an app without one degrades to rule-based formatting
+  without saying so; the job dies rather than shipping that.
+- **Bundle completeness.** The finished image is mounted and checked for
+  `Ara.app/Contents/MacOS/ara`, a *non-empty* `mlx.metallib` beside it, an
+  Info.plist whose `CFBundleShortVersionString` matches `VERSION` and which
+  carries `LSUIElement`, `CFBundleIdentifier` and
+  `NSMicrophoneUsageDescription`, and a signature that passes `codesign
+  --verify`. This is the check whose absence let a bundle-less release become
+  possible.
+
+The job runs on `macos-26`, not `macos-15`, and the reason is not the Metal
+step. mlx-swift 0.31.6 declares `swift-tools-version: 6.3`; Swift 6.3 first
+ships in Xcode 26.4; Xcode 26.4 requires macOS Tahoe 26.2. The macOS 15 image
+tops out at Xcode 26.3 (Swift 6.2.3), so it cannot parse the manifest at all.
+The macOS 26 image carries Xcode 26.0.1–26.6 and pre-installs the Metal
+toolchain that Xcode 26 unbundled.
+
+**Residue.** Two things remain untestable from a developer machine and will
+only be proven by the first real tag push:
+
+- No run of this workflow has happened. The logic was exercised locally — the
+  version check against a table of tag/`VERSION` pairs, the bundle guard
+  against the real published `Ara-0.1.0.dmg` plus mutated copies with the
+  metallib, the executable, and the plist version broken — but the runner
+  itself is unobserved. In particular the wall-clock cost of building the
+  package twice (once through SwiftPM, once through `xcodebuild` for the
+  shaders) against the 120-minute timeout is an estimate.
+- The Metal toolchain is pre-installed by the image builder, not contractual.
+  It has been observed missing on a small fraction of runs
+  (actions/runner-images#14013). The preflight repairs that case by downloading
+  it (~700 MB), which is slow but correct; if the repair fails the job stops
+  instead of publishing a degraded bundle.
+
+`scripts/install.sh` is no longer a second installer. It was tarball-only, did
+no checksum verification, and installed to `/usr/local/bin` with `sudo`, all of
+which the gh-pages copy had long since outgrown. It is now a pointer at
+`https://karniej.github.io/ara-parrot/install.sh` that exits non-zero, so the
+two cannot drift again.
 
 ## Deferred: `checkLaunchAgentLogPaths` is dead in practice
 
