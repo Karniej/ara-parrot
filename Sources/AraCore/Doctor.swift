@@ -23,7 +23,28 @@ public enum DoctorReport {
             checkFnKeyMapping(),
             checkLocalFormattingModel(),
             checkOnDeviceFormatting(),
+            checkLegacyLogs(),
         ]
+    }
+
+    /// Flags the world-readable /tmp files earlier versions sent the
+    /// LaunchAgent's stderr to — files that quote every transcript dictated
+    /// while that agent ran. The plist no longer writes there, but the files
+    /// outlive the fix, so this line is how a user learns they exist.
+    ///
+    /// A **warning, never a failure**: `Run` gates startup on `allOK`, and a
+    /// leftover log is something to clean up, not a reason to refuse to start.
+    static func checkLegacyLogs(paths: [String] = LegacyLogs.defaultPaths) -> Check {
+        let found = LegacyLogs.existing(at: paths)
+        guard !found.isEmpty else {
+            return Check(name: "legacy logs", status: .ok, remediation: nil)
+        }
+        return Check(
+            name: "legacy logs",
+            status: .warn("world-readable transcript logs from an earlier version: "
+                + found.joined(separator: ", ")),
+            remediation: "review them if you like, then run `parrot install --purge-legacy-logs`"
+        )
     }
 
     /// Reports whether the **default** formatting engine can run.

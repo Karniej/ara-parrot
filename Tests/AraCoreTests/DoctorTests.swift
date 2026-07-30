@@ -88,6 +88,58 @@ struct DoctorTests {
         }
     }
 
+    // MARK: - legacy transcript logs
+
+    /// Older installs pointed the LaunchAgent's stderr at world-readable
+    /// /tmp files that quoted every transcript. The files outlive the fix,
+    /// so doctor is where a user finds out they exist.
+    @Test("the report includes the legacy-logs check")
+    func reportIncludesLegacyLogsCheck() {
+        #expect(DoctorReport.run().contains { $0.name == "legacy logs" })
+    }
+
+    @Test("a leftover /tmp transcript log is flagged, with the purge command")
+    func legacyLogIsFlagged() throws {
+        let dir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("doctor-legacy-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let log = dir.appendingPathComponent("parrot.err.log").path
+        try "every transcript ever".write(toFile: log, atomically: true, encoding: .utf8)
+
+        let check = DoctorReport.checkLegacyLogs(paths: [log])
+        guard case .warn(let reason) = check.status else {
+            Issue.record("a leftover transcript log must be reported")
+            return
+        }
+        #expect(reason.contains(log))
+        #expect(check.remediation?.contains("parrot install --purge-legacy-logs") == true)
+    }
+
+    @Test("no legacy logs is a clean pass")
+    func noLegacyLogsIsOK() {
+        let check = DoctorReport.checkLegacyLogs(
+            paths: ["/tmp/definitely-not-there-\(UUID().uuidString).log"])
+        guard case .ok = check.status else {
+            Issue.record("nothing on disk must mean nothing to report")
+            return
+        }
+    }
+
+    /// `Run` gates startup on `allOK`; an old log file must nag, not brick
+    /// the daemon.
+    @Test("a legacy log is a warning, never a failure")
+    func legacyLogNeverBlocksStartup() throws {
+        let dir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("doctor-legacy-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let log = dir.appendingPathComponent("parrot.err.log").path
+        try "x".write(toFile: log, atomically: true, encoding: .utf8)
+
+        #expect(DoctorReport.allOK([DoctorReport.checkLegacyLogs(paths: [log])]))
+    }
+
     @Test("the check agrees with the formatter it is reporting on")
     func checkAgreesWithAvailability() {
         let check = DoctorReport.checkOnDeviceFormatting()
