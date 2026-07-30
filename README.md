@@ -1,6 +1,38 @@
-# parrot
+# Ara (parrot)
 
-A minimal macOS dictation daemon. Push-to-talk, on-device transcription, text inserted at the cursor.
+A free macOS dictation daemon. Push-to-talk, on-device transcription, AI
+cleanup on an open model, text inserted at the cursor. A fork of
+[digimata/parrot](https://github.com/digimata/parrot), building toward
+[feature parity](#feature-parity) with the paid dictation apps — while
+staying free, local, and open.
+
+## The open-model approach
+
+Everything that touches your voice runs on your machine, on open-weights
+models, at no cost:
+
+- **Transcription** is Whisper (OpenAI's open speech model) running on the
+  Apple Neural Engine via WhisperKit. No audio leaves the Mac.
+- **Cleanup** — filler removal, punctuation, capitalisation, per-app tone —
+  is Qwen 2.5 (Alibaba's open 1.5B model, Apache-licensed) running locally
+  on MLX, Apple's ML framework. Measured on an M3 Pro it formats a sentence
+  in ~400 ms, well under the app's 2.5 s budget. No API key, no account, no
+  subscription, no server.
+- **Corrections** — the custom dictionary — are a deterministic pass over
+  the transcript, applied before any model sees it. Plain JSON on disk,
+  yours to edit.
+- **Fallbacks never lose your words.** If a model is missing, slow, or
+  wrong, the transcript falls through to rule-based cleanup and is typed
+  anyway. The language model is polish, not a dependency.
+
+Cloud engines exist as an *opt-in* (`engine: "cloud"` with your own key) and
+Apple Intelligence as another (`engine: "apple"`); the default install makes
+zero network requests for formatting. The paid competition inverts this:
+Wispr Flow sends every dictation — with surrounding screen context — to
+their servers, and SuperWhisper gates its larger models and translation
+behind a subscription. Ara's bet is that open models on Apple Silicon are
+already good enough that dictation software has no business charging rent
+or reading your screen.
 
 ## Install
 
@@ -13,6 +45,12 @@ parrot install --launch-at-login   # optional — runs in the background on logi
 **Requires:** macOS 14+ on Apple Silicon (M1 or newer). Transcription runs on the Apple Neural Engine via CoreML — so the installer refuses to run on Intel.
 
 The installer drops the binary in `/usr/local/bin/parrot`. Builds are unsigned for now, so the installer strips the quarantine xattr — once you've inspected the script you'll see exactly what it does.
+
+> **Fork note:** the curl installer above ships the *upstream* parrot binary.
+> Ara's additions — the local formatting engine, dictionary, microphone
+> picker — are currently source-only: use [Build from
+> source](#build-from-source) below. A signed Ara release pipeline is on the
+> roadmap.
 
 ## How to use
 
@@ -110,6 +148,35 @@ read fresh on every utterance, so a hand edit applies to the next dictation
 the same way a menu addition does. And like the config, a broken file never
 stops dictation: one `dictionary:` line on stderr, and corrections sit out
 until the file parses again.
+
+## Feature parity
+
+Where Ara stands against the two best-known paid dictation apps,
+[SuperWhisper](https://superwhisper.com) ($8.49/mo or $249 lifetime) and
+[Wispr Flow](https://wisprflow.ai) ($15/mo, cloud-only). Judged mid-2026;
+both move fast, so treat the paid columns as a snapshot.
+
+| Feature | SuperWhisper | Wispr Flow | Ara |
+|---|---|---|---|
+| Works fully offline | ✅ | ❌ never | ✅ **always, by default** |
+| Price | Free tier + paid | Free tier + paid | **Free, MIT, forever** |
+| Push-to-talk on a modifier key | ✅ | ✅ | ✅ |
+| AI cleanup (fillers, punctuation, caps) | ✅ paid models | ✅ cloud | ✅ local open model |
+| Per-app formatting modes | ✅ | ✅ | ✅ (default/email/chat/code) |
+| Custom dictionary / replacements | ✅ | ✅ | ✅ hot-reloaded JSON + menu |
+| Survives mic unplug mid-dictation | ❌ | partial | ✅ **keeps the utterance** |
+| Microphone picker | ✅ | ✅ auto | ✅ menu, persisted |
+| Auto-learning dictionary (correct once, remembered) | ❌ | ✅ | 🔜 planned, local-only |
+| History + search + reprocess | ✅ | partial | 🔜 planned, with retention controls |
+| Context awareness (selected text → cleanup) | ✅ | ✅ (cloud, incl. screenshots) | 🔜 planned, local-only |
+| Voice commands on selection ("make this shorter") | ❌ | ✅ paid | 🔜 planned |
+| Snippets (voice text expansion) | ❌ | ✅ | 🔜 planned |
+| Hands-free / locked dictation | ✅ | ✅ | 🔜 planned |
+| Multiple / multilingual models | ✅ paid | ✅ | 🔜 planned (translation will be free) |
+| Streaming preview while speaking | ✅ | ✅ | not yet |
+| Meeting recording + speaker separation | ✅ | ❌ | not planned |
+| iPhone | ✅ | ✅ | someday |
+| Sends your screen contents to a server | no | **yes, unless Privacy Mode** | **never — there is no server** |
 
 ## Stack
 
