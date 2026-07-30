@@ -184,6 +184,99 @@ struct LegacyLogsTests {
     }
 }
 
+/// Which binary the LaunchAgent is pointed at. Pure, because the interesting
+/// cases are machine states a test must not create: an `Ara.app` in
+/// /Applications, a stale `/usr/local/bin/ara` from the CLI-only era, and both
+/// at once.
+@Suite("InstallBinaryResolution")
+struct InstallBinaryResolutionTests {
+    /// The defect this exists to prevent. `Ara.app` ships an Info.plist —
+    /// `LSUIElement`, the microphone usage string, the bundle identifier TCC
+    /// files its permission grants under. `/usr/local/bin/ara` is a bare
+    /// executable with none of that, and on a machine upgrading from the CLI
+    /// it is also an *older build*. A login agent that runs it instead of the
+    /// app the user double-clicked is a different program with different
+    /// permissions.
+    @Test("running inside Ara.app pins the agent to the bundle's executable")
+    func bundleWinsOverCanonicalInstall() {
+        let bundled = "/Applications/Ara.app/Contents/MacOS/ara"
+        let resolved = Install.launchAgentBinary(
+            runningExecutable: bundled,
+            argv0: bundled,
+            isExecutable: { _ in true }   // the stale CLI copy is there too
+        )
+        #expect(resolved == bundled)
+    }
+
+    /// A bundle path is only preferred if it is really there — a stale
+    /// `Bundle.main.executableURL` must not send launchd after a deleted app.
+    @Test("a bundle path that is not executable falls through")
+    func nonExecutableBundleFallsThrough() {
+        let resolved = Install.launchAgentBinary(
+            runningExecutable: "/Applications/Ara.app/Contents/MacOS/ara",
+            argv0: "/usr/local/bin/ara",
+            isExecutable: { $0 == "/usr/local/bin/ara" }
+        )
+        #expect(resolved == "/usr/local/bin/ara")
+    }
+
+    /// The pre-bundle behaviour, unchanged: a `.build/release/ara` dev binary
+    /// still yields to the canonical install, because that is the copy that
+    /// will still be there after the checkout moves.
+    @Test("outside a bundle the canonical install still wins")
+    func canonicalInstallWinsOutsideABundle() {
+        let resolved = Install.launchAgentBinary(
+            runningExecutable: "/Users/x/ara/.build/release/ara",
+            argv0: "/Users/x/ara/.build/release/ara",
+            isExecutable: { _ in true }
+        )
+        #expect(resolved == "/usr/local/bin/ara")
+    }
+
+    @Test("with no canonical install the running executable is used")
+    func fallsBackToArgv0() {
+        let dev = "/Users/x/ara/.build/release/ara"
+        let resolved = Install.launchAgentBinary(
+            runningExecutable: dev,
+            argv0: dev,
+            isExecutable: { $0 == dev }
+        )
+        #expect(resolved == dev)
+    }
+
+    /// `argv[0]` is whatever the caller passed to exec: `./ara`, or a bare
+    /// `ara` found on PATH. A relative path in a launchd plist resolves
+    /// against launchd's working directory, not the user's.
+    @Test("a relative argv0 is never written into the plist")
+    func relativeArgv0IsRejected() {
+        // Nothing at the canonical path, so argv0 is the only candidate left —
+        // and it is still refused.
+        #expect(Install.launchAgentBinary(runningExecutable: nil, argv0: "ara",
+                                          isExecutable: { $0 == "ara" }) == nil)
+        #expect(Install.launchAgentBinary(runningExecutable: nil, argv0: "./ara",
+                                          isExecutable: { $0 == "./ara" }) == nil)
+    }
+
+    @Test("nothing executable anywhere resolves to nothing")
+    func nothingResolvesToNil() {
+        #expect(Install.launchAgentBinary(runningExecutable: "/Applications/Ara.app/Contents/MacOS/ara",
+                                          argv0: "/usr/local/bin/ara",
+                                          isExecutable: { _ in false }) == nil)
+    }
+
+    @Test("only a .app/Contents/MacOS layout counts as a bundle")
+    func bundleDetection() {
+        #expect(Install.isInsideAppBundle("/Applications/Ara.app/Contents/MacOS/ara"))
+        #expect(Install.isInsideAppBundle("/Users/x/Downloads/Ara.app/Contents/MacOS/ara"))
+        // A directory that merely ends in .app, with the binary loose inside.
+        #expect(!Install.isInsideAppBundle("/Applications/Ara.app/ara"))
+        #expect(!Install.isInsideAppBundle("/usr/local/bin/ara"))
+        #expect(!Install.isInsideAppBundle("/Users/x/Contents/MacOS/ara"))
+        // The literal string appearing mid-path is not a bundle boundary.
+        #expect(!Install.isInsideAppBundle("/opt/notanapp/Contents/MacOS/ara"))
+    }
+}
+
 @Suite("InstallStartNotice")
 struct InstallStartNoticeTests {
     /// The bug this pins: the menu used to claim "has started now"

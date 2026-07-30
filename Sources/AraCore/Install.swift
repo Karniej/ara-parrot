@@ -271,24 +271,79 @@ public struct Install: ParsableCommand {
     }
 
     private static func resolveBinaryPath() throws -> String {
-        // /usr/local/bin/ara is the canonical install path. Honor a real
-        // location if running from elsewhere (e.g. dev).
-        let candidate = "/usr/local/bin/ara"
-        if FileManager.default.isExecutableFile(atPath: candidate) {
-            return candidate
-        }
-        // Fall back to the running executable's resolved path.
-        let argv0 = CommandLine.arguments.first ?? "ara"
-        if argv0.hasPrefix("/"), FileManager.default.isExecutableFile(atPath: argv0) {
+        let resolved = launchAgentBinary(
+            runningExecutable: Bundle.main.executableURL?.resolvingSymlinksInPath().path,
+            argv0: CommandLine.arguments.first ?? "ara",
+            isExecutable: { FileManager.default.isExecutableFile(atPath: $0) }
+        )
+        guard let resolved else {
             FileHandle.standardError.write(Data(
-                "note: /usr/local/bin/ara not found; using \(argv0)\n".utf8
+                ("couldn't locate the ara binary. install Ara.app to /Applications, "
+                    + "or the binary to /usr/local/bin/ara, first.\n").utf8
             ))
+            throw ExitCode(1)
+        }
+        if resolved != canonicalInstall, !isInsideAppBundle(resolved) {
+            FileHandle.standardError.write(Data(
+                "note: \(canonicalInstall) not found; using \(resolved)\n".utf8
+            ))
+        }
+        return resolved
+    }
+
+    /// Where a CLI install puts the binary.
+    static let canonicalInstall = "/usr/local/bin/ara"
+
+    /// The path the LaunchAgent's `ProgramArguments[0]` should be. Pure, and
+    /// separated from `resolveBinaryPath` because every branch here is a
+    /// machine state a test must not create.
+    ///
+    /// **The bundle wins over `/usr/local/bin/ara`.** Those two are not
+    /// interchangeable copies of one program. `Ara.app` carries the
+    /// Info.plist — `LSUIElement`, the microphone usage sentence, and the
+    /// bundle identifier that TCC files the microphone and accessibility
+    /// grants under. Run the loose binary instead and macOS sees a different
+    /// principal with different (probably absent) permissions; on a machine
+    /// upgrading from the CLI-only era it is also an older build. Whichever
+    /// copy the user launched is the one "Start at Login" must bring back.
+    ///
+    /// Outside a bundle the old order stands: prefer the canonical install
+    /// over the running `.build/release/ara`, because a dev binary's path
+    /// stops existing the moment the checkout moves and launchd would go on
+    /// pointing at it forever.
+    static func launchAgentBinary(
+        runningExecutable: String?,
+        argv0: String,
+        isExecutable: (String) -> Bool
+    ) -> String? {
+        if let runningExecutable, isInsideAppBundle(runningExecutable),
+           isExecutable(runningExecutable) {
+            return runningExecutable
+        }
+        if isExecutable(canonicalInstall) {
+            return canonicalInstall
+        }
+        // `argv[0]` is whatever the caller handed exec — `./ara`, or a bare
+        // `ara` resolved off PATH. A relative path in the plist resolves
+        // against launchd's working directory, not the user's, so it is not a
+        // path at all for this purpose.
+        if argv0.hasPrefix("/"), isExecutable(argv0) {
             return argv0
         }
-        FileHandle.standardError.write(Data(
-            "couldn't locate the ara binary. install it to /usr/local/bin/ara first.\n".utf8
-        ))
-        throw ExitCode(1)
+        return nil
+    }
+
+    /// Whether the path is an executable inside an `.app`, i.e. ends in
+    /// `<something>.app/Contents/MacOS/<binary>`. Checked structurally rather
+    /// than by substring so a directory that merely contains "Contents/MacOS"
+    /// is not mistaken for a bundle.
+    static func isInsideAppBundle(_ path: String) -> Bool {
+        let components = URL(fileURLWithPath: path).pathComponents
+        guard components.count >= 4 else { return false }
+        let macOS = components[components.count - 2]
+        let contents = components[components.count - 3]
+        let bundle = components[components.count - 4]
+        return macOS == "MacOS" && contents == "Contents" && bundle.hasSuffix(".app")
     }
 
     private static func uid() -> uid_t { getuid() }
