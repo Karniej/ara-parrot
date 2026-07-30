@@ -17,6 +17,12 @@ public final class MenuBarController {
     /// `nil` for "System default". Invoked on the main thread by AppKit.
     public var onMicrophonePicked: ((String?) -> Void)?
 
+    /// The user submitted the "Add dictionary correction…" form with both
+    /// fields filled in: what dictation heard, and what it should have typed.
+    /// Both arrive trimmed and non-empty — an empty field never gets here.
+    /// Invoked on the main thread by AppKit.
+    public var onCorrectionAdded: ((_ heard: String, _ canonical: String) -> Void)?
+
     /// - Parameter modeID: The mode the daemon starts in. Modes are resolved per
     ///   utterance — the frontmost application can change the answer — so this is
     ///   only the initial value; `setMode` keeps the label honest afterwards.
@@ -47,6 +53,14 @@ public final class MenuBarController {
         microphoneSubmenu.autoenablesItems = false
         microphoneItem.submenu = microphoneSubmenu
         menu.addItem(microphoneItem)
+
+        let addCorrection = NSMenuItem(
+            title: "Add dictionary correction…",
+            action: #selector(addCorrectionClicked),
+            keyEquivalent: ""
+        )
+        addCorrection.target = self
+        menu.addItem(addCorrection)
 
         menu.addItem(.separator())
 
@@ -124,6 +138,56 @@ public final class MenuBarController {
 
     @objc private func microphoneClicked(_ sender: NSMenuItem) {
         onMicrophonePicked?(sender.representedObject as? String)
+    }
+
+    /// The "heard → should be" form: an `NSAlert` with two text fields as its
+    /// accessory view. Deliberately the thinnest possible AppKit — no window,
+    /// no xib, single-binary — over the merge logic in
+    /// `LocalDictionary.adding`, which is where the behaviour (and the tests)
+    /// live. This method only collects two trimmed strings; an empty field
+    /// means the callback is never invoked.
+    @objc private func addCorrectionClicked() {
+        let heardField = NSTextField(frame: NSRect(x: 98, y: 34, width: 190, height: 24))
+        heardField.placeholderString = "what dictation typed"
+        let canonicalField = NSTextField(frame: NSRect(x: 98, y: 2, width: 190, height: 24))
+        canonicalField.placeholderString = "what it should be"
+
+        let heardLabel = NSTextField(labelWithString: "Heard:")
+        heardLabel.alignment = .right
+        heardLabel.frame = NSRect(x: 0, y: 38, width: 92, height: 17)
+        let canonicalLabel = NSTextField(labelWithString: "Should be:")
+        canonicalLabel.alignment = .right
+        canonicalLabel.frame = NSRect(x: 0, y: 6, width: 92, height: 17)
+
+        let accessory = NSView(frame: NSRect(x: 0, y: 0, width: 292, height: 60))
+        accessory.addSubview(heardLabel)
+        accessory.addSubview(heardField)
+        accessory.addSubview(canonicalLabel)
+        accessory.addSubview(canonicalField)
+
+        let alert = NSAlert()
+        alert.messageText = "Add dictionary correction"
+        alert.informativeText = "When dictation hears the first, it types the "
+            + "second — whole words, any capitalisation. Applies from the "
+            + "next utterance."
+        alert.addButton(withTitle: "Add")
+        alert.addButton(withTitle: "Cancel")
+        alert.accessoryView = accessory
+        alert.window.initialFirstResponder = heardField
+        heardField.nextKeyView = canonicalField
+        canonicalField.nextKeyView = heardField
+
+        // The daemon is an `.accessory` app: without activation the alert
+        // appears behind the frontmost app and the fields never get focus.
+        NSApp.activate(ignoringOtherApps: true)
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+
+        let heard = heardField.stringValue
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let canonical = canonicalField.stringValue
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !heard.isEmpty, !canonical.isEmpty else { return }
+        onCorrectionAdded?(heard, canonical)
     }
 
     private func configureButton(recording: Bool) {

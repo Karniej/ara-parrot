@@ -193,6 +193,15 @@ struct Run: ParsableCommand {
                               modeID: startingMode)
         }
 
+        // The dictionary itself is loaded per utterance — that is the entire
+        // hot-reload mechanism — so the menu form has no session to poke: it
+        // merges into the file and the next dictation reads it. The backlog
+        // exists for saves that fail; those corrections overlay every load
+        // until quit, the same "applies until quit" contract as a microphone
+        // pick whose config write failed.
+        let dictionaryURL = LocalDictionary.defaultURL
+        let unsavedCorrections = UnsavedCorrections()
+
         // The submenu's contents are computed by `MicrophoneMenuModel.compute`
         // (unit-tested); this closure only ferries store state to the shell.
         let refreshMicrophoneMenu: @MainActor () -> Void = {
@@ -218,6 +227,28 @@ struct Run: ParsableCommand {
                         ?? "\(type(of: error))"
                     FileHandle.standardError.write(Data(
                         "config: microphone choice not saved (\(reason)); it applies until quit\n"
+                            .utf8))
+                }
+            }
+            menuBar.onCorrectionAdded = { heard, canonical in
+                // Merge against a fresh load — the file may have been
+                // hand-edited since the last utterance — plus any earlier
+                // corrections whose write failed.
+                let onDisk = LocalDictionary.load(from: dictionaryURL)
+                let merged = unsavedCorrections.applied(to: onDisk)
+                    .adding(heard: heard, canonical: canonical)
+                // The file already says all of this (the correction exists,
+                // and there is no backlog to land): no write, no churn.
+                guard merged != onDisk else { return }
+                do {
+                    try merged.write(to: dictionaryURL)
+                    // The write carried the backlog with it; forgetting it is
+                    // what lets a later hand edit of the file win again.
+                    unsavedCorrections.clear()
+                } catch {
+                    unsavedCorrections.remember(heard: heard, canonical: canonical)
+                    FileHandle.standardError.write(Data(
+                        "dictionary: correction not saved (\(type(of: error))); it applies until quit\n"
                             .utf8))
                 }
             }
@@ -266,6 +297,10 @@ struct Run: ParsableCommand {
             mlx: mlx,
             apple: Pipeline.appleFormatter(),
             registry: registry,
+            dictionary: {
+                unsavedCorrections.applied(
+                    to: LocalDictionary.load(from: dictionaryURL))
+            },
             onModeResolved: { resolved in
                 Task { @MainActor in menuBar.setMode(resolved.id) }
             })
