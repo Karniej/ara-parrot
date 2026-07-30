@@ -52,6 +52,34 @@ records a result.
    | `unknown mode in config: …` | the `mode` key in `config.json` names a mode that does not exist; the daemon warns and continues on `default` |
    | `config: …` | the config file was ignored, or a value in it was out of range. **Any line starting `config:` means part of your file did not take effect** |
 
+## 0bis. First launch shows its warm-up
+
+The menu bar item is created **before** the models load, and the hotkey arms
+only **after** they are warm. Between the two, the state line is the only
+indication the daemon is alive — for a LaunchAgent user with no terminal it is
+the whole first-launch experience.
+
+- [ ] 👤 **0bis-a.** Start the daemon. The menu bar bird must appear
+      immediately — before any `✓ … ready` line — and its state line must read
+      `warming up models…`. Holding the hotkey during this window must do
+      nothing (no `● recording`, no overlay): the hotkey is not armed until
+      warm-up completes, by design.
+- [ ] 👤 **0bis-b.** With the default `mlx` engine and both models on disk,
+      the log must show, in order: `loading whisper-… ` then
+      `✓ whisper-… ready`, then `loading mlx-community/… (formatting — the
+      first run can take a while)...` then `✓ mlx-community/… ready (N.Ns)`,
+      then `listening on …`. On a genuinely first run the whisper gap is
+      download-sized; the menu item must be present and its menu openable the
+      whole time.
+- [ ] 👤 **0bis-c.** The moment `listening on …` prints, the state line must
+      flip to `idle · hold … to dictate`, and the next hotkey hold must record
+      normally.
+- [ ] **0bis-d.** Transcriber warm-up failure is still fatal: with the whisper
+      model absent and the network off, the daemon must print
+      `warmup failed: …` and exit nonzero (the menu bar item disappears with
+      it). A failed *formatter* warm-up must instead print the
+      `! local formatting unavailable:` warning and keep running — see 2bis-c.
+
 ## 1. Verbatim mode does no rewriting
 
 - [ ] 👤 **1a.** With the daemon started as in step 0.3, open the menu bar item.
@@ -101,11 +129,12 @@ scripts/build-metallib.sh                            # SwiftPM cannot compile Me
 ```
 
 - [ ] 👤 **2bis-a.** Start the daemon as in step 0.3 but with `--mode default`
-      and no `engine` key in the config (the default is `mlx`). Startup takes a
-      few seconds longer than section 0 describes: the formatting model loads
-      **and runs a priming generation** before the hotkey loop, by design — the
+      and no `engine` key in the config (the default is `mlx`). Readiness takes
+      a few seconds longer than section 0 describes: the formatting model loads
+      **and runs a priming generation** before the hotkey arms, by design — the
       first real generation after a load pays a one-time Metal pipeline cost
-      that must not land on the first utterance. Dictate
+      that must not land on the first utterance. The menu bar item is up and
+      reads `warming up models…` throughout (section 0bis). Dictate
       *"um so i think uh we should ship it friday"*. The injected text must be
       a capitalised, punctuated sentence with the fillers gone, and **no**
       `formatting:` line must appear.
