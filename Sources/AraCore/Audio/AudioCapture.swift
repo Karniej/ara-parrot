@@ -1,35 +1,220 @@
 import AVFoundation
+import AudioToolbox
+import CoreAudio
 import Foundation
 
 /// Captures microphone audio while recording is active and returns a 16 kHz
 /// mono Float32 buffer when stopped. Format-converts on the fly so callers
 /// don't have to worry about the input device's native rate.
+///
+/// ## No audio path may kill the daemon
+///
+/// `installTap` raises an ObjC exception Swift cannot catch when handed the
+/// format a dead device reports — zero channels, zero sample rate. Every path
+/// into AVFoundation therefore validates the probed format first, making the
+/// exception unreachable; every failure is a thrown `CaptureError` instead.
+///
+/// ## Device routing is per-engine
+///
+/// `deviceProvider` supplies the input device (Task 2 wires it to
+/// `MicrophoneStore`); routing sets the input unit's current-device property
+/// on *this* engine and never touches the system default input.
+///
+/// ## Mid-recording device loss
+///
+/// A device that dies mid-recording fires the engine's configuration-change
+/// notification. The handler tears the engine down, re-resolves through
+/// `deviceProvider`, and resumes capturing into the *same* samples buffer; if
+/// nothing usable remains it degrades to a state where `stop()` still returns
+/// everything captured so far. Captured audio is never lost.
+///
+/// ## The seam
+///
+/// Everything the class does to AVFoundation goes through a `Backend` — a
+/// struct of function values built by an injected factory, one backend per
+/// engine lifetime. Tests substitute recording fakes and drive the production
+/// `start`/`stop`/`handleConfigurationChange` bodies; the public initializer
+/// wires the real `AVAudioEngine`.
 public final class AudioCapture {
     enum CaptureError: Error {
         case engineStartFailed(Error)
         case converterCreationFailed
+        /// The input device's format cannot carry audio — the state a dead or
+        /// missing device reports, and the one `installTap` would crash on.
+        case invalidInputFormat(channels: UInt32, sampleRate: Double)
+        /// Setting the input unit's current device failed.
+        case deviceRoutingFailed(OSStatus)
     }
 
     public static let targetSampleRate: Double = 16_000
 
-    private let engine = AVAudioEngine()
-    private var converter: AVAudioConverter?
+    /// One engine's lifetime of AVFoundation operations, as function values.
+    /// A rebuild discards the whole struct and makes a fresh one, so closures
+    /// may (and in production do) close over a single `AVAudioEngine`.
+    struct Backend {
+        let inputFormat: () -> AVAudioFormat
+        let setInputDevice: (AudioDeviceID) throws -> Void
+        let installTap: (AVAudioFormat, @escaping (AVAudioPCMBuffer) -> Void) -> Void
+        let removeTap: () -> Void
+        let startEngine: () throws -> Void
+        let stopEngine: () -> Void
+        /// Releases everything registered at build time (the configuration-
+        /// change observer). Must be safe to call whether or not the engine
+        /// ever started.
+        let tearDown: () -> Void
+    }
+
+    /// The factory's argument is what a configuration-change notification
+    /// invokes; the returned backend owns the registration.
+    typealias MakeBackend = (@escaping () -> Void) -> Backend
+
+    private enum State {
+        case idle
+        case recording
+        /// Recording continued past the death of every usable device: the tap
+        /// is gone but the samples are kept for `stop()`.
+        case degraded
+    }
+
+    private let makeBackend: MakeBackend
+    private var backend: Backend?
+    private var state: State = .idle
     private var samples: [Float] = []
-    private var isRecording = false
     private let lock = NSLock()
+
+    /// Guards `state`/`backend`. Separate from `lock` (the samples lock) so
+    /// the audio tap, which only ever takes `lock`, can never contend with —
+    /// or deadlock against — a control operation. Control operations never
+    /// run on the audio thread.
+    private let stateLock = NSLock()
+
+    /// The rebuild hop. The configuration-change notification is delivered
+    /// synchronously on whatever thread posts it — possibly one the teardown
+    /// itself needs — so the handler always bounces through this queue rather
+    /// than re-entering `stateLock`.
+    private let rebuildQueue = DispatchQueue(label: "ara.audio-capture.rebuild")
+
+    /// Supplies the device to record from; consulted at `start` and again on
+    /// every mid-recording rebuild. `nil` (or no provider) leaves the engine
+    /// on the system default input. Task 2 wires this to
+    /// `MicrophoneStore.effective`. Set before the first `start`.
+    public var deviceProvider: (() -> AudioDeviceID?)?
 
     /// Called for every audio buffer with the buffer's RMS level (0…~1).
     /// Invoked on an arbitrary thread; hop to main if you touch UI.
     public var onLevel: ((Float) -> Void)?
 
-    public init() {}
+    public init() {
+        self.makeBackend = AudioCapture.liveBackend
+    }
+
+    init(makeBackend: @escaping MakeBackend) {
+        self.makeBackend = makeBackend
+    }
+
+    deinit {
+        backend?.tearDown()
+    }
 
     /// Begin recording. Idempotent — calling while already recording is a no-op.
     public func start() throws {
-        guard !isRecording else { return }
+        stateLock.lock()
+        defer { stateLock.unlock() }
+        guard state == .idle else { return }
 
-        let input = engine.inputNode
-        let inputFormat = input.outputFormat(forBus: 0)
+        lock.lock()
+        samples.removeAll(keepingCapacity: true)
+        lock.unlock()
+
+        let backend = newBackend()
+        do {
+            try startRecording(on: backend, device: deviceProvider?())
+        } catch {
+            backend.tearDown()
+            throw error
+        }
+        self.backend = backend
+        state = .recording
+    }
+
+    /// Stop recording and return all captured samples (16 kHz mono Float32).
+    /// Returns whatever was captured even when the device died mid-recording.
+    @discardableResult
+    public func stop() -> [Float] {
+        stateLock.lock()
+        guard state != .idle else {
+            stateLock.unlock()
+            return []
+        }
+        if let backend {
+            // Observer first: a stopping engine may post a configuration
+            // change, and a rebuild triggered by our own teardown would
+            // resurrect the recording `stop` is ending.
+            backend.tearDown()
+            backend.removeTap()
+            backend.stopEngine()
+        }
+        backend = nil
+        state = .idle
+        stateLock.unlock()
+
+        lock.lock()
+        let captured = samples
+        samples.removeAll(keepingCapacity: true)
+        lock.unlock()
+        return captured
+    }
+
+    // MARK: - Mid-recording rebuild
+
+    /// The rebuild decision, runnable without hardware: tear down the dead
+    /// engine, re-resolve through `deviceProvider`, and resume into the same
+    /// samples buffer — or degrade, keeping what was captured, when nothing
+    /// usable remains. Production reaches this via `rebuildQueue` from the
+    /// engine's configuration-change notification; tests call it directly.
+    func handleConfigurationChange() {
+        stateLock.lock()
+        defer { stateLock.unlock() }
+        guard state == .recording, let old = backend else { return }
+
+        old.tearDown()
+        old.removeTap()
+        old.stopEngine()
+        backend = nil
+
+        let fresh = newBackend()
+        do {
+            try startRecording(on: fresh, device: deviceProvider?())
+            backend = fresh
+            // state stays .recording; the tap appends to the same buffer.
+        } catch {
+            fresh.tearDown()
+            state = .degraded
+        }
+    }
+
+    // MARK: - Shared start path
+
+    private func newBackend() -> Backend {
+        makeBackend { [weak self] in
+            guard let self else { return }
+            self.rebuildQueue.async { self.handleConfigurationChange() }
+        }
+    }
+
+    /// Routes, validates, converts, taps, starts — in that order. Routing
+    /// first because it changes what the probe sees; validation before the
+    /// tap because that is the crash fix.
+    private func startRecording(on backend: Backend, device: AudioDeviceID?) throws {
+        if let device {
+            try backend.setInputDevice(device)
+        }
+
+        let inputFormat = backend.inputFormat()
+        guard inputFormat.channelCount > 0, inputFormat.sampleRate > 0 else {
+            throw CaptureError.invalidInputFormat(
+                channels: inputFormat.channelCount, sampleRate: inputFormat.sampleRate)
+        }
 
         let targetFormat = AVAudioFormat(
             commonFormat: .pcmFormatFloat32,
@@ -37,45 +222,69 @@ public final class AudioCapture {
             channels: 1,
             interleaved: false
         )!
-
         guard let converter = AVAudioConverter(from: inputFormat, to: targetFormat) else {
             throw CaptureError.converterCreationFailed
         }
-        self.converter = converter
 
-        lock.lock()
-        samples.removeAll(keepingCapacity: true)
-        lock.unlock()
-
-        // Tap with input format; convert inside the callback.
-        input.installTap(onBus: 0, bufferSize: 4096, format: inputFormat) { [weak self] buffer, _ in
+        // Tap with input format; convert inside the callback. The converter is
+        // per-backend: a rebuild makes a new one for the new device's native
+        // format.
+        backend.installTap(inputFormat) { [weak self] buffer in
             self?.process(buffer: buffer, converter: converter, targetFormat: targetFormat)
         }
-
-        engine.prepare()
         do {
-            try engine.start()
+            try backend.startEngine()
         } catch {
-            input.removeTap(onBus: 0)
+            backend.removeTap()
             throw CaptureError.engineStartFailed(error)
         }
-
-        isRecording = true
     }
 
-    /// Stop recording and return all captured samples (16 kHz mono Float32).
-    @discardableResult
-    public func stop() -> [Float] {
-        guard isRecording else { return [] }
-        engine.stop()
-        engine.inputNode.removeTap(onBus: 0)
-        isRecording = false
+    // MARK: - The real engine
 
-        lock.lock()
-        let captured = samples
-        samples.removeAll(keepingCapacity: true)
-        lock.unlock()
-        return captured
+    private static func liveBackend(onConfigurationChange: @escaping () -> Void) -> Backend {
+        let engine = AVAudioEngine()
+        // Registered per engine (`object: engine`), so a notification can only
+        // ever describe this backend's device. Delivery is synchronous on the
+        // posting thread (`queue: nil`); the capture's wiring hops queues.
+        let observer = NotificationCenter.default.addObserver(
+            forName: .AVAudioEngineConfigurationChange,
+            object: engine,
+            queue: nil
+        ) { _ in onConfigurationChange() }
+
+        return Backend(
+            inputFormat: { engine.inputNode.outputFormat(forBus: 0) },
+            setInputDevice: { deviceID in
+                // Per-engine routing via the input unit's current-device
+                // property; the system default input is never written.
+                guard let unit = engine.inputNode.audioUnit else {
+                    throw CaptureError.deviceRoutingFailed(kAudio_ParamError)
+                }
+                var id = deviceID
+                let status = AudioUnitSetProperty(
+                    unit,
+                    kAudioOutputUnitProperty_CurrentDevice,
+                    kAudioUnitScope_Global,
+                    0,
+                    &id,
+                    UInt32(MemoryLayout<AudioDeviceID>.size))
+                guard status == noErr else {
+                    throw CaptureError.deviceRoutingFailed(status)
+                }
+            },
+            installTap: { format, handler in
+                engine.inputNode.installTap(onBus: 0, bufferSize: 4096, format: format) {
+                    buffer, _ in handler(buffer)
+                }
+            },
+            removeTap: { engine.inputNode.removeTap(onBus: 0) },
+            startEngine: {
+                engine.prepare()
+                try engine.start()
+            },
+            stopEngine: { engine.stop() },
+            tearDown: { NotificationCenter.default.removeObserver(observer) })
     }
 
     private func process(
