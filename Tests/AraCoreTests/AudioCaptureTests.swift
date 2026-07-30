@@ -395,6 +395,40 @@ struct AudioCaptureTests {
         _ = capture.stop()
     }
 
+    // MARK: - Transition reporting
+
+    /// What the daemon's UI needs to hear: the moment recording effectively
+    /// stalls (every usable device gone) and the moment it comes back. A
+    /// healthy rebuild is silent — the user never noticed anything — and so
+    /// is a failed retry, whose next chance is the next device change.
+    @Test("degrade and recovery are reported; healthy rebuilds and failed retries are silent")
+    func transitionsReported() throws {
+        let first = FakeEngine(format: Self.live48kMono)
+        let second = FakeEngine(format: Self.live48kMono)  // healthy rebuild
+        let third = FakeEngine(format: Self.dead)  // degrade
+        let fourth = FakeEngine(format: Self.dead)  // failed retry
+        let fifth = FakeEngine(format: Self.live48kMono)  // recovery
+        let capture = Harness([first, second, third, fourth, fifth]).capture()
+        nonisolated(unsafe) var transitions: [AudioCapture.Transition] = []
+        capture.onTransition = { transitions.append($0) }
+
+        try capture.start()
+        capture.handleConfigurationChange()  // healthy rebuild → silent
+        #expect(transitions.isEmpty)
+
+        capture.handleConfigurationChange()  // dead probe → degraded
+        #expect(transitions == [.degraded])
+
+        capture.handleRetryIfDegraded()  // still nothing usable → silent
+        #expect(transitions == [.degraded])
+
+        capture.handleRetryIfDegraded()  // a device returned
+        #expect(transitions == [.degraded, .resumed])
+
+        _ = capture.stop()  // a normal stop is not a transition
+        #expect(transitions == [.degraded, .resumed])
+    }
+
     // MARK: - Stale notifications
 
     /// A dying engine's notification is *enqueued* before `stop()` removes

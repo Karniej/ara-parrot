@@ -242,6 +242,22 @@ struct Run: ParsableCommand {
                 }
             }
         }
+        // Mid-utterance loss and recovery, from the capture itself. Without
+        // this, a degrade is invisible: the overlay keeps animating bars over
+        // silence and the menu keeps claiming "● recording". Fired on the
+        // capture's rebuild queue — hop before UI.
+        capture.onTransition = { transition in
+            Task { @MainActor in
+                switch transition {
+                case .degraded:
+                    overlay?.show(.error("no microphone"))
+                    menuBar.setNoMicrophone()
+                case .resumed:
+                    overlay?.show(.recording)
+                    menuBar.setRecording(true)
+                }
+            }
+        }
 
         let modeOverride = mode
         let session = Pipeline.makeSession(

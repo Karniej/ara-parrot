@@ -118,6 +118,18 @@ public final class AudioCapture {
     /// Invoked on an arbitrary thread; hop to main if you touch UI.
     public var onLevel: ((Float) -> Void)?
 
+    /// The mid-utterance transitions the UI must reflect: `.degraded` when a
+    /// loss leaves nothing to record from — the overlay and menu must stop
+    /// claiming "recording" — and `.resumed` when a later device change
+    /// brings recording back. Healthy rebuilds are silent (the user never
+    /// noticed anything), and so are failed retries. Invoked on an arbitrary
+    /// thread; hop to main if you touch UI.
+    public enum Transition: Equatable, Sendable {
+        case degraded
+        case resumed
+    }
+    public var onTransition: ((Transition) -> Void)?
+
     public init() {
         self.makeBackend = AudioCapture.liveBackend
     }
@@ -193,10 +205,12 @@ public final class AudioCapture {
     /// recording now.
     func handleConfigurationChange(generation: UInt64? = nil) {
         stateLock.lock()
-        defer { stateLock.unlock() }
         guard state == .recording, let old = backend,
               generation == nil || generation == self.generation
-        else { return }
+        else {
+            stateLock.unlock()
+            return
+        }
 
         old.tearDown()
         old.removeTap()
@@ -204,6 +218,7 @@ public final class AudioCapture {
         backend = nil
 
         let fresh = newBackend()
+        var lost = false
         do {
             try startRecording(on: fresh, device: deviceProvider?())
             backend = fresh
@@ -211,7 +226,12 @@ public final class AudioCapture {
         } catch {
             fresh.tearDown()
             state = .degraded
+            lost = true
         }
+        // The callback runs outside the lock: it is client code and may call
+        // back into a control operation (`stop`, another retry).
+        stateLock.unlock()
+        if lost { onTransition?(.degraded) }
     }
 
     // MARK: - Recovery from degraded
@@ -234,18 +254,25 @@ public final class AudioCapture {
     /// `handleConfigurationChange`).
     func handleRetryIfDegraded() {
         stateLock.lock()
-        defer { stateLock.unlock() }
-        guard state == .degraded else { return }
+        guard state == .degraded else {
+            stateLock.unlock()
+            return
+        }
 
+        var resumed = false
         let fresh = newBackend()
         do {
             try startRecording(on: fresh, device: deviceProvider?())
             backend = fresh
             state = .recording
+            resumed = true
         } catch {
             fresh.tearDown()
             // Still degraded; the next store change retries.
         }
+        // Outside the lock, same reason as in `handleConfigurationChange`.
+        stateLock.unlock()
+        if resumed { onTransition?(.resumed) }
     }
 
     // MARK: - Shared start path
