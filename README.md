@@ -73,6 +73,33 @@ the pill reads "no microphone" and everything captured so far is kept —
 plugging a mic in before you release the key resumes the same utterance, and
 releasing transcribes what was captured up to the loss.
 
+### Dictionary
+
+Whisper will mishear the same words every time — your name, your product,
+your city. The dictionary fixes those deterministically, before any
+formatting engine runs: menu bar item → **Add dictionary correction…**, type
+what dictation heard and what it should have typed, done. The very next
+utterance is corrected — no restart, nothing to reload.
+
+Corrections live at `~/.config/ara/dictionary.json`, next to the config, and
+the file is meant to be hand-edited too — it is written pretty-printed with
+stable ordering for exactly that reason:
+
+```json
+[
+  {"canonical": "Ara", "variants": ["arra", "aara"]},
+  {"canonical": "Kraków", "variants": ["krakuf"]}
+]
+```
+
+Matching is case-insensitive and whole-word only (`arra` never fires inside
+`arrabbiata`), and the canonical is inserted exactly as written — the
+dictionary is the authority on spelling, capitalisation included. The file is
+read fresh on every utterance, so a hand edit applies to the next dictation
+the same way a menu addition does. And like the config, a broken file never
+stops dictation: one `dictionary:` line on stderr, and corrections sit out
+until the file parses again.
+
 ## Stack
 
 - **Swift** — single SPM executable target

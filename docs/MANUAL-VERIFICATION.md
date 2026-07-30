@@ -48,6 +48,7 @@ records a result.
    | `⨯ <time> · cancelled; nothing injected` | the request was withdrawn mid-format and nothing was typed. Unreachable today (see section 9) |
    | `formatting: …` | the chain fell through from one engine to the next |
    | `dictation: …` | the session itself fell back to the raw transcript |
+   | `dictionary: …` | `dictionary.json` could not be read or parsed and corrections are sitting out, or a menu-added correction could not be written back to it |
    | `unknown mode in config: …` | the `mode` key in `config.json` names a mode that does not exist; the daemon warns and continues on `default` |
    | `config: …` | the config file was ignored, or a value in it was out of range. **Any line starting `config:` means part of your file did not take effect** |
 
@@ -520,6 +521,49 @@ built-in one.
       no engine restarts; the next utterance simply resolves against whatever
       is connected then.
 
+## 9quater. The custom dictionary: menu, hand edits, and a broken file
+
+The engine is tested end to end — the merge, the whole-word replacement, the
+per-utterance reload, the tolerant load, the write round-trip, and that the
+session the daemon builds consults it upstream of every engine. What no test
+can do is click the menu item, type into the alert, or speak a misheard word;
+that human half is below. `--mode verbatim` keeps the language model out of
+the way so any correction seen is unambiguously the dictionary's.
+
+- [ ] 👤 **9q-a. A menu correction reaches the next utterance.** With the
+      daemon running, open the menu bar item → **Add dictionary correction…**.
+      An alert with two fields must appear *in front* (the daemon has no dock
+      icon, so this needs the explicit activation the code does). Enter a word
+      Whisper reliably gets wrong for you — or something easy to force, e.g.
+      heard `parrot`, should be `Parrot MAX` — click **Add**, then dictate a
+      sentence containing the heard form. The canonical must be typed at the
+      cursor, with the canonical's exact capitalisation, and
+      `cat ~/.config/ara/dictionary.json` must show the entry, pretty-printed.
+      No restart anywhere in this flow.
+- [ ] 👤 **9q-b. Empty fields do nothing.** Open the form and click **Add**
+      with both fields empty, then again with only one filled. No entry may
+      appear in the file (if the file did not exist, it must still not exist)
+      and nothing may change about dictation. **Cancel** likewise.
+- [ ] 👤 **9q-c. A hand edit applies to the very next utterance.** With the
+      daemon still running, edit `~/.config/ara/dictionary.json` in a text
+      editor — change a canonical, or add an entry — save, and dictate the
+      variant. The edited spelling must be typed. The file is read fresh per
+      utterance, so there must be no restart and no delay beyond the next
+      dictation.
+- [ ] 👤 **9q-d. A broken file is loud once, and harmless.** Truncate the file
+      mid-entry (e.g. delete the closing `]`), then dictate several times.
+      Every utterance must still type — uncorrected — and the log must show
+      **exactly one** `dictionary: ignoring …/dictionary.json: …` line, not
+      one per utterance. Fix the file: the next utterance is corrected again,
+      with no restart. Break it a second time: one fresh warning, because a
+      repaired file resets the ledger.
+- [ ] 👤 **9q-e. Adding merges, never clobbers.** With a hand-written entry
+      already in the file, add a *different* correction through the menu.
+      The file must afterwards contain both — the menu writes a merge of what
+      it just loaded, so a hand edit made seconds earlier survives. Adding
+      the same variant to the same canonical again must leave the file
+      byte-identical (no churn to `git diff` if you keep the file in a repo).
+
 ## 10. Judgement calls to make with real dictation
 
 These are not pass/fail; they need a human's ear over a few days of real use.
@@ -564,6 +608,19 @@ submenu's titles, checks, and status lines for every store state; and that
 persisting a menu pick rewrites only the `microphone` key, preserving keys
 the binary does not know about. Only the physical unplug (section 9ter) is
 manual.
+
+✅ For the dictionary: whole-word replacement with Unicode-aware boundaries
+(Polish diacritics block a match), case-insensitive matching with the
+canonical inserted verbatim, longest-variant-first across entries, the
+single-pass no-chaining guarantee, literal `$` in canonicals; tolerant
+per-utterance loading with once-per-failure warnings that reset when the file
+is repaired; the menu's merge (`adding`) — trim, empty-field no-ops,
+case- and diacritic-insensitive canonical dedupe, variants moving between
+canonicals, emptied entries dropped; the stable pretty encoding and the
+write→load round trip; the unsaved-corrections overlay for failed writes; and
+that the session the daemon assembles corrects upstream of every engine,
+verbatim mode and engine `.off` included. Only the AppKit alert and the
+spoken end-to-end path (section 9quater) are manual.
 
 One hardware check is automated but opt-in, because it needs a working input
 device and microphone permission: `PARROT_AUDIO_HW=1 swift test --filter
