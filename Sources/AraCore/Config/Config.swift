@@ -79,6 +79,21 @@ public struct Config: Codable, Sendable {
     public var model: String?
     public var cloud: CloudConfig?
 
+    /// Core Audio UID of the preferred input device, or `nil` for the system
+    /// default. A UID rather than a name or numeric ID because it is the one
+    /// identifier that survives replug and reboot; `MicrophoneStore` resolves
+    /// it against the connected devices and falls back when it is absent.
+    public var microphone: String?
+
+    /// Set during decoding when `microphone` was present but not a string;
+    /// `load` turns it into the warning. Deferred rather than printed in
+    /// `init(from:)` because the decoder does not know the file path or the
+    /// caller's `warn` sink — and unlike every other key, a garbage
+    /// `microphone` must not throw: throwing discards the whole file, which
+    /// would turn a typo in a routing preference into losing the cloud
+    /// section. Catching locally keeps the siblings.
+    var microphoneProblem: String?
+
     public init() {}
 
     /// The floor `timeoutMs` is clamped to.
@@ -133,6 +148,10 @@ public struct Config: Codable, Sendable {
             return Config()
         }
 
+        if let problem = config.microphoneProblem {
+            warn("ignoring microphone in \(target.path): \(problem); using the default input")
+            config.microphoneProblem = nil
+        }
         if config.timeoutMs < minimumTimeoutMs {
             warn("timeoutMs \(config.timeoutMs) in \(target.path) is below the "
                  + "\(minimumTimeoutMs)ms minimum — using \(minimumTimeoutMs). "
@@ -171,7 +190,7 @@ public struct Config: Codable, Sendable {
     }
 
     private enum CodingKeys: String, CodingKey {
-        case engine, timeoutMs, mode, hotkey, model, cloud
+        case engine, timeoutMs, mode, hotkey, model, cloud, microphone
     }
 
     public init(from decoder: Decoder) throws {
@@ -182,5 +201,12 @@ public struct Config: Codable, Sendable {
         hotkey = try c.decodeIfPresent(String.self, forKey: .hotkey)
         model = try c.decodeIfPresent(String.self, forKey: .model)
         cloud = try c.decodeIfPresent(CloudConfig.self, forKey: .cloud)
+        do {
+            microphone = try c.decodeIfPresent(String.self, forKey: .microphone)
+        } catch {
+            // See `microphoneProblem`: unset, remembered, never rethrown.
+            microphone = nil
+            microphoneProblem = Config.describe(error)
+        }
     }
 }

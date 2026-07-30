@@ -156,6 +156,61 @@ struct ConfigTests {
         #expect(cfg.hotkey == "right-command")
     }
 
+    // MARK: - microphone
+
+    @Test("microphone decodes when present")
+    func microphonePresent() {
+        let warnings = Warnings()
+        let cfg = Config.load(
+            from: write(#"{"microphone":"AppleUSBAudioEngine:Blue:Yeti:123:1"}"#),
+            warn: warnings.sink)
+        #expect(cfg.microphone == "AppleUSBAudioEngine:Blue:Yeti:123:1")
+        #expect(warnings.lines.isEmpty)
+    }
+
+    @Test("microphone defaults to unset when absent")
+    func microphoneAbsent() {
+        #expect(Config.load(from: write("{}")).microphone == nil)
+    }
+
+    @Test("a null microphone is unset and silent")
+    func microphoneNull() {
+        let warnings = Warnings()
+        let cfg = Config.load(from: write(#"{"microphone":null}"#), warn: warnings.sink)
+        #expect(cfg.microphone == nil)
+        #expect(warnings.lines.isEmpty)
+    }
+
+    /// The stronger guarantee the other keys do not have: a garbage
+    /// `microphone` must never discard the rest of the file. Unplugging a USB
+    /// mic and hand-editing the config is exactly the situation where the user
+    /// is most likely to typo this key, and losing their cloud section over it
+    /// would turn a routing preference into an engine downgrade.
+    @Test("a wrongly typed microphone warns and keeps every sibling")
+    func microphoneWrongTypeKeepsSiblings() {
+        let warnings = Warnings()
+        let url = write(#"{"engine":"rules","timeoutMs":900,"microphone":42}"#)
+        let cfg = Config.load(from: url, warn: warnings.sink)
+        #expect(cfg.engine == .rules)      // not the default — the file survived
+        #expect(cfg.timeoutMs == 900)
+        #expect(cfg.microphone == nil)
+        #expect(warnings.lines.count == 1)
+        #expect(warnings.joined.contains(url.path))
+        #expect(warnings.joined.contains("microphone"))
+    }
+
+    @Test("an array-typed microphone behaves as unset, siblings intact")
+    func microphoneArrayKeepsSiblings() {
+        let warnings = Warnings()
+        let cfg = Config.load(
+            from: write(#"{"microphone":["a","b"],"cloud":{"model":"m"}}"#),
+            warn: warnings.sink)
+        #expect(cfg.microphone == nil)
+        #expect(cfg.cloud?.model == "m")
+        #expect(warnings.lines.count == 1)
+        #expect(warnings.joined.contains("microphone"))
+    }
+
     @Test("a partial cloud object keeps sibling settings and cloud defaults")
     func partialCloudObject() {
         let cfg = Config.load(from: write(#"""
