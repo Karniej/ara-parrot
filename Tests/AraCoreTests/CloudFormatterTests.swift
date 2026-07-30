@@ -400,6 +400,29 @@ struct CloudFormatterTests {
         #expect(content.contains("<transcript>"))
     }
 
+    /// Proves the wiring, not just the helper: `requestShape` above only checks
+    /// that the system prompt contains the mode text, which a hand-rolled
+    /// private copy of the old wording would also satisfy. Exact equality
+    /// against `TranscriptPrompt` fails if `buildRequest` ever points back at a
+    /// private copy of the prompt instead of the shared one.
+    @Test("the request's system prompt and content are exactly TranscriptPrompt's")
+    func requestUsesTheSharedPrompt() async throws {
+        let captured = Captured()
+        _ = try await formatter(status: 200, body: Self.goodBody, captured: captured)
+            .format("um ship it friday", mode: mode)
+
+        let request = try #require(await captured.last)
+        let body = try JSONSerialization.jsonObject(
+            with: try #require(request.httpBody)) as! [String: Any]
+
+        let system = try #require(body["system"] as? String)
+        #expect(system == TranscriptPrompt.instructions(for: mode))
+
+        let messages = try #require(body["messages"] as? [[String: Any]])
+        let content = try #require(messages[0]["content"] as? String)
+        #expect(content == TranscriptPrompt.wrap("um ship it friday"))
+    }
+
     /// The transcript is untrusted text. A closing tag inside it would end the
     /// wrapper early and everything after would read as top-level prompt.
     @Test("a transcript cannot close its own wrapper")
