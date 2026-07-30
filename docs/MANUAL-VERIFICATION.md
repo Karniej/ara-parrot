@@ -802,6 +802,78 @@ says so.
       dictating a rambling sentence must now show `high`'s restructuring.
       Set it back to `medium` when done.
 
+## 9septies. Menu parity: mode, model, hotkey, engine, login, diagnostics
+
+Every menu model (titles, checkmark placement, captions, the cloud no-key
+suffix, the formatter offer), every one-key config rewrite, the diagnostics
+rendering, and `Install.isInstalled` are unit-tested. What no test can do is
+click the items, watch an alert appear, or restart the daemon; that half is
+below. One deliberate asymmetry to hold in mind throughout: **Mode is the
+only live pick** — everything else in this batch persists now and applies on
+restart, and each submenu's caption says which.
+
+- [ ] 👤 **9sp-a. A mode pick steers the very next utterance, unpersisted.**
+      With the daemon running with no `--mode` flag, open menu bar → **Mode**.
+      "Auto (per app)" must lead, checked, above every mode id, with an
+      "applies to the next utterance" caption. Pick `email`, focus a plain
+      app (TextEdit), dictate: the output must be email-shaped and the
+      `mode:` label must read `mode: email`. Then
+      `grep mode ~/.config/ara/config.json` must show the key **unchanged**
+      (or still absent) — the pick is a session override by design. Pick
+      **Auto (per app)** again and dictate in TextEdit: `mode: default`
+      returns. With a `--mode verbatim` flag the flag must keep winning over
+      any pick (the label says so), which is the resolver's documented
+      precedence, not a bug.
+- [ ] 👤 **9sp-b. A model pick lands in the config, not in the session.**
+      Menu bar → **Model**: every id from `parrot models list` with its size,
+      the running model checked, the caption reading "applies on restart —
+      downloads if not on disk". Pick `whisper-small.en`: the check moves,
+      `config.json` gains `"model": "whisper-small.en"` with every other key
+      intact, and the `model:` label still names the *running* model until a
+      restart, which must then start on the picked one (downloading it first
+      if absent — that is the caption's second half).
+- [ ] 👤 **9sp-c. The formatting-model line is honest either way.** With the
+      formatter downloaded the line must read `Formatting model: ✓
+      downloaded`, disabled. With the model directory renamed away (as in
+      2bis-d) and the daemon restarted, it must read `Download formatting
+      model… (900 MB, applies on restart)`; clicking it must show an alert
+      naming `parrot models download-formatter`, and **Copy command** must
+      put exactly that on the pasteboard. Nothing may download in-process.
+- [ ] 👤 **9sp-d. A hotkey pick persists and waits for restart.** Menu bar →
+      **Hotkey**: all eight keys under their labels (`fn`, `left ⌥`, …), the
+      running key checked, "applies on restart" caption. Pick `right ⌘`:
+      `config.json` gains `"hotkey": "right-command"`, and the running
+      daemon **keeps listening on the old key** — that is the caption's
+      truth (live re-arm is a known follow-up). Restart with no `--hotkey`
+      flag: `listening on right ⌘ hold`.
+- [ ] 👤 **9sp-e. An engine pick persists; cloud never implies a key.** Menu
+      bar → **Engine**: mlx / apple / cloud / rules / off, the running
+      engine checked, "applies on restart" caption. With no API key stored,
+      the cloud row must read `cloud (no API key set)` — and opening the
+      submenu must never raise a keychain prompt (the suffix comes from the
+      startup read, not a fresh one). Pick `rules`: `config.json` gains
+      `"engine": "rules"`, dictation is unchanged until restart, and the
+      restarted daemon formats rule-based only.
+- [ ] 👤 **9sp-f. Start at Login toggles the real agent, and says what it
+      did.** With no agent installed, the item must be uncheckmarked. Click
+      it: the checkmark appears, `~/Library/LaunchAgents/com.digimata.parrot.plist`
+      exists, and an alert must state the login copy **has started now** —
+      and warn that a terminal-run daemon should be quit, since two daemons
+      both answer the hotkey (verify: hold the hotkey and check for a double
+      `● recording` in the terminal log while both run). Click it again: the
+      checkmark clears and the plist is gone (`launchctl print
+      gui/$UID/com.digimata.parrot` must fail). Make the failure path
+      honest too: `chmod -w ~/Library/LaunchAgents`, toggle on — an alert
+      must report the failure and the checkmark must stay **off** (the
+      state is re-read from disk, never assumed). `chmod +w` afterwards.
+- [ ] 👤 **9sp-g. Run Diagnostics is doctor in a window.** Click **Run
+      Diagnostics…**. An alert must appear in front with the same lines
+      `parrot doctor` prints, monospaced and aligned, and the menu bar must
+      stay responsive while the checks run (they spawn processes off the
+      main thread). **Copy report** must put the full text on the
+      pasteboard. No keychain prompt may appear — the report has no
+      keychain check.
+
 ## 10. Judgement calls to make with real dictation
 
 These are not pass/fail; they need a human's ear over a few days of real use.

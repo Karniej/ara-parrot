@@ -101,6 +101,33 @@ its output goes to `/dev/null`.
 > recreates them. `parrot doctor` flags both the leftover files and a stale
 > plist.
 
+### The menu bar
+
+The bird in the menu bar is the daemon's whole control surface — every CLI
+and config capability has a door here. Three disabled lines up top tell you
+what the daemon is doing (idle/recording/transcribing, the model it runs,
+and the mode the last utterance resolved). Below them, what each item does
+and — the part worth reading — *when* it takes effect:
+
+| Item | What it does | Applies |
+|---|---|---|
+| **Microphone** | pick an input device (or System default); saved to `microphone` | next utterance |
+| **Cleanup** | editing intensity none→high; saved to `cleanup` | on restart |
+| **Mode** | pin a mode, or **Auto (per app)**; deliberately *never* saved — it is a session override, and the `mode` key stays your startup default | next utterance |
+| **Model** | pick a transcription model; saved to `model`; a model not on disk is downloaded by the next launch | on restart |
+| **Model → formatting model line** | says "✓ downloaded", or offers the `parrot models download-formatter` command with a copy button — the 900 MB fetch stays an explicit CLI action | on restart |
+| **Hotkey** | pick the push-to-talk key; saved to `hotkey` | on restart |
+| **Engine** | mlx / apple / cloud / rules / off; saved to `engine`; the cloud row reads "(no API key set)" when the daemon started without one | on restart |
+| **Add dictionary correction…** / **Edit dictionary…** / **Edit snippets…** | the vocabulary doors — see their sections below | next utterance |
+| **Start at Login** | installs or removes the LaunchAgent; the checkmark is the plist on disk. Enabling *starts the login copy immediately* — quit a terminal-run daemon after enabling, or two daemons answer the hotkey | immediately |
+| **Run Diagnostics…** | `parrot doctor`'s report in a window, monospaced, with a Copy report button | — |
+| **Quit parrot** | quits | immediately |
+
+Every submenu states its own timing in a caption, so the menu never claims a
+restart-bound pick changed the running session. A pick that could not be
+saved (an unwritable or malformed config file) keeps the old checkmark and
+warns on stderr — the file is never overwritten with a guess.
+
 ### Configuration
 
 Optional, at `~/.config/ara/config.json`. Precedence is **CLI flag > config >
