@@ -60,7 +60,7 @@ public final class MicrophoneStore {
     private let lock = NSLock()
     private var _devices: [Device]
     private var _effective: Effective
-    private var preferredUID: String?
+    private var _preferredUID: String?
     private var _onChange: (() -> Void)?
 
     private let enumerate: () -> [Device]
@@ -79,6 +79,15 @@ public final class MicrophoneStore {
         lock.lock()
         defer { lock.unlock() }
         return _effective
+    }
+
+    /// The user's current preference, `nil` for "follow the system default".
+    /// Distinct from `effective`: the menu places its check on the *pick*, and
+    /// `effective` cannot recover the pick once the picked device unplugs.
+    public var preferredUID: String? {
+        lock.lock()
+        defer { lock.unlock() }
+        return _preferredUID
     }
 
     /// Fired after the device list or the resolved device changed — never for
@@ -108,7 +117,7 @@ public final class MicrophoneStore {
          enumerate: @escaping () -> [Device],
          defaultInputID: @escaping () -> AudioDeviceID?,
          startListening: (@escaping () -> Void) -> (() -> Void)) {
-        self.preferredUID = preferredUID
+        self._preferredUID = preferredUID
         self.enumerate = enumerate
         self.defaultInputID = defaultInputID
         let list = enumerate()
@@ -128,7 +137,7 @@ public final class MicrophoneStore {
     /// and re-resolves immediately.
     public func setPreferredUID(_ uid: String?) {
         lock.lock()
-        preferredUID = uid
+        _preferredUID = uid
         lock.unlock()
         refresh()
     }
@@ -157,7 +166,7 @@ public final class MicrophoneStore {
         let defaultID = defaultInputID()
         lock.lock()
         let resolved = Self.resolve(
-            preferredUID: preferredUID, devices: list, systemDefaultID: defaultID)
+            preferredUID: _preferredUID, devices: list, systemDefaultID: defaultID)
         let changed = list != _devices || resolved != _effective
         _devices = list
         _effective = resolved

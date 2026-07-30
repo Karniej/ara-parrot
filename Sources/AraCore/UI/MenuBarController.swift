@@ -9,8 +9,13 @@ public final class MenuBarController {
     private let modelLabel: NSMenuItem
     private let modeLabel: NSMenuItem
     private let stateLabel: NSMenuItem
+    private let microphoneItem: NSMenuItem
     private let modelID: String
     private let idleTitle: String
+
+    /// The user picked a row in the Microphone submenu: the device's UID, or
+    /// `nil` for "System default". Invoked on the main thread by AppKit.
+    public var onMicrophonePicked: ((String?) -> Void)?
 
     /// - Parameter modeID: The mode the daemon starts in. Modes are resolved per
     ///   utterance — the frontmost application can change the answer — so this is
@@ -34,6 +39,14 @@ public final class MenuBarController {
         modeLabel = NSMenuItem(title: "mode: \(modeID)", action: nil, keyEquivalent: "")
         modeLabel.isEnabled = false
         menu.addItem(modeLabel)
+
+        menu.addItem(.separator())
+
+        microphoneItem = NSMenuItem(title: "Microphone", action: nil, keyEquivalent: "")
+        let microphoneSubmenu = NSMenu()
+        microphoneSubmenu.autoenablesItems = false
+        microphoneItem.submenu = microphoneSubmenu
+        menu.addItem(microphoneItem)
 
         menu.addItem(.separator())
 
@@ -63,6 +76,36 @@ public final class MenuBarController {
     /// those actually won.
     public func setMode(_ id: String) {
         modeLabel.title = "mode: \(id)"
+    }
+
+    /// Rebuilds the Microphone submenu from a model. A verbatim transcription
+    /// — titles, checks, enabled flags, and the informational status line all
+    /// arrive decided; the rules live in `MicrophoneMenuModel.compute`, where
+    /// they are unit-tested.
+    public func setMicrophoneMenu(_ model: MicrophoneMenuModel) {
+        guard let submenu = microphoneItem.submenu else { return }
+        submenu.removeAllItems()
+        if let status = model.status {
+            let line = NSMenuItem(title: status, action: nil, keyEquivalent: "")
+            line.isEnabled = false
+            submenu.addItem(line)
+            submenu.addItem(.separator())
+        }
+        for item in model.items {
+            let row = NSMenuItem(
+                title: item.title,
+                action: #selector(microphoneClicked(_:)),
+                keyEquivalent: "")
+            row.target = self
+            row.isEnabled = item.enabled
+            row.state = item.checked ? .on : .off
+            row.representedObject = item.uid
+            submenu.addItem(row)
+        }
+    }
+
+    @objc private func microphoneClicked(_ sender: NSMenuItem) {
+        onMicrophonePicked?(sender.representedObject as? String)
     }
 
     private func configureButton(recording: Bool) {

@@ -233,6 +233,17 @@ struct MicrophoneStoreTests {
         #expect(hw.listenerRemoved)
     }
 
+    @Test("preferredUID is readable — the menu needs it to place the check")
+    func preferredUIDReadable() {
+        let hw = FakeHardware()
+        hw.devices = [Self.builtIn]
+        let store = hw.store(preferredUID: "uid-yeti")
+        #expect(store.preferredUID == "uid-yeti")
+
+        store.setPreferredUID(nil)
+        #expect(store.preferredUID == nil)
+    }
+
     @Test("Effective.device exposes the resolved device, or nil for none")
     func effectiveDeviceAccessor() {
         #expect(MicrophoneStore.Effective.chosen(Self.yeti).device == Self.yeti)
