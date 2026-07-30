@@ -25,7 +25,37 @@ public enum DoctorReport {
             checkOnDeviceFormatting(),
             checkLegacyLogs(),
             checkLaunchAgentLogPaths(),
+            checkLegacyLaunchAgent(),
         ]
+    }
+
+    /// The rename's own upgrade path: an agent installed while this tool
+    /// shipped as `parrot` is registered under `com.digimata.parrot`, and
+    /// launchd sees no connection between that label and `com.silpho.ara`.
+    /// The old agent goes on starting the old binary at every login, and a
+    /// user who then enables Start at Login ends up with two daemons fighting
+    /// over the hotkey — with nothing in the new install naming the other one.
+    ///
+    /// The remediation is just the re-install, because `installAgent` boots
+    /// the old label out on its way past; there is nothing to delete by hand.
+    ///
+    /// A **warning, never a failure**, like every migration finding: the
+    /// daemon works, it is the leftover registration that misbehaves.
+    static func checkLegacyLaunchAgent(
+        plistPath: String = Install.legacyPlistURL.path
+    ) -> Check {
+        let name = "legacy launch agent"
+        guard FileManager.default.fileExists(atPath: plistPath) else {
+            return Check(name: name, status: .ok, remediation: nil)
+        }
+        return Check(
+            name: name,
+            status: .warn("an agent from before the rename is still installed at "
+                + plistPath + " — it starts a second daemon at every login"),
+            remediation: "run `ara install --launch-at-login` (it removes the old "
+                + "agent), or `ara install --uninstall` if you do not want a "
+                + "background daemon at all"
+        )
     }
 
     /// The other half of the legacy-logs upgrade path: an agent installed

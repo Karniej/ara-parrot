@@ -48,6 +48,65 @@ struct InstallTests {
         try FileManager.default.removeItem(at: url)
     }
 
+    // MARK: - the pre-rename agent
+
+    /// The rename moved the agent's label, and launchd knows nothing about the
+    /// connection: an agent registered under the old one keeps `RunAtLoad`-ing
+    /// the old binary at every login. A user who then enables Start at Login
+    /// has two daemons fighting over the hotkey, and no way to see why.
+    @Test("the legacy label is the one pre-rename installs registered")
+    func legacyLabelIsTheOldOne() {
+        #expect(Install.legacyLabel == "com.digimata.parrot")
+        #expect(Install.legacyPlistURL.lastPathComponent == "com.digimata.parrot.plist")
+        #expect(Install.legacyPlistURL != Install.plistURL)
+    }
+
+    /// The order is the whole point: booting out a *deleted* plist tells
+    /// launchd nothing, so the agent would go on running until the next
+    /// reboot with nothing left on disk to explain it.
+    @Test("a legacy agent is booted out while its plist still exists, then removed")
+    func legacyAgentIsBootedOutThenRemoved() throws {
+        let dir = try tempDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let plist = dir.appendingPathComponent("com.digimata.parrot.plist")
+        try Data("plist".utf8).write(to: plist)
+
+        var bootedOut: [String] = []
+        var existedAtBootout: Bool?
+        let removed = Install.removeLegacyAgent(at: plist) { url in
+            bootedOut.append(url.path)
+            existedAtBootout = FileManager.default.fileExists(atPath: url.path)
+        }
+
+        #expect(removed == plist.path)
+        #expect(bootedOut == [plist.path])
+        #expect(existedAtBootout == true)
+        #expect(!FileManager.default.fileExists(atPath: plist.path))
+    }
+
+    /// The normal case, on every machine that never ran the old build: no
+    /// plist, so nothing to boot out either. `launchctl bootout` against a
+    /// label launchd has never heard of is noise in a fresh install's output.
+    @Test("no legacy agent means nothing is booted out and nothing is removed")
+    func noLegacyAgentIsANoOp() throws {
+        let dir = try tempDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let ghost = dir.appendingPathComponent("com.digimata.parrot.plist")
+
+        var bootedOut: [String] = []
+        let removed = Install.removeLegacyAgent(at: ghost) { bootedOut.append($0.path) }
+
+        #expect(removed == nil)
+        #expect(bootedOut.isEmpty)
+    }
+
+    private func tempDir() throws -> URL {
+        let dir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("legacy-agent-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        return dir
+    }
+
     // MARK: - flag validation
 
     @Test("exactly one primary action, purge allowed alone or alongside")

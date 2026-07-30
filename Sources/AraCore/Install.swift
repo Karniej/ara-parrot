@@ -57,10 +57,27 @@ public struct Install: ParsableCommand {
 
     private static let label = "com.silpho.ara"
 
+    /// The label this tool's LaunchAgent carried while it shipped as `parrot`.
+    ///
+    /// Kept — and actively hunted for — precisely *because* it is no longer
+    /// the label: launchd sees no connection between the two, so an agent
+    /// bootstrapped under the old one keeps `RunAtLoad`-ing the old binary at
+    /// every login, forever, with nothing in the new install pointing at it.
+    /// A user who then enables Start at Login gets two daemons fighting over
+    /// the hotkey. Every install and uninstall clears it on the way past;
+    /// `doctor` reports one that is still there.
+    public static let legacyLabel = "com.digimata.parrot"
+
     /// Where the agent plist lives. Static so `doctor` can inspect the
     /// installed file — and the menu's "Start at Login" item can read its
     /// state — without constructing the command.
-    public static var plistURL: URL {
+    public static var plistURL: URL { agentPlistURL(for: label) }
+
+    /// The pre-rename agent's plist, in the same directory under the old
+    /// label. `doctor` reads it; the install and uninstall paths delete it.
+    public static var legacyPlistURL: URL { agentPlistURL(for: legacyLabel) }
+
+    private static func agentPlistURL(for label: String) -> URL {
         let home = FileManager.default.homeDirectoryForCurrentUser
         return home
             .appendingPathComponent("Library/LaunchAgents", isDirectory: true)
@@ -134,10 +151,51 @@ public struct Install: ParsableCommand {
         }
     }
 
+    /// Boots out the pre-rename agent and deletes its plist, returning the
+    /// path it removed — `nil` when there was nothing there, which is the
+    /// normal case on any machine that never ran the old build.
+    ///
+    /// The bootout comes first and while the file still exists: `launchctl
+    /// bootout` takes the plist's path, so unloading a *deleted* agent tells
+    /// launchd nothing and the old daemon would run on until the next reboot
+    /// with nothing left on disk to explain it.
+    ///
+    /// Best-effort like every other cleanup path here — a bootout that fails
+    /// (launchd never heard of the label; the agent was already unloaded)
+    /// must not stop the plist from going, and a plist that will not delete
+    /// is one stderr line rather than a failed install. `bootout` is injected
+    /// so the decision is testable against real files without touching the
+    /// machine's actual launchd.
+    @discardableResult
+    static func removeLegacyAgent(
+        at url: URL = legacyPlistURL,
+        bootout: (URL) -> Void = { _ = runLaunchctl(["bootout", "gui/\(uid())", $0.path]) }
+    ) -> String? {
+        guard FileManager.default.fileExists(atPath: url.path) else { return nil }
+        bootout(url)
+        do {
+            try FileManager.default.removeItem(at: url)
+        } catch {
+            FileHandle.standardError.write(Data(
+                ("couldn't remove the pre-rename launch agent at \(url.path) "
+                    + "(\(type(of: error)))\n").utf8
+            ))
+            return nil
+        }
+        return url.path
+    }
+
     @discardableResult
     public static func installAgent() throws -> StartOutcome {
         let binary = try resolveBinaryPath()
         let plist = agentPlist(binary: binary)
+
+        // Before the new agent lands, not after: the two labels are unrelated
+        // to launchd, so bootstrapping ours on top of a live `parrot` agent is
+        // exactly the two-daemons-one-hotkey state this clears.
+        if let removed = removeLegacyAgent() {
+            print("✓ removed the pre-rename launch agent (\(removed))")
+        }
 
         let url = plistURL
         try FileManager.default.createDirectory(
@@ -193,13 +251,21 @@ public struct Install: ParsableCommand {
     /// Boots the agent out and removes its plist. Static and public for
     /// `installAgent`'s reason: the menu toggle and the CLI flag are one
     /// implementation.
+    ///
+    /// Both labels, because "remove launch-at-login" has to mean it: leaving
+    /// the pre-rename agent behind would turn the daemon off and have it come
+    /// back at the next login under a name nothing in this build mentions.
     public static func uninstallAgent() throws {
+        let legacy = removeLegacyAgent()
+        if let legacy {
+            print("✓ removed the pre-rename launch agent (\(legacy))")
+        }
         let url = plistURL
         if FileManager.default.fileExists(atPath: url.path) {
             _ = runLaunchctl(["bootout", "gui/\(uid())", url.path])
             try FileManager.default.removeItem(at: url)
             print("✓ launch-at-login removed")
-        } else {
+        } else if legacy == nil {
             print("nothing to remove (no agent at \(url.path))")
         }
     }

@@ -211,6 +211,66 @@ struct DoctorTests {
         #expect(DoctorReport.allOK([DoctorReport.checkLaunchAgentLogPaths(plistPath: plist.path)]))
     }
 
+    // MARK: - the pre-rename launch agent
+
+    /// The rename's own upgrade path. `com.digimata.parrot` and
+    /// `com.silpho.ara` are unrelated as far as launchd is concerned, so an
+    /// agent installed before the rename keeps starting the old binary at
+    /// every login — and enabling Start at Login on top of it puts two
+    /// daemons on one hotkey. Doctor is where a user finds out.
+    @Test("the report includes the legacy launch-agent check")
+    func reportIncludesLegacyAgentCheck() {
+        #expect(DoctorReport.run().contains { $0.name == "legacy launch agent" })
+    }
+
+    @Test("a leftover pre-rename agent is flagged, and the fix is the re-install")
+    func legacyAgentIsFlagged() throws {
+        let dir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("doctor-legacy-agent-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let plist = dir.appendingPathComponent("com.digimata.parrot.plist")
+        try PropertyListSerialization.data(
+            fromPropertyList: ["Label": "com.digimata.parrot", "RunAtLoad": true],
+            format: .xml, options: 0
+        ).write(to: plist)
+
+        let check = DoctorReport.checkLegacyLaunchAgent(plistPath: plist.path)
+        guard case .warn(let reason) = check.status else {
+            Issue.record("a pre-rename agent still on disk must be reported")
+            return
+        }
+        #expect(reason.contains(plist.path))
+        // The remediation has to be the command that actually clears it:
+        // `installAgent` boots the old label out on its way past, so there is
+        // nothing for the user to delete by hand.
+        #expect(check.remediation?.contains("ara install --launch-at-login") == true)
+    }
+
+    @Test("no pre-rename agent is a clean pass")
+    func noLegacyAgentIsOK() {
+        let ghost = FileManager.default.temporaryDirectory
+            .appendingPathComponent("no-such-\(UUID().uuidString).plist").path
+        guard case .ok = DoctorReport.checkLegacyLaunchAgent(plistPath: ghost).status else {
+            Issue.record("no old plist must mean nothing to report")
+            return
+        }
+    }
+
+    /// `Run` gates startup on `allOK`; a second daemon is a thing to clean up,
+    /// not a reason to refuse to start the first one.
+    @Test("a leftover pre-rename agent is a warning, never a failure")
+    func legacyAgentNeverBlocksStartup() throws {
+        let dir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("doctor-legacy-agent-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let plist = dir.appendingPathComponent("com.digimata.parrot.plist")
+        try Data("plist".utf8).write(to: plist)
+
+        #expect(DoctorReport.allOK([DoctorReport.checkLegacyLaunchAgent(plistPath: plist.path)]))
+    }
+
     @Test("no legacy logs is a clean pass")
     func noLegacyLogsIsOK() {
         let check = DoctorReport.checkLegacyLogs(
