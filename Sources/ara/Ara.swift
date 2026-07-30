@@ -8,6 +8,10 @@ struct Ara: ParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "ara",
         abstract: "Minimal macOS dictation daemon. Hold Fn, speak, release.",
+        // Read out of Ara.app's Info.plist, which scripts/package-app.sh
+        // stamps from the VERSION file. A source build has no bundle and says
+        // so rather than claiming a release number it cannot know.
+        version: AraVersion.current,
         subcommands: [Run.self, Setup.self, Doctor.self, Models.self,
                       DictionaryCommand.self, SnippetsCommand.self, Install.self],
         defaultSubcommand: Run.self
