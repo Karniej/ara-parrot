@@ -119,6 +119,12 @@ public enum Pipeline {
     /// failed — on every load; a session built from the URL alone would drop
     /// exactly those. When given, `dictionaryURL` is ignored: the source owns
     /// the whole answer, including where (or whether) it reads a file.
+    ///
+    /// `snippetsURL` and `snippets` follow the same pattern for voice
+    /// snippets: `nil` means the production `snippets.json` next to
+    /// `config.json`, loaded fresh per utterance, and a `snippets` source
+    /// overrides the URL wholesale. There is no unsaved-state overlay here —
+    /// snippets are file-only in v1, so the URL loader is the whole story.
     public static func makeSession(config: Config,
                                    apiKey: String?,
                                    mlx: (any Formatter)?,
@@ -128,16 +134,20 @@ public enum Pipeline {
                                    cloudTransport: CloudFormatter.Transport? = nil,
                                    dictionaryURL: URL? = nil,
                                    dictionary: (@Sendable () -> LocalDictionary)? = nil,
+                                   snippetsURL: URL? = nil,
+                                   snippets: (@Sendable () -> Snippets)? = nil,
                                    onModeResolved: (@Sendable (Mode) -> Void)? = nil)
         -> DictationSession
     {
         let dictionaryURL = dictionaryURL ?? LocalDictionary.defaultURL
+        let snippetsURL = snippetsURL ?? Snippets.defaultURL
         return DictationSession(
             formatter: makeChain(config: config, apiKey: apiKey, mlx: mlx,
                                  apple: apple, rules: rules,
                                  cloudTransport: cloudTransport),
             resolver: ModeResolver(registry: registry, defaultID: config.mode),
             dictionary: dictionary ?? { LocalDictionary.load(from: dictionaryURL) },
+            snippets: snippets ?? { Snippets.load(from: snippetsURL) },
             onModeResolved: onModeResolved)
     }
 }

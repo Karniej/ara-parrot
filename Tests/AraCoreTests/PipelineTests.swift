@@ -48,12 +48,14 @@ struct PipelineTests {
                          mlx: (any AraCore.Formatter)? = nil,
                          apple: (any AraCore.Formatter)? = nil,
                          cloudTransport: CloudFormatter.Transport? = nil,
-                         dictionaryURL: URL? = nil)
+                         dictionaryURL: URL? = nil,
+                         snippetsURL: URL? = nil)
         -> DictationSession
     {
         Pipeline.makeSession(config: config, apiKey: apiKey, mlx: mlx,
                              apple: apple, cloudTransport: cloudTransport,
-                             dictionaryURL: dictionaryURL)
+                             dictionaryURL: dictionaryURL,
+                             snippetsURL: snippetsURL)
     }
 
     /// A dictionary file with one correction, for the wiring tests.
@@ -256,6 +258,50 @@ struct PipelineTests {
             .process("um tell arra hello", override: "verbatim", manual: nil,
                      frontmostBundleID: nil)
         #expect(out == "tell Ara hello")
+    }
+
+    // MARK: - snippets
+
+    /// A snippets file with one entry, for the wiring tests.
+    private func snippetsFile() -> URL {
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("ara-snip-pipe-\(UUID().uuidString).json")
+        try! #"[{"trigger": "sign off formal", "expansion": "Best,\nPawel"}]"#
+            .write(to: url, atomically: true, encoding: .utf8)
+        return url
+    }
+
+    /// Through the production assembly: `makeSession` wires the URL it was
+    /// given, and a hit bypasses the engine the config asked for — the
+    /// expansion reaches the injector with no formatter in between.
+    @Test("makeSession wires snippets from the given URL, bypassing the engine")
+    func snippetsURLIsWired() async {
+        var config = Config()
+        config.engine = .apple
+        let out = await session(config,
+                                apple: PipelineStub { _, _ in
+                                    Issue.record("an engine ran for a snippet hit")
+                                    return "MANGLED"
+                                },
+                                snippetsURL: snippetsFile())
+            .process("Sign off formal.", override: nil, manual: nil,
+                     frontmostBundleID: nil)
+        #expect(out == "Best,\nPawel")
+    }
+
+    /// A broken snippets file must cost nothing but one warning: the
+    /// utterance takes the normal path, untouched.
+    @Test("a broken snippets file leaves dictation unaffected")
+    func brokenSnippetsFileIsHarmless() async {
+        var config = Config()
+        config.engine = .off
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("ara-snip-broken-\(UUID().uuidString).json")
+        try! "not json at all".write(to: url, atomically: true, encoding: .utf8)
+        let out = await session(config, snippetsURL: url)
+            .process("sign off formal", override: nil, manual: nil,
+                     frontmostBundleID: nil)
+        #expect(out == "sign off formal")
     }
 
     // MARK: - executor routing

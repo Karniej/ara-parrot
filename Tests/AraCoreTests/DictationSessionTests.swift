@@ -48,11 +48,13 @@ struct DictationSessionTests {
     private func session(_ formatter: any AraCore.Formatter,
                          dictionary: @escaping @Sendable () -> LocalDictionary
                              = { LocalDictionary() },
+                         snippets: @escaping @Sendable () -> Snippets
+                             = { Snippets() },
                          onModeResolved: (@Sendable (Mode) -> Void)? = nil)
         -> DictationSession
     {
         DictationSession(formatter: formatter, resolver: resolver,
-                         dictionary: dictionary,
+                         dictionary: dictionary, snippets: snippets,
                          onModeResolved: onModeResolved)
     }
 
@@ -147,6 +149,119 @@ struct DictationSessionTests {
                 generation.set(now)
                 return LocalDictionary(entries: [
                     .init(canonical: "generation \(now)", variants: ["marker"])
+                ])
+            })
+        let first = await session.process("marker", override: nil, manual: nil,
+                                          frontmostBundleID: nil)
+        let second = await session.process("marker", override: nil, manual: nil,
+                                           frontmostBundleID: nil)
+        #expect(first == "generation 1")
+        #expect(second == "generation 2")
+    }
+
+    // MARK: - Snippets short-circuit
+
+    /// The whole point of the feature: a dictated trigger yields the authored
+    /// expansion verbatim — newlines and all — and the formatter is never
+    /// consulted, so no LLM, mode prompt, or output guard can mangle it.
+    @Test("a snippet hit injects the expansion verbatim and skips the formatter")
+    func snippetHitSkipsFormatter() async {
+        let expansion = "Best regards,\nPawel Karniej\nSilpho\n"
+        let session = session(
+            StubFormatter { _, _ in
+                Issue.record("the formatter ran for a snippet hit")
+                return "MANGLED"
+            },
+            snippets: {
+                Snippets(entries: [
+                    .init(trigger: "sign off formal", expansion: expansion)
+                ])
+            })
+        let out = await session.process("Sign off formal.", override: nil,
+                                        manual: nil, frontmostBundleID: nil)
+        #expect(out == expansion)
+    }
+
+    /// The near-miss: an utterance *containing* the trigger is a real
+    /// sentence, and it must take the normal path — formatter consulted,
+    /// expansion nowhere in sight.
+    @Test("a sentence containing the trigger is formatted normally")
+    func snippetNearMissUsesFormatter() async {
+        let received = Box<String>()
+        let session = session(
+            StubFormatter { text, _ in
+                received.set(text)
+                return "formatted: \(text)"
+            },
+            snippets: {
+                Snippets(entries: [
+                    .init(trigger: "sign off formal", expansion: "Best,\nPawel")
+                ])
+            })
+        let out = await session.process("please sign off formal here",
+                                        override: nil, manual: nil,
+                                        frontmostBundleID: nil)
+        #expect(received.current == "please sign off formal here")
+        #expect(out == "formatted: please sign off formal here")
+    }
+
+    /// The pipeline position, proved from the dictionary side: corrections
+    /// run first, so a trigger word the ASR mishears can be fixed by the
+    /// dictionary and the snippet still fires.
+    @Test("the dictionary corrects a misheard trigger before matching")
+    func snippetMatchesAfterDictionaryCorrection() async {
+        let session = session(
+            StubFormatter { _, _ in
+                Issue.record("the formatter ran for a corrected snippet hit")
+                return "MANGLED"
+            },
+            dictionary: {
+                LocalDictionary(entries: [
+                    .init(canonical: "sign", variants: ["sine"])
+                ])
+            },
+            snippets: {
+                Snippets(entries: [
+                    .init(trigger: "sign off formal", expansion: "Best,\nPawel")
+                ])
+            })
+        let out = await session.process("sine off formal", override: nil,
+                                        manual: nil, frontmostBundleID: nil)
+        #expect(out == "Best,\nPawel")
+    }
+
+    /// A snippet hit short-circuits *before* mode resolution: no mode is
+    /// resolved and none reported, because the utterance was never formatted
+    /// in any mode — the expansion is authored text, not speech.
+    @Test("a snippet hit resolves no mode")
+    func snippetHitResolvesNoMode() async {
+        let reported = Box<String>()
+        let session = session(
+            StubFormatter { text, _ in text },
+            snippets: {
+                Snippets(entries: [
+                    .init(trigger: "sign off", expansion: "Best")
+                ])
+            },
+            onModeResolved: { reported.set($0.id) })
+        _ = await session.process("sign off", override: nil, manual: nil,
+                                  frontmostBundleID: "com.apple.mail")
+        #expect(reported.current == nil)
+    }
+
+    /// Hot reload lives in the source closure, exactly as for the dictionary:
+    /// the session must consult it per utterance, never capture one value.
+    @Test("the snippets source is consulted fresh for every utterance")
+    func snippetsSourceIsConsultedPerUtterance() async {
+        let generation = Box<Int>()
+        generation.set(0)
+        let session = session(
+            StubFormatter { text, _ in text },
+            snippets: {
+                let now = (generation.current ?? 0) + 1
+                generation.set(now)
+                return Snippets(entries: [
+                    .init(trigger: "marker", expansion: "generation \(now)")
                 ])
             })
         let first = await session.process("marker", override: nil, manual: nil,

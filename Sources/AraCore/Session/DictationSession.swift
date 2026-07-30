@@ -54,6 +54,7 @@ public actor DictationSession {
     private let formatter: any Formatter
     private let resolver: ModeResolver
     private let dictionary: @Sendable () -> LocalDictionary
+    private let snippets: @Sendable () -> Snippets
     private let onModeResolved: (@Sendable (Mode) -> Void)?
 
     /// - Parameters:
@@ -69,16 +70,25 @@ public actor DictationSession {
     ///     argument would disable the user's corrections with no symptom.
     ///     Runs on this actor's executor: small local file I/O is fine,
     ///     anything slower is not.
+    ///   - snippets: The voice-snippets source, consulted **per utterance**
+    ///     for the same hot-reload reason as `dictionary`. Production passes
+    ///     `Snippets.load`; not defaulted, for the same reason again: a call
+    ///     site that forgot the argument would disable the user's snippets
+    ///     with no symptom.
     ///   - onModeResolved: Notified with the resolved mode before formatting
     ///     starts, so a UI can show which mode an utterance was treated as.
-    ///     Called from this actor's executor: it must not block.
+    ///     Called from this actor's executor: it must not block. Not called
+    ///     for a snippet hit — no mode is resolved for an utterance that is
+    ///     never formatted.
     public init(formatter: any Formatter,
                 resolver: ModeResolver,
                 dictionary: @escaping @Sendable () -> LocalDictionary,
+                snippets: @escaping @Sendable () -> Snippets,
                 onModeResolved: (@Sendable (Mode) -> Void)? = nil) {
         self.formatter = formatter
         self.resolver = resolver
         self.dictionary = dictionary
+        self.snippets = snippets
         self.onModeResolved = onModeResolved
     }
 
@@ -121,6 +131,23 @@ public actor DictationSession {
         // that could otherwise turn words into "nothing to type".
         var corrected = dictionary().apply(raw)
         if corrected.isEmpty { corrected = raw }
+
+        // Snippets next, before any mode or engine decision: a dictated
+        // trigger phrase yields its authored expansion as the final output —
+        // no mode prompt, no formatter chain, no output guard — which is what
+        // lets an expansion carry newlines and exact capitalisation to the
+        // injector untouched. Matched against `corrected` so the dictionary
+        // can fix a misheard trigger word first. `expansion(for:)` is pure
+        // and non-throwing, and `Snippets.load` treats every failure as "no
+        // snippets", so this cannot cost a transcript: no match means the
+        // utterance processes normally.
+        if let expansion = snippets().expansion(for: corrected) {
+            // The same hole the post-format check closes: nothing on this
+            // path suspends, so only an explicit check keeps a withdrawn
+            // request's expansion away from the injector.
+            if Task.isCancelled { return "" }
+            return expansion
+        }
 
         let mode = resolver.resolve(override: override, manual: manual,
                                     frontmostBundleID: frontmostBundleID)
