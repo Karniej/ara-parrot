@@ -49,8 +49,16 @@ public struct ModeRegistry: Sendable {
              prompt: "Rewrite as a concise technical note. Preserve identifiers, "
                    + "file paths and symbols exactly as spoken. Do not turn "
                    + "technical terms into prose.",
+             // Editors and terminals: dictating into either means identifiers,
+             // paths and commands, not prose. The terminal ids are the same
+             // ones `InjectionPolicy` prefers paste for — kept as two lists
+             // because they answer different questions (how to format vs. how
+             // to deliver), but a terminal that belongs on one belongs on both.
              appBundleIDs: ["com.microsoft.VSCode", "com.apple.dt.Xcode",
-                            "com.cmuxterm.app"],
+                            "com.todesktop.230313mzl4w4u92",
+                            "com.apple.Terminal", "com.googlecode.iterm2",
+                            "net.kovidgoyal.kitty", "org.alacritty",
+                            "com.github.wez.wezterm"],
              usesLLM: true),
     ]
 }

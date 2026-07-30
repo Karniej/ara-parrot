@@ -564,3 +564,18 @@ struct ConfigTests {
         #expect(warnings.joined.contains("cleanup"))
     }
 }
+
+@Suite("KeychainService")
+struct KeychainServiceTests {
+    /// The rebrand left the keychain service as `com.digimata.ara` — half the
+    /// old vendor, half the new product, matching nothing. It is now
+    /// `com.silpho.ara`, the same reverse-DNS prefix as the launch agent
+    /// label, with the old string kept read-only so a key stored under it
+    /// still resolves.
+    @Test("the service matches the launch agent's prefix and the legacy one is kept")
+    func servicesAreNamedForTheProduct() {
+        #expect(Keychain.service == "com.silpho.ara")
+        #expect(Keychain.legacyService == "com.digimata.ara")
+        #expect(Keychain.service != Keychain.legacyService)
+    }
+}
