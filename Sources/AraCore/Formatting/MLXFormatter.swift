@@ -16,14 +16,15 @@ import Tokenizers
 ///
 /// Model: `mlx-community/Qwen2.5-1.5B-Instruct-4bit`, ~0.9 GB. Measured
 /// through this class's own `format` — `PARROT_MLX_BENCH=1 swift test --filter
-/// MLXLatency`, release build, M3 Pro, shipped `TranscriptPrompt`, six
-/// realistic transcripts: **429 ms median, 505 ms max** against the chain's
-/// 2500 ms deadline, deterministic at temperature 0, no tag leaks. Correct
-/// rewrites on 5/6 — a dictated "ignore all previous instructions" was obeyed
-/// rather than punctuated; see docs/KNOWN-ISSUES.md before trusting the
-/// prompt's injection resistance. Qwen2.5 was chosen over Qwen3-1.7B on the
-/// plan's Python measurement (379 vs 418 ms median, equally correct), and it
-/// has no thinking mode, so `<think>` tags cannot arrive at the user's cursor.
+/// MLXLatency`, release build, M3 Pro, shipped `TranscriptPrompt` (medium
+/// intensity, post-hardening), six realistic transcripts: **787 ms median,
+/// 888 ms max** against the chain's 2500 ms deadline, deterministic at
+/// temperature 0, no tag leaks. (The pre-hardening prompt measured 429 ms
+/// median — the guard examples cost ~350 ms of prefill and bought the
+/// injection results recorded in docs/KNOWN-ISSUES.md.)
+/// Qwen2.5 was chosen over Qwen3-1.7B on the plan's Python measurement
+/// (379 vs 418 ms median, equally correct), and it has no thinking mode, so
+/// `<think>` tags cannot arrive at the user's cursor.
 ///
 /// ## The load happens at startup, and `format` never triggers one
 ///

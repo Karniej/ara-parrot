@@ -13,11 +13,12 @@ import Foundation
 ///   `FormatterChain` needs no new routing.
 /// - `light`: punctuation, capitalisation, and dictated punctuation commands
 ///   only; every spoken word survives.
-/// - `medium`: the default, and byte-for-byte today's behaviour — fillers
-///   removed, boundaries repaired, self-corrections collapsed, dictated
-///   punctuation obeyed, enumerations formatted.
+/// - `medium`: the default — fillers removed, boundaries repaired,
+///   self-corrections collapsed, dictated punctuation obeyed. (The prompt
+///   also asks for enumerations as lists, but the shipped model measurably
+///   only complies at `high` — see docs/KNOWN-ISSUES.md.)
 /// - `high`: everything medium does, plus restructuring fragments into
-///   complete sentences.
+///   complete sentences and formatting spoken enumerations as numbered lists.
 ///
 /// A `String` raw value so the config spelling is the case name, and
 /// `CaseIterable` so tests and the config warning can state the valid

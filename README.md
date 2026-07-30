@@ -48,12 +48,25 @@ default**, and every key is optional:
 ```json
 {"hotkey": "right-command", "model": "whisper-base.en",
  "engine": "mlx", "timeoutMs": 2500, "mode": "default",
+ "cleanup": "medium",
  "microphone": "AppleUSBAudioEngine:Blue:Yeti:123:1"}
 ```
 
 A value the file gets wrong never stops the daemon: it warns on stderr with a
 `config:` prefix and falls back. A `config:` line means part of the file did not
 take effect.
+
+`cleanup` sets how aggressively dictation is edited, independently of the
+mode: `"none"` skips the language model entirely (filler stripping only),
+`"light"` adds punctuation and capitalisation but keeps every spoken word,
+`"medium"` (the default) also removes fillers, collapses spoken
+self-corrections ("we ship Tuesday, no wait, Wednesday" → "We ship
+Wednesday.") and obeys dictated punctuation ("comma", "period", "question
+mark"), and `"high"` additionally restructures fragments into complete
+sentences and formats spoken enumerations ("number one… number two…") as
+numbered lists. Dictated "new line"/"new paragraph" currently become a
+sentence break, not a real line break — a measured limit of the local model,
+recorded in docs/KNOWN-ISSUES.md.
 
 ### Microphone
 
