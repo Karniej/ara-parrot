@@ -65,6 +65,14 @@ public final class AudioCapture {
         let removeTap: () -> Void
         let startEngine: () throws -> Void
         let stopEngine: () -> Void
+        /// Whether the engine is currently running. The rebuild path uses
+        /// this to tell a genuine device death (engine stopped) from the
+        /// configuration-change notification a routed engine posts about its
+        /// OWN start: measured, routing the input unit makes every engine
+        /// start post one, and rebuilding on it tears the healthy engine
+        /// down before its first buffer — a storm of ~200 ms engines that
+        /// captures nothing.
+        let isEngineRunning: () -> Bool
         /// Releases everything registered at build time (the configuration-
         /// change observer). Must be safe to call whether or not the engine
         /// ever started.
@@ -212,6 +220,15 @@ public final class AudioCapture {
             return
         }
 
+        // A routed engine posts a configuration change about its own start
+        // (see Backend.isEngineRunning). If the engine is still running, the
+        // device did not die — audio is flowing and a rebuild would kill it.
+        // A genuine device loss stops the engine first; only then rebuild.
+        if old.isEngineRunning() {
+            stateLock.unlock()
+            return
+        }
+
         old.tearDown()
         old.removeTap()
         old.stopEngine()
@@ -340,7 +357,14 @@ public final class AudioCapture {
         ) { _ in onConfigurationChange() }
 
         return Backend(
-            inputFormat: { engine.inputNode.outputFormat(forBus: 0) },
+            // `inputFormat(forBus:)`, not `outputFormat(forBus:)`: after
+            // routing, the output side still reports the format cached when
+            // the node was created (measured: cached 44.1 kHz vs routed
+            // 48 kHz device). A tap installed with that stale format never
+            // fires — the engine runs and zero buffers arrive. The input
+            // side reports the routed hardware's true format. Pinned by
+            // AudioCaptureHardwareTests (opt-in, PARROT_AUDIO_HW=1).
+            inputFormat: { engine.inputNode.inputFormat(forBus: 0) },
             setInputDevice: { deviceID in
                 // Per-engine routing via the input unit's current-device
                 // property; the system default input is never written.
@@ -370,6 +394,7 @@ public final class AudioCapture {
                 try engine.start()
             },
             stopEngine: { engine.stop() },
+            isEngineRunning: { engine.isRunning },
             tearDown: { NotificationCenter.default.removeObserver(observer) })
     }
 

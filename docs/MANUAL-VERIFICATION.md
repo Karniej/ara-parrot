@@ -565,5 +565,14 @@ persisting a menu pick rewrites only the `microphone` key, preserving keys
 the binary does not know about. Only the physical unplug (section 9ter) is
 manual.
 
+One hardware check is automated but opt-in, because it needs a working input
+device and microphone permission: `PARROT_AUDIO_HW=1 swift test --filter
+AudioCaptureHardware` proves audio actually flows through the *routed* live
+path. It exists because the fake-backend suite cannot see inside the real
+engine, and the two bugs it pins — the stale cached tap format after routing,
+and the rebuild storm from the configuration-change notification a routed
+engine posts about its own start — each silently captured 0.00 s while all
+252 unit tests passed. Run it after any change to `liveBackend`.
+
 Not covered by any test, and not coverable: `Run`'s three lines of glue —
 transcribe, `process`, inject — which sections 1 through 4 above exist to check.

@@ -23,6 +23,12 @@ struct AudioCaptureTests {
         var started = false
         var engineStopped = false
         var toreDown = false
+        /// Models the hardware: a genuine device loss stops the engine
+        /// underneath us without `stopEngine` being called. Tests that
+        /// simulate a death set this before firing the notification —
+        /// mirroring the real discriminator, since a routed engine posts a
+        /// configuration change about its own (healthy) start too.
+        var deviceDied = false
         var order: [String] = []
         var onConfigurationChange: (() -> Void)?
 
@@ -48,6 +54,7 @@ struct AudioCaptureTests {
                     self.started = true
                 },
                 stopEngine: { self.engineStopped = true },
+                isEngineRunning: { self.started && !self.engineStopped && !self.deviceDied },
                 tearDown: { self.toreDown = true })
         }
     }
@@ -220,6 +227,7 @@ struct AudioCaptureTests {
         feed(first, frames: 4800)  // ~1600 samples
 
         device = 77  // the store re-resolved to a different device
+        first.deviceDied = true
         capture.handleConfigurationChange()
 
         #expect(first.tapRemoved)
@@ -241,6 +249,7 @@ struct AudioCaptureTests {
         try capture.start()
         feed(first, frames: 4800)
 
+        first.deviceDied = true
         capture.handleConfigurationChange()
 
         #expect(!second.started)
@@ -258,6 +267,7 @@ struct AudioCaptureTests {
         let capture = Harness([first, second, third]).capture()
         try capture.start()
         feed(first, frames: 4800)
+        first.deviceDied = true
         capture.handleConfigurationChange()
         _ = capture.stop()
 
@@ -281,6 +291,7 @@ struct AudioCaptureTests {
         let harness = Harness([first, second])
         let capture = harness.capture()
         try capture.start()
+        first.deviceDied = true
         capture.handleConfigurationChange()
         #expect(harness.built == 2)
         capture.handleConfigurationChange()
@@ -306,6 +317,7 @@ struct AudioCaptureTests {
         try capture.start()
         feed(first, frames: 4800)  // ~1360 samples at 16 kHz
 
+        first.deviceDied = true
         capture.handleConfigurationChange()  // dead probe → degraded
         #expect(!second.started)
 
@@ -331,6 +343,7 @@ struct AudioCaptureTests {
         let capture = harness.capture()
         try capture.start()
         feed(first, frames: 4800)
+        first.deviceDied = true
         capture.handleConfigurationChange()
 
         capture.handleRetryIfDegraded()  // no provider; the probe is dead
@@ -383,6 +396,7 @@ struct AudioCaptureTests {
         let third = FakeEngine(format: Self.live48kMono)
         let capture = Harness([first, second, third]).capture()
         try capture.start()
+        first.deviceDied = true
         capture.handleConfigurationChange()
 
         capture.retryIfDegraded()
@@ -413,9 +427,11 @@ struct AudioCaptureTests {
         capture.onTransition = { transitions.append($0) }
 
         try capture.start()
+        first.deviceDied = true
         capture.handleConfigurationChange()  // healthy rebuild → silent
         #expect(transitions.isEmpty)
 
+        second.deviceDied = true
         capture.handleConfigurationChange()  // dead probe → degraded
         #expect(transitions == [.degraded])
 
@@ -427,6 +443,29 @@ struct AudioCaptureTests {
 
         _ = capture.stop()  // a normal stop is not a transition
         #expect(transitions == [.degraded, .resumed])
+    }
+
+    /// The regression that shipped: a routed engine posts a configuration
+    /// change about its own start. Rebuilding on it tears the healthy engine
+    /// down before its first buffer — measured live: ~10 rebuilt engines in
+    /// 2 s and zero frames captured. A notification from an engine that is
+    /// still running is not a device loss and must change nothing.
+    @Test("a configuration change from a running engine is ignored")
+    func configChangeWhileEngineRunningIsIgnored() throws {
+        let engine = FakeEngine(format: Self.live48kMono)
+        let harness = Harness([engine])
+        let capture = harness.capture()
+        try capture.start()
+        feed(engine, frames: 4800)
+
+        capture.handleConfigurationChange()  // deviceDied stays false: routing echo
+
+        #expect(harness.built == 1)  // no rebuild
+        #expect(!engine.toreDown)
+        #expect(!engine.tapRemoved)
+        #expect(!engine.engineStopped)
+        feed(engine, frames: 2400)  // the tap keeps recording
+        #expect(capture.stop().count > 1800)
     }
 
     // MARK: - Stale notifications
@@ -469,6 +508,7 @@ struct AudioCaptureTests {
         let capture = harness.capture()
         try capture.start()
 
+        first.deviceDied = true
         first.onConfigurationChange?()
 
         // The hop is async by design (the notification can fire on the very
