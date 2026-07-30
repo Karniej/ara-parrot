@@ -100,11 +100,11 @@ struct Run: ParsableCommand {
         }
 
         let transcriber = WhisperKitTranscriber(model: chosenModel)
-        // The formatting model is loaded here too, before the hotkey loop, and
-        // never on the dictation path: a warm load is ~1s and a cold one ~38s
-        // against a 2500ms per-engine deadline, so a lazy first load would be
-        // abandoned every time — and abandoning compute-bound work does not
-        // stop it, it only stops waiting for it.
+        // The formatting model is loaded at startup too — before the hotkey
+        // arms, and never on the dictation path: a warm load is ~1s and a cold
+        // one ~38s against a 2500ms per-engine deadline, so a lazy first load
+        // would be abandoned every time — and abandoning compute-bound work
+        // does not stop it, it only stops waiting for it.
         //
         // Built unconditionally so the chain always has the candidate, but only
         // *warmed* under the engines that will consult it: `apple`, `rules` and
@@ -112,46 +112,13 @@ struct Run: ParsableCommand {
         // memory for a model they never call.
         let mlx = Pipeline.mlxFormatter()
         let warmsMLX = config.engine == .mlx || config.engine == .cloud
-        let warmupSemaphore = DispatchSemaphore(value: 0)
-        nonisolated(unsafe) var warmupError: Error?
-        nonisolated(unsafe) var mlxWarmupError: Error?
-        Task.detached {
-            do {
-                try await transcriber.warmUp()
-            } catch {
-                warmupError = error
-            }
-            if warmsMLX {
-                do {
-                    try await mlx.warmUp()
-                } catch {
-                    mlxWarmupError = error
-                }
-            }
-            warmupSemaphore.signal()
-        }
-        warmupSemaphore.wait()
-        if let warmupError {
-            FileHandle.standardError.write(Data("warmup failed: \(warmupError)\n".utf8))
-            throw ExitCode(1)
-        }
-        // A warning, not a failure. Transcription without formatting is the
-        // whole app minus its polish; formatting without transcription is
-        // nothing. So a missing Whisper model is fatal above and a missing
-        // formatting model is one line here, with the command that fixes it.
-        if let mlxWarmupError {
-            let detail: String
-            if case .transportFailure(let message)? = mlxWarmupError as? FormatterError {
-                detail = message
-            } else {
-                detail = "\(mlxWarmupError)"
-            }
-            FileHandle.standardError.write(Data(
-                "! local formatting unavailable: \(detail)\n".utf8))
-            FileHandle.standardError.write(Data(
-                "  dictation will use rule-based cleanup until then\n".utf8))
-        }
 
+        // AppKit before the warm-up, not after it. The status item below must
+        // exist while models load — the whole point of the non-blocking warm-up
+        // is that a LaunchAgent user sees *something* during a cold download —
+        // and AppKit's one-time initialisation must happen on the main thread,
+        // before the warm-up task spawns threads that might touch frameworks
+        // it owns.
         let app = NSApplication.shared
         app.setActivationPolicy(.accessory)
 
@@ -188,9 +155,15 @@ struct Run: ParsableCommand {
 
         let hotkeyLabel = chosenHotkey.label
         let startingMode = mode ?? config.mode
+        // Created before the warm-up starts, so the first thing a user sees is
+        // a menu bar item that says what the daemon is doing. Until the models
+        // are warm the hotkey is not armed and holding it does nothing; the
+        // state line is the explanation.
         let menuBar = MainActor.assumeIsolated {
-            MenuBarController(modelID: chosenModel.id, hotkeyLabel: hotkeyLabel,
-                              modeID: startingMode)
+            let controller = MenuBarController(modelID: chosenModel.id, hotkeyLabel: hotkeyLabel,
+                                               modeID: startingMode)
+            controller.setWarmingUp()
+            return controller
         }
 
         // The dictionary itself is loaded per utterance — that is the entire
@@ -295,125 +268,8 @@ struct Run: ParsableCommand {
                 Task { @MainActor in menuBar.setMode(resolved.id) }
             })
 
-        do {
-            try monitor.start { event in
-                switch event {
-                case .pressed:
-                    do {
-                        try capture.start()
-                        FileHandle.standardError.write(Data("● recording\n".utf8))
-                        MainActor.assumeIsolated {
-                            overlay?.show(.recording)
-                            menuBar.setRecording(true)
-                        }
-                    } catch {
-                        // A stderr line is invisible for a menu-bar daemon;
-                        // the spec's contract is an on-screen answer: an
-                        // error pill (self-hiding — there is no release-path
-                        // cleanup coming for a recording that never started)
-                        // and a menu state line that stops promising
-                        // dictation. The Microphone submenu already explains
-                        // itself: the store repainted it "no microphone
-                        // connected" when the last device left.
-                        FileHandle.standardError.write(Data("capture failed: \(error)\n".utf8))
-                        MainActor.assumeIsolated {
-                            overlay?.show(.error("no microphone"))
-                            menuBar.setNoMicrophone()
-                        }
-                    }
-                case .released:
-                    let samples = capture.stop()
-                    // Sampled here — on the main thread, where the AppKit read
-                    // is legal — and then carried by value into this utterance's
-                    // task. Not read later from a shared slot: formatting starts
-                    // seconds from now, and by then a user who has begun their
-                    // next utterance would have moved the answer on.
-                    let frontmostBundleID: String? = MainActor.assumeIsolated {
-                        let id = FrontmostApp.bundleID
-                        overlay?.show(.transcribing)
-                        menuBar.setTranscribing()
-                        return id
-                    }
-                    let seconds = Double(samples.count) / AudioCapture.targetSampleRate
-                    let rms = computeRMS(samples)
-                    FileHandle.standardError.write(Data(
-                        String(format: "○ captured %.2fs · rms %.3f\n", seconds, rms).utf8
-                    ))
-                    if dumpWav, !samples.isEmpty {
-                        let path = "/tmp/parrot-last.wav"
-                        do {
-                            try WAVWriter.write(samples: samples, sampleRate: 16_000, to: path)
-                            FileHandle.standardError.write(Data("  wrote \(path)\n".utf8))
-                        } catch {
-                            FileHandle.standardError.write(Data("  wav write failed: \(error)\n".utf8))
-                        }
-                    }
-                    guard !samples.isEmpty else {
-                        MainActor.assumeIsolated {
-                            overlay?.hide()
-                            menuBar.setRecording(false)
-                        }
-                        return
-                    }
-                    Task {
-                        let started = Date()
-                        do {
-                            let text = try await transcriber.transcribe(samples)
-                            let transcribed = Date().timeIntervalSince(started)
-                            FileHandle.standardError.write(Data(
-                                String(format: "→ %.2fs · %@\n", transcribed, text).utf8
-                            ))
-                            // Never `try?`, and never a throwing call: `process`
-                            // returns a String and cannot fail, so a broken
-                            // formatter can only ever degrade to raw text.
-                            let cleaned = await session.process(
-                                text, override: modeOverride, manual: nil,
-                                frontmostBundleID: frontmostBundleID)
-                            let total = Date().timeIntervalSince(started)
-                            if cleaned.isEmpty, !text.isEmpty {
-                                // An empty result for a non-empty transcript is
-                                // `process`'s report that the request was
-                                // withdrawn. Logged as its own thing: an `↦`
-                                // line with nothing after it would read as "the
-                                // formatter deleted your sentence".
-                                FileHandle.standardError.write(Data(
-                                    String(format: "⨯ %.2fs · cancelled; nothing injected\n",
-                                           total).utf8
-                                ))
-                            } else if !cleaned.isEmpty, cleaned != text {
-                                FileHandle.standardError.write(Data(
-                                    String(format: "↦ %.2fs · %@\n", total, cleaned).utf8
-                                ))
-                            }
-                            await MainActor.run {
-                                // The empty string is `process`'s "nothing to
-                                // type": an empty transcript, or a request that
-                                // was cancelled while it was being formatted.
-                                // Injecting a withdrawn request's text is the
-                                // failure the chain propagates cancellation to
-                                // prevent, so the guard is the point, not tidiness.
-                                if !cleaned.isEmpty {
-                                    TextInjector.inject(cleaned)
-                                }
-                                overlay?.hide()
-                                menuBar.setRecording(false)
-                            }
-                        } catch {
-                            FileHandle.standardError.write(Data("transcription failed: \(error)\n".utf8))
-                            await MainActor.run {
-                                overlay?.hide()
-                                menuBar.setRecording(false)
-                            }
-                        }
-                    }
-                }
-            }
-        } catch {
-            FileHandle.standardError.write(Data("failed to register hotkey tap: \(error)\n".utf8))
-            FileHandle.standardError.write(Data("run `parrot setup` to configure permissions.\n".utf8))
-            throw ExitCode(1)
-        }
-
+        // Installed before the warm-up rather than after the hotkey arms, so a
+        // ^C during a long first-run model download still shuts down cleanly.
         let sigint = DispatchSource.makeSignalSource(signal: SIGINT, queue: .main)
         sigint.setEventHandler {
             FileHandle.standardError.write(Data("\nshutting down\n".utf8))
@@ -423,10 +279,204 @@ struct Run: ParsableCommand {
         sigint.resume()
         signal(SIGINT, SIG_IGN)
 
-        FileHandle.standardError.write(Data(
-            "listening on \(chosenHotkey.label) hold · model: \(chosenModel.id) · ^C to quit\n".utf8
-        ))
-        app.run()
+        // Arms the hotkey and declares the daemon ready. Runs on the main
+        // actor only once the transcriber is warm — never before: dictating
+        // into a cold transcriber is the reason startup used to block, and
+        // that ordering is the part of the old design worth keeping.
+        let armHotkey: @MainActor () -> Void = {
+            do {
+                try monitor.start { event in
+                    switch event {
+                    case .pressed:
+                        do {
+                            try capture.start()
+                            FileHandle.standardError.write(Data("● recording\n".utf8))
+                            MainActor.assumeIsolated {
+                                overlay?.show(.recording)
+                                menuBar.setRecording(true)
+                            }
+                        } catch {
+                            // A stderr line is invisible for a menu-bar daemon;
+                            // the spec's contract is an on-screen answer: an
+                            // error pill (self-hiding — there is no release-path
+                            // cleanup coming for a recording that never started)
+                            // and a menu state line that stops promising
+                            // dictation. The Microphone submenu already explains
+                            // itself: the store repainted it "no microphone
+                            // connected" when the last device left.
+                            FileHandle.standardError.write(Data("capture failed: \(error)\n".utf8))
+                            MainActor.assumeIsolated {
+                                overlay?.show(.error("no microphone"))
+                                menuBar.setNoMicrophone()
+                            }
+                        }
+                    case .released:
+                        let samples = capture.stop()
+                        // Sampled here — on the main thread, where the AppKit read
+                        // is legal — and then carried by value into this utterance's
+                        // task. Not read later from a shared slot: formatting starts
+                        // seconds from now, and by then a user who has begun their
+                        // next utterance would have moved the answer on.
+                        let frontmostBundleID: String? = MainActor.assumeIsolated {
+                            let id = FrontmostApp.bundleID
+                            overlay?.show(.transcribing)
+                            menuBar.setTranscribing()
+                            return id
+                        }
+                        let seconds = Double(samples.count) / AudioCapture.targetSampleRate
+                        let rms = computeRMS(samples)
+                        FileHandle.standardError.write(Data(
+                            String(format: "○ captured %.2fs · rms %.3f\n", seconds, rms).utf8
+                        ))
+                        if dumpWav, !samples.isEmpty {
+                            let path = "/tmp/parrot-last.wav"
+                            do {
+                                try WAVWriter.write(samples: samples, sampleRate: 16_000, to: path)
+                                FileHandle.standardError.write(Data("  wrote \(path)\n".utf8))
+                            } catch {
+                                FileHandle.standardError.write(Data("  wav write failed: \(error)\n".utf8))
+                            }
+                        }
+                        guard !samples.isEmpty else {
+                            MainActor.assumeIsolated {
+                                overlay?.hide()
+                                menuBar.setRecording(false)
+                            }
+                            return
+                        }
+                        Task {
+                            let started = Date()
+                            do {
+                                let text = try await transcriber.transcribe(samples)
+                                let transcribed = Date().timeIntervalSince(started)
+                                FileHandle.standardError.write(Data(
+                                    String(format: "→ %.2fs · %@\n", transcribed, text).utf8
+                                ))
+                                // Never `try?`, and never a throwing call: `process`
+                                // returns a String and cannot fail, so a broken
+                                // formatter can only ever degrade to raw text.
+                                let cleaned = await session.process(
+                                    text, override: modeOverride, manual: nil,
+                                    frontmostBundleID: frontmostBundleID)
+                                let total = Date().timeIntervalSince(started)
+                                if cleaned.isEmpty, !text.isEmpty {
+                                    // An empty result for a non-empty transcript is
+                                    // `process`'s report that the request was
+                                    // withdrawn. Logged as its own thing: an `↦`
+                                    // line with nothing after it would read as "the
+                                    // formatter deleted your sentence".
+                                    FileHandle.standardError.write(Data(
+                                        String(format: "⨯ %.2fs · cancelled; nothing injected\n",
+                                               total).utf8
+                                    ))
+                                } else if !cleaned.isEmpty, cleaned != text {
+                                    FileHandle.standardError.write(Data(
+                                        String(format: "↦ %.2fs · %@\n", total, cleaned).utf8
+                                    ))
+                                }
+                                await MainActor.run {
+                                    // The empty string is `process`'s "nothing to
+                                    // type": an empty transcript, or a request that
+                                    // was cancelled while it was being formatted.
+                                    // Injecting a withdrawn request's text is the
+                                    // failure the chain propagates cancellation to
+                                    // prevent, so the guard is the point, not tidiness.
+                                    if !cleaned.isEmpty {
+                                        TextInjector.inject(cleaned)
+                                    }
+                                    overlay?.hide()
+                                    menuBar.setRecording(false)
+                                }
+                            } catch {
+                                FileHandle.standardError.write(Data("transcription failed: \(error)\n".utf8))
+                                await MainActor.run {
+                                    overlay?.hide()
+                                    menuBar.setRecording(false)
+                                }
+                            }
+                        }
+                    }
+                }
+            } catch {
+                FileHandle.standardError.write(Data("failed to register hotkey tap: \(error)\n".utf8))
+                FileHandle.standardError.write(Data("run `parrot setup` to configure permissions.\n".utf8))
+                // Not `ExitCode`: the run loop is already pumping, so there is
+                // no `throws` path left to ride out of `run()` on.
+                Darwin.exit(1)
+            }
+            menuBar.setReady()
+            FileHandle.standardError.write(Data(
+                "listening on \(chosenHotkey.label) hold · model: \(chosenModel.id) · ^C to quit\n".utf8
+            ))
+        }
+
+        // The warm-up itself, off the main thread so the status item stays
+        // alive and responsive while models load — a cold download takes
+        // minutes, and the old semaphore here froze the process through all
+        // of it. The completion hops to the main actor to arm the hotkey;
+        // failure semantics are unchanged from the blocking design: a cold
+        // transcriber is fatal, a cold formatter is a warning and the rules
+        // floor. (Skipping the formatter after a fatal transcriber failure is
+        // the one difference — there is no point loading 0.9GB for a process
+        // about to exit.)
+        Task.detached {
+            var transcriberFailure: Error?
+            do {
+                try await transcriber.warmUp()
+            } catch {
+                transcriberFailure = error
+            }
+            var mlxFailure: Error?
+            if transcriberFailure == nil, warmsMLX {
+                FileHandle.standardError.write(Data(
+                    "loading \(MLXModel.id) (formatting — the first run can take a while)...\n"
+                        .utf8))
+                let started = Date()
+                do {
+                    try await mlx.warmUp()
+                    FileHandle.standardError.write(Data(String(
+                        format: "✓ %@ ready (%.1fs)\n",
+                        MLXModel.id, Date().timeIntervalSince(started)).utf8))
+                } catch {
+                    mlxFailure = error
+                }
+            }
+            let warmupError = transcriberFailure
+            let mlxWarmupError = mlxFailure
+            await MainActor.run {
+                if let warmupError {
+                    FileHandle.standardError.write(Data("warmup failed: \(warmupError)\n".utf8))
+                    Darwin.exit(1)
+                }
+                // A warning, not a failure. Transcription without formatting
+                // is the whole app minus its polish; formatting without
+                // transcription is nothing. So a missing Whisper model is
+                // fatal above and a missing formatting model is one line
+                // here, with the command that fixes it.
+                if let mlxWarmupError {
+                    let detail: String
+                    if case .transportFailure(let message)? = mlxWarmupError as? FormatterError {
+                        detail = message
+                    } else {
+                        detail = "\(mlxWarmupError)"
+                    }
+                    FileHandle.standardError.write(Data(
+                        "! local formatting unavailable: \(detail)\n".utf8))
+                    FileHandle.standardError.write(Data(
+                        "  dictation will use rule-based cleanup until then\n".utf8))
+                }
+                armHotkey()
+            }
+        }
+
+        // `app.run()` never returns, but ARC is still free to release locals
+        // after their last static use — and the event tap holds an
+        // *unretained* pointer to `monitor` (see `HotkeyMonitor.start`), so
+        // its deallocation would leave the tap callback dangling. Pin the
+        // roots of the object graph for as long as the application runs.
+        withExtendedLifetime((monitor, sigint, menuBar)) {
+            app.run()
+        }
     }
 }
 
