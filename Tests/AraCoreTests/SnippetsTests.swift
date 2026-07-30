@@ -254,4 +254,89 @@ struct SnippetsTests {
         _ = Snippets.load(from: url, warn: warnings.sink)
         #expect(warnings.lines.count == 2)
     }
+
+    // MARK: - starter: the file "Edit snippets…" is born with
+
+    private func uniqueURL(_ tag: String) -> URL {
+        FileManager.default.temporaryDirectory
+            .appendingPathComponent("ara-snip-\(tag)-\(UUID().uuidString).json")
+    }
+
+    /// The starter must be snippets the per-utterance load reads back exactly
+    /// — a user whose first act is "Edit snippets…" gets a working file, not
+    /// a template that warns on the next utterance.
+    @Test("the starter file round-trips through load cleanly")
+    func starterRoundTripsThroughLoad() throws {
+        let url = uniqueURL("starter-rt")
+        try Snippets.starter.write(to: url)
+        let warnings = Warnings()
+        let loaded = Snippets.load(from: url, warn: warnings.sink)
+        #expect(loaded == Snippets.starter)
+        #expect(warnings.lines.isEmpty)
+    }
+
+    /// JSON has no comments, so the example entry *is* the documentation: the
+    /// README's own trigger, with a placeholder URL that says "put yours
+    /// here" — one line, so it is also safe to leave in place.
+    @Test("the starter's example entry is the README's trigger with a placeholder")
+    func starterExampleEntry() {
+        #expect(Snippets.starter.entries == [
+            entry("insert my scheduling link",
+                  "https://example.com/your-scheduling-link"),
+        ])
+    }
+
+    @Test("createStarterFileIfAbsent writes the starter where nothing was")
+    func starterCreatedWhenAbsent() throws {
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("ara-snip-starter-\(UUID().uuidString)")
+            .appendingPathComponent("snippets.json")
+        #expect(try Snippets.createStarterFileIfAbsent(at: url))
+        #expect(try Data(contentsOf: url) == Snippets.starter.encoded())
+    }
+
+    /// The user's accumulated snippets — or even their half-broken edit —
+    /// must never be replaced by the example. Any existing file, parseable or
+    /// not, stays byte-identical.
+    @Test("createStarterFileIfAbsent never touches an existing file")
+    func starterLeavesExistingFileAlone() throws {
+        let existing = uniqueURL("starter-existing")
+        try snippets([entry("sign off formal", "Best regards")]).write(to: existing)
+        let before = try Data(contentsOf: existing)
+        #expect(try !Snippets.createStarterFileIfAbsent(at: existing))
+        #expect(try Data(contentsOf: existing) == before)
+
+        let broken = uniqueURL("starter-broken")
+        try Data("not json".utf8).write(to: broken)
+        #expect(try !Snippets.createStarterFileIfAbsent(at: broken))
+        #expect(try Data(contentsOf: broken) == Data("not json".utf8))
+    }
+
+    // MARK: - listingLines: what `parrot snippets` prints
+
+    @Test("the listing is the path, then one trigger → expansion line per entry")
+    func listingLinesForEntries() {
+        let s = snippets([
+            entry("insert my scheduling link", "https://cal.com/x/30min"),
+            entry("sign off formal", "Best regards,\nPawel Karniej\nSilpho"),
+        ])
+        #expect(s.listingLines(path: "/home/u/.config/ara/snippets.json") == [
+            "/home/u/.config/ara/snippets.json",
+            "insert my scheduling link → https://cal.com/x/30min",
+            "sign off formal → Best regards, …",
+        ])
+    }
+
+    /// Entry order is file order everywhere else; the listing must not sort.
+    @Test("the listing preserves file order")
+    func listingPreservesOrder() {
+        let s = snippets([entry("zulu", "z"), entry("alpha", "a")])
+        #expect(s.listingLines(path: "p") == ["p", "zulu → z", "alpha → a"])
+    }
+
+    @Test("empty snippets list as 'no snippets yet' plus the path")
+    func listingLinesWhenEmpty() {
+        let lines = snippets([]).listingLines(path: "/x/snippets.json")
+        #expect(lines == ["no snippets yet — snippets will live at /x/snippets.json"])
+    }
 }

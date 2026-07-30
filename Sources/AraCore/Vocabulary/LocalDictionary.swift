@@ -274,6 +274,52 @@ public struct LocalDictionary: Sendable, Equatable {
         try encoded().write(to: url, options: .atomic)
     }
 
+    // MARK: - Starter file
+
+    /// What "Edit dictionary…" writes when there is no file yet. JSON has no
+    /// comments, so the example entry is the documentation: the same
+    /// `Ara ← arra, aara` the README teaches with, live and harmless — the
+    /// worst it can do is spell the product's name right. It round-trips
+    /// through `load` cleanly, so the first thing the editor shows is a
+    /// working file, not a template the next utterance would warn about.
+    public static let starter = LocalDictionary(entries: [
+        Entry(canonical: "Ara", variants: ["arra", "aara"])
+    ])
+
+    /// Writes `starter` where no file exists, creating the directory too —
+    /// the half of "Edit dictionary…" that guarantees the editor opens on
+    /// something. Any existing file, parseable or not, is left byte-for-byte
+    /// alone: the user's accumulated vocabulary (or their half-finished hand
+    /// edit) must never be replaced by an example.
+    ///
+    /// Returns whether it wrote; throws only when the write itself fails,
+    /// which the menu reports best-effort, like every other persistence
+    /// failure.
+    @discardableResult
+    public static func createStarterFileIfAbsent(at url: URL) throws -> Bool {
+        guard !FileManager.default.fileExists(atPath: url.path) else {
+            return false
+        }
+        try starter.write(to: url)
+        return true
+    }
+
+    // MARK: - Listing
+
+    /// The `parrot dictionary` printout, pure so it is testable: the path
+    /// (the one thing the menu never shows), then one `canonical ← variants`
+    /// line per entry, in file order — the same order every other reader of
+    /// this file preserves. Empty collapses to a single line that still names
+    /// the path, because the path *is* the answer to "where do I add one".
+    public func listingLines(path: String) -> [String] {
+        guard !entries.isEmpty else {
+            return ["no dictionary yet — corrections will live at \(path)"]
+        }
+        return [path] + entries.map { entry in
+            "\(entry.canonical) ← \(entry.variants.joined(separator: ", "))"
+        }
+    }
+
     /// How a *rewrite* reads the file, as opposed to how dictation does.
     ///
     /// `load` tolerates a broken file by behaving as empty, because dictation

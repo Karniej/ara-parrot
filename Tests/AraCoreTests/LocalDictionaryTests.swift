@@ -342,6 +342,82 @@ struct LocalDictionaryTests {
         #expect(try Data(contentsOf: url) == d.encoded())
     }
 
+    // MARK: - starter: the file "Edit dictionary…" is born with
+
+    /// The starter must be a dictionary the per-utterance load reads back
+    /// exactly — a user whose first act is "Edit dictionary…" gets a working
+    /// file, not a template that warns on the next utterance.
+    @Test("the starter file round-trips through load cleanly")
+    func starterRoundTripsThroughLoad() throws {
+        let url = uniqueURL("starter-rt")
+        try LocalDictionary.starter.write(to: url)
+        let warnings = Warnings()
+        let loaded = LocalDictionary.load(from: url, warn: warnings.sink)
+        #expect(loaded == LocalDictionary.starter)
+        #expect(warnings.lines.isEmpty)
+    }
+
+    /// JSON has no comments, so the example entry *is* the documentation: it
+    /// must match the README's example — canonical "Ara", misheard variants —
+    /// so the file and the docs teach the same lesson.
+    @Test("the starter's example entry matches the README's")
+    func starterMatchesREADMEExample() {
+        #expect(LocalDictionary.starter.entries
+                == [entry("Ara", "arra", "aara")])
+    }
+
+    @Test("createStarterFileIfAbsent writes the starter where nothing was")
+    func starterCreatedWhenAbsent() throws {
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("ara-dict-starter-\(UUID().uuidString)")
+            .appendingPathComponent("dictionary.json")
+        #expect(try LocalDictionary.createStarterFileIfAbsent(at: url))
+        #expect(try Data(contentsOf: url)
+                == LocalDictionary.starter.encoded())
+    }
+
+    /// The user's accumulated vocabulary — or even their half-broken edit —
+    /// must never be replaced by the example. Any existing file, parseable or
+    /// not, stays byte-identical.
+    @Test("createStarterFileIfAbsent never touches an existing file")
+    func starterLeavesExistingFileAlone() throws {
+        let existing = uniqueURL("starter-existing")
+        try dict([entry("Kraków", "krakuf")]).write(to: existing)
+        let before = try Data(contentsOf: existing)
+        #expect(try !LocalDictionary.createStarterFileIfAbsent(at: existing))
+        #expect(try Data(contentsOf: existing) == before)
+
+        let broken = uniqueURL("starter-broken")
+        try Data("not json".utf8).write(to: broken)
+        #expect(try !LocalDictionary.createStarterFileIfAbsent(at: broken))
+        #expect(try Data(contentsOf: broken) == Data("not json".utf8))
+    }
+
+    // MARK: - listingLines: what `parrot dictionary` prints
+
+    @Test("the listing is the path, then one canonical ← variants line per entry")
+    func listingLinesForEntries() {
+        let d = dict([entry("Ara", "arra", "aara"), entry("Kraków", "krakuf")])
+        #expect(d.listingLines(path: "/home/u/.config/ara/dictionary.json") == [
+            "/home/u/.config/ara/dictionary.json",
+            "Ara ← arra, aara",
+            "Kraków ← krakuf",
+        ])
+    }
+
+    /// Entry order is file order everywhere else; the listing must not sort.
+    @Test("the listing preserves file order")
+    func listingPreservesOrder() {
+        let d = dict([entry("Zulu", "zoolu"), entry("Alpha", "alfa")])
+        #expect(d.listingLines(path: "p") == ["p", "Zulu ← zoolu", "Alpha ← alfa"])
+    }
+
+    @Test("an empty dictionary lists as 'no dictionary yet' plus the path")
+    func listingLinesWhenEmpty() {
+        let lines = dict([]).listingLines(path: "/x/dictionary.json")
+        #expect(lines == ["no dictionary yet — corrections will live at /x/dictionary.json"])
+    }
+
     // MARK: - UnsavedCorrections: what applies when the write failed
 
     @Test("with nothing remembered the overlay changes nothing")

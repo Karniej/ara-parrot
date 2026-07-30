@@ -300,6 +300,72 @@ struct ConfigTests {
         #expect(try String(contentsOf: url, encoding: .utf8) == "[1,2,3]")
     }
 
+    // MARK: - persistCleanup: the same one-key rewrite, for the Cleanup menu
+
+    /// The same critical property `persistMicrophone` pins: a menu pick must
+    /// not destroy keys this version of parrot does not know about.
+    @Test("persisting cleanup preserves every other key, known and unknown")
+    func persistCleanupPreservesUnknownKeys() throws {
+        let url = write(#"""
+        {"engine":"rules","timeoutMs":900,"cloud":{"model":"m"},
+         "futureKey":{"nested":[1,2]},"flag":true}
+        """#)
+        try Config.persistCleanup(.high, at: url)
+
+        let saved = try json(at: url)
+        #expect(saved["cleanup"] as? String == "high")
+        #expect(saved["engine"] as? String == "rules")
+        #expect(saved["timeoutMs"] as? Int == 900)
+        #expect((saved["cloud"] as? [String: Any])?["model"] as? String == "m")
+        #expect((saved["futureKey"] as? [String: Any])?["nested"] as? [Int] == [1, 2])
+        #expect(saved["flag"] as? Bool == true)
+
+        // And the rewritten file still loads without a single warning.
+        let warnings = Warnings()
+        let cfg = Config.load(from: url, warn: warnings.sink)
+        #expect(cfg.cleanup == .high)
+        #expect(cfg.engine == .rules)
+        #expect(warnings.lines.isEmpty)
+    }
+
+    @Test("persisting cleanup overwrites a previous pick")
+    func persistCleanupOverwritesPreviousPick() throws {
+        let url = write(#"{"cleanup":"none"}"#)
+        try Config.persistCleanup(.light, at: url)
+        #expect(try json(at: url)["cleanup"] as? String == "light")
+    }
+
+    @Test("a missing config file is created, directories included")
+    func persistCleanupCreatesFile() throws {
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("ara-cfg-\(UUID().uuidString)")
+            .appendingPathComponent("config.json")
+        try Config.persistCleanup(.none, at: url)
+        let saved = try json(at: url)
+        #expect(saved["cleanup"] as? String == "none")
+        #expect(saved.count == 1)
+    }
+
+    /// A file that cannot be parsed cannot be selectively rewritten; writing
+    /// anyway would replace the user's (repairable) file with our guess at it.
+    @Test("persisting cleanup into a malformed file throws, bytes untouched")
+    func persistCleanupMalformedUntouched() throws {
+        let url = write("{ not json")
+        #expect(throws: (any Error).self) {
+            try Config.persistCleanup(.high, at: url)
+        }
+        #expect(try String(contentsOf: url, encoding: .utf8) == "{ not json")
+    }
+
+    @Test("persisting cleanup into a non-object top level throws, untouched")
+    func persistCleanupNonObjectUntouched() throws {
+        let url = write("[1,2,3]")
+        #expect(throws: (any Error).self) {
+            try Config.persistCleanup(.high, at: url)
+        }
+        #expect(try String(contentsOf: url, encoding: .utf8) == "[1,2,3]")
+    }
+
     @Test("a partial cloud object keeps sibling settings and cloud defaults")
     func partialCloudObject() {
         let cfg = Config.load(from: write(#"""
