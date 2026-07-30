@@ -478,7 +478,12 @@ built-in one.
       utterance must **survive on the fallback device** — text appears, the
       daemon stays alive, and the submenu now shows
       `preferred mic disconnected — using <device>` with **no row checked**
-      (the pick is remembered, not silently rewritten).
+      (the pick is remembered, not silently rewritten). **Run this several
+      times**: the engine's own notification and the device store race, and
+      which fires first is nondeterministic. On some runs the pill may flash
+      `no microphone` for an instant before the store's signal resumes
+      recording — that flash is fine; words silently lost after the yank
+      despite the fallback are the failure this step exists to catch.
 - [ ] 👤 **9t-e. Replug it.** The submenu's check must return to the USB mic
       by itself — no restart — and the next utterance must record from it.
 - [ ] 👤 **9t-f. Unplug with no other mic** (a Mac whose built-in mic can be
@@ -486,12 +491,24 @@ built-in one.
       MIDI Setup may be needed). Yank the only device mid-dictation and
       release. The utterance must **end with the audio captured up to the
       unplug** — whatever was said before the yank is transcribed and typed —
-      and the daemon must stay alive. The submenu must read
-      `no microphone connected`.
+      and the daemon must stay alive. The loss must be *visible* the moment
+      it happens: the pill switches from the waveform to `no microphone` and
+      the menu state line reads `no microphone`, not `● recording`. The
+      submenu must read `no microphone connected`. **Run this several
+      times** — the same nondeterministic race as 9t-d decides which handler
+      sees the loss first.
+- [ ] 👤 **9t-f2. Replug while still holding the key.** As 9t-f, but keep
+      holding after the yank, plug the mic back in (or reconnect AirPods),
+      and keep speaking before releasing. Recording must resume into the
+      *same* utterance — the pill returns to the waveform, the menu to
+      `● recording`, and the transcript contains words from before *and*
+      after the gap.
 - [ ] 👤 **9t-g. Hotkey with no mic at all.** With no input devices, hold the
-      hotkey. Expect one `capture failed: …` line, no overlay stuck on
-      screen, an idle menu state, and a daemon that shrugs it off — the next
-      press after a mic returns must record normally.
+      hotkey. Expect one `capture failed: …` line, a `no microphone` pill
+      that hides itself after about a second and a half (no overlay stuck on
+      screen), `no microphone` as the menu state line, and a daemon that
+      shrugs it off. When a mic returns, the state line goes back to idle by
+      itself and the next press must record normally.
 - [ ] 👤 **9t-h. AirPods connect and disconnect.** With "System default"
       picked, connect AirPods (macOS usually makes them the default input):
       the submenu must gain the AirPods row and the next utterance must
@@ -539,6 +556,10 @@ mode resolution precedence; and that the pipeline the daemon assembles honours
 first input → none, and every fallback transition); that a dead device's
 format is refused before the tap that would crash on it; the mid-recording
 rebuild decision, including degrading while keeping captured samples; the
+store-driven retry out of degraded — resuming into the same buffer, staying
+degraded silently on failure, and strict no-ops while idle or recording; that
+a stale notification from a torn-down engine cannot disturb the next
+recording; the degrade/resume transition reporting the UI hangs off; the
 submenu's titles, checks, and status lines for every store state; and that
 persisting a menu pick rewrites only the `microphone` key, preserving keys
 the binary does not know about. Only the physical unplug (section 9ter) is

@@ -65,10 +65,13 @@ survives replug and reboot; the menu writes it so there is no reason to type
 one by hand) and only that key is touched. Picking **System default** clears
 it.
 
-If the picked mic is unplugged, parrot falls back to the system default until
-it returns — the submenu says so — and a mic that dies mid-dictation does not
-lose the utterance: recording continues on whatever input remains, or ends
-with the audio captured so far when none does.
+If the picked mic is unplugged, parrot falls back — to the system default
+input, or to the first available input when the default is not usable — until
+it returns; the submenu says so. A mic that dies mid-dictation does not lose
+the utterance: recording continues on whatever input remains. When none does,
+the pill reads "no microphone" and everything captured so far is kept —
+plugging a mic in before you release the key resumes the same utterance, and
+releasing transcribes what was captured up to the loss.
 
 ## Stack
 
