@@ -123,8 +123,9 @@ and — the part worth reading — *when* it takes effect:
 | **Run Diagnostics…** | `parrot doctor`'s report in a window, monospaced, with a Copy report button | — |
 | **Quit parrot** | quits | immediately |
 
-Every submenu states its own timing in a caption, so the menu never claims a
-restart-bound pick changed the running session. A pick that could not be
+Every submenu whose pick is not immediate states its timing in a caption, so
+the menu never claims a restart-bound pick changed the running session; the
+Microphone and Mode submenus need none, because they apply at once. A pick that could not be
 saved (an unwritable or malformed config file) keeps the old checkmark and
 warns on stderr — the file is never overwritten with a guess.
 

@@ -124,3 +124,25 @@ struct LegacyLogsTests {
         #expect(LegacyLogs.purge(paths: [ghost]).isEmpty)
     }
 }
+
+@Suite("InstallStartNotice")
+struct InstallStartNoticeTests {
+    /// The bug this pins: the menu used to claim "has started now"
+    /// unconditionally, while `installAgent` returns normally after a failed
+    /// `launchctl bootstrap` (writing only a stderr warning that launchd sends
+    /// to /dev/null). A notice may only promise what the outcome carries.
+    @Test("a started agent is reported as running now")
+    func startedSaysRunning() {
+        let notice = Install.startNotice(for: .started)
+        #expect(notice.contains("has started now"))
+        #expect(notice.contains("two daemons"))
+    }
+
+    @Test("a written-but-not-started agent never claims to be running")
+    func notStartedNeverClaimsRunning() {
+        let notice = Install.startNotice(for: .plistWrittenNotStarted)
+        #expect(!notice.contains("has started now"))
+        #expect(notice.contains("next login"))
+        #expect(notice.contains("could not be started"))
+    }
+}

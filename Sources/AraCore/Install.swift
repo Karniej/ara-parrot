@@ -108,7 +108,34 @@ public struct Install: ParsableCommand {
     /// A caller whose own process is a foreground daemon (the menu) owes the
     /// user that fact — two daemons will both grab the hotkey until one
     /// quits.
-    public static func installAgent() throws {
+    /// Whether the agent is *running* after the call, not merely installed.
+    /// `launchctl bootstrap` can fail while the plist write succeeds, and a
+    /// caller that reports "started" on that outcome is claiming something
+    /// the code declined to verify.
+    public enum StartOutcome: Equatable, Sendable {
+        case started
+        case plistWrittenNotStarted
+    }
+
+    /// What to tell the user after enabling Start at Login. Pure so the two
+    /// outcomes' wording is pinned by tests rather than by whichever branch
+    /// someone happened to exercise.
+    public static func startNotice(for outcome: StartOutcome) -> String {
+        switch outcome {
+        case .started:
+            return "A login copy of Ara has started now and will start at "
+                + "every login. If you are running Ara from a terminal, quit "
+                + "that one — two daemons would both respond to the hotkey."
+        case .plistWrittenNotStarted:
+            return "Ara will start at your next login. It could not be "
+                + "started right now — launchctl refused the bootstrap — so "
+                + "nothing new is running yet. Run `ara doctor` in a terminal "
+                + "if it does not appear after logging back in."
+        }
+    }
+
+    @discardableResult
+    public static func installAgent() throws -> StartOutcome {
         let binary = try resolveBinaryPath()
         let plist = agentPlist(binary: binary)
 
@@ -131,12 +158,19 @@ public struct Install: ParsableCommand {
             FileHandle.standardError.write(Data(
                 "warning: launchctl bootstrap exited \(result.status):\n\(result.stderr)\n".utf8
             ))
+            // The plist is on disk, so the agent *will* start at next login —
+            // but it is not running now, and the caller must not say it is.
+            // A stderr warning is invisible under launchd and to a menu
+            // click, which is why the outcome is returned rather than only
+            // printed.
+            return .plistWrittenNotStarted
         }
 
         print("✓ launch-at-login installed")
         print("  plist:  \(url.path)")
         print("  binary: \(binary)")
         print("  logs:   discarded (/dev/null) — run `parrot` in a terminal to watch output")
+        return .started
     }
 
     /// `--purge-legacy-logs`. Best-effort like the rest of the cleanup paths:

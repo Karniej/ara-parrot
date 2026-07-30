@@ -390,14 +390,14 @@ struct Run: ParsableCommand {
             menuBar.onStartAtLoginToggled = { enable in
                 do {
                     if enable {
-                        try Install.installAgent()
+                        // The notice reports what actually happened: a
+                        // bootstrap can fail while the plist write succeeds,
+                        // and claiming "started now" on that outcome would be
+                        // a promise the code declined to verify.
+                        let outcome = try Install.installAgent()
                         menuBar.showNotice(
                             title: "Start at Login enabled",
-                            message: "A login copy of parrot has started now "
-                                + "and will start at every login. If you are "
-                                + "running parrot from a terminal, quit that "
-                                + "one — two daemons would both respond to "
-                                + "the hotkey.")
+                            message: Install.startNotice(for: outcome))
                     } else {
                         try Install.uninstallAgent()
                     }
