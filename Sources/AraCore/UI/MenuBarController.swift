@@ -80,6 +80,21 @@ public final class MenuBarController {
         stateLabel.title = recording ? "● recording" : idleTitle
     }
 
+    /// The daemon is loading models and the hotkey is not armed yet: holding
+    /// the key does nothing, and this line is why. Set before the warm-up
+    /// starts; replaced by `setReady()` when the hotkey loop arms. Nothing
+    /// can race it in between — every other state begins with a hotkey press,
+    /// and `clearNoMicrophone` only ever replaces its own message.
+    public func setWarmingUp() {
+        stateLabel.title = "warming up models…"
+    }
+
+    /// Warm-up finished and the hotkey loop is armed: show the idle line.
+    /// From here the state line belongs to the dictation lifecycle.
+    public func setReady() {
+        stateLabel.title = idleTitle
+    }
+
     public func setTranscribing() {
         stateLabel.title = "transcribing…"
     }
