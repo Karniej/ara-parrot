@@ -142,7 +142,10 @@ scheduling link here") is formatted normally, because a snippet firing inside
 a real sentence would replace words you actually wanted.
 
 On a hit the expansion is typed **verbatim** — newlines, URLs, and exact
-capitalisation survive, because no formatting engine ever sees it. Dictionary
+capitalisation survive, because no formatting engine ever sees it. One
+caveat that comes with verbatim newlines: fields that treat Return as
+"send" (Slack, Discord, and other chat inputs) will submit mid-expansion
+at each newline, so keep snippets aimed at chat single-line. Dictionary
 corrections still apply first, so a trigger word Whisper always mishears can
 be fixed by a dictionary entry and the snippet still fires. The file is read
 fresh on every utterance — edits apply to the next dictation, no restart —

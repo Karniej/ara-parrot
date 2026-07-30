@@ -44,7 +44,7 @@ records a result.
    | --- | --- |
    | `○ captured …` | audio was recorded |
    | `→ <time> · <text>` | the raw transcript, with the transcription time |
-   | `↦ <time> · <text>` | the formatted text with the total time. Appears **only when formatting produced something and changed it** — identical text and cancelled requests both stay silent here |
+   | `↦ <time> · <text>` | the formatted text with the total time. Appears **only when the output differs from the transcript** — identical text and cancelled requests both stay silent here. A voice-snippet hit always differs, so it also prints `↦`, carrying the expansion (a multiline expansion spreads the line over several rows; cosmetic) |
    | `⨯ <time> · cancelled; nothing injected` | the request was withdrawn mid-format and nothing was typed. Unreachable today (see section 9) |
    | `formatting: …` | the chain fell through from one engine to the next |
    | `dictation: …` | the session itself fell back to the raw transcript |
@@ -631,10 +631,16 @@ Setup: put this in `~/.config/ara/snippets.json` (create it by hand):
       a multiline text field (Notes, TextEdit), hold the hotkey, say
       *"sign off formal"*, release. The expansion must appear **exactly as
       authored**: three lines, the newlines real, capitalisation untouched,
-      nothing reworded — no `↦` formatting happened, the expansion *is* the
-      output. Say it with trailing inflection so Whisper appends a period
-      ("Sign off formal."); it must still fire. No restart after creating
-      the file: it is read fresh per utterance.
+      nothing reworded — no formatting engine ran, the expansion *is* the
+      output. The log still prints an `↦` line: it fires whenever the output
+      differs from the transcript, and a snippet hit always differs, so
+      expect `↦` carrying the expansion (spread over several rows by its own
+      newlines — cosmetic, not a failure). Say it with trailing inflection
+      so Whisper appends a period ("Sign off formal."); it must still fire.
+      No restart after creating the file: it is read fresh per utterance.
+      One more non-failure: the menu bar's `mode:` label keeps whatever the
+      *previous* utterance resolved — a snippet hit resolves no mode, by
+      design (pinned by test), so do not file the stale label as a bug.
 - [ ] 👤 **9v-b. A sentence containing the trigger formats normally.**
       Dictate *"I will sign off formal emails tomorrow"*. The expansion must
       **not** appear anywhere; the sentence must be formatted exactly as it
