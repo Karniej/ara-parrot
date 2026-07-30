@@ -660,9 +660,11 @@ itself exits non-zero on a hard failure only.
   `hotkey tap disabled by macOS (secure input); re-enabled`; an in-flight
   recording is stopped through the normal path so the transcript survives. If
   the hotkey is dead while a password field has focus, that is the platform.
-- `fn` is delivered by Apple's built-in keyboard. On most third-party keyboards
-  the `fn` key never reaches the host at all, so no software can see it — pick
-  another key with `--hotkey` or the **Hotkey** menu.
+- **`fn` only works on Apple's built-in keyboard** — the `--hotkey` help says
+  so, and it is the most common reason the default hotkey appears dead. Many
+  third-party keyboards handle `fn` in their own firmware and never send it to
+  the Mac, so there is no event for any software to see. Pick another key with
+  `--hotkey` or the **Hotkey** menu.
 - If your Fn key is mapped to Change Input Source, Show Emoji & Symbols, or
   Start Dictation, the system action fires too. `ara doctor` fails that check;
   the fix is **System Settings → Keyboard → Press 🌐 key to → Do Nothing**.
