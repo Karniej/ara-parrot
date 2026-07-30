@@ -244,6 +244,34 @@ struct LocalDictionaryTests {
                               entry("Parrot", "parat", "arra")])
     }
 
+    /// The move above, when the moved variant was its entry's last: the
+    /// emptied entry is dropped, not kept. A variant-less entry can never
+    /// match anything, and the form never needs one — re-adding a correction
+    /// for that canonical later recreates the entry.
+    @Test("moving the last variant away drops the emptied entry")
+    func addingDropsEmptiedEntry() {
+        let d = dict([entry("Ara", "arra"), entry("Parrot", "parat")])
+            .adding(heard: "arra", canonical: "Parrot")
+        #expect(d.entries == [entry("Parrot", "parat", "arra")])
+    }
+
+    /// The form's empty-field rule, enforced at the merge too: a blank side
+    /// changes nothing, so no caller can write a broken entry.
+    @Test("an empty or whitespace-only input is a no-op")
+    func addingEmptyInputsAreNoOps() {
+        let original = dict([entry("Ara", "arra")])
+        #expect(original.adding(heard: "", canonical: "Ara") == original)
+        #expect(original.adding(heard: "  \n", canonical: "Ara") == original)
+        #expect(original.adding(heard: "aara", canonical: "") == original)
+        #expect(original.adding(heard: " ", canonical: "\t") == original)
+    }
+
+    @Test("inputs are trimmed before merging")
+    func addingTrimsInputs() {
+        let d = dict([]).adding(heard: "  arra ", canonical: " Ara\n")
+        #expect(d.entries == [entry("Ara", "arra")])
+    }
+
     // MARK: - encoding: stable, pretty, round-trips
 
     @Test("encoding is deterministic and round-trips through load")
@@ -265,5 +293,92 @@ struct LocalDictionaryTests {
         let text = try #require(String(data: data, encoding: .utf8))
         #expect(text.contains("\n"))
         #expect(text.contains("\"canonical\""))
+    }
+
+    // MARK: - write: the persistence the menu form calls
+
+    private func uniqueURL(_ tag: String) -> URL {
+        FileManager.default.temporaryDirectory
+            .appendingPathComponent("ara-dict-\(tag)-\(UUID().uuidString).json")
+    }
+
+    /// The whole menu flow, minus AppKit: load whatever is there, merge the
+    /// correction in, write, and the next per-utterance load sees it.
+    @Test("adding then writing round-trips through load")
+    func writeRoundTripsThroughLoad() throws {
+        let url = uniqueURL("write-rt")
+        let d = LocalDictionary.load(from: url)
+            .adding(heard: "arra", canonical: "Ara")
+            .adding(heard: "krakuf", canonical: "Kraków")
+        try d.write(to: url)
+        #expect(LocalDictionary.load(from: url) == d)
+
+        // A later correction merges into what the first write left behind —
+        // including the case-insensitive canonical match.
+        let again = LocalDictionary.load(from: url)
+            .adding(heard: "aara", canonical: "ara")
+        try again.write(to: url)
+        #expect(LocalDictionary.load(from: url).entries
+                == [entry("Ara", "arra", "aara"), entry("Kraków", "krakuf")])
+    }
+
+    /// A fresh install has no `~/.config/ara` until something writes there;
+    /// the first correction must not require the user to `mkdir` first.
+    @Test("write creates the directory when it is missing")
+    func writeCreatesDirectory() throws {
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("ara-dict-dir-\(UUID().uuidString)")
+            .appendingPathComponent("nested")
+            .appendingPathComponent("dictionary.json")
+        try dict([entry("Ara", "arra")]).write(to: url)
+        #expect(LocalDictionary.load(from: url).entries == [entry("Ara", "arra")])
+    }
+
+    @Test("write emits exactly the stable pretty JSON encoded() promises")
+    func writeMatchesEncoded() throws {
+        let url = uniqueURL("write-stable")
+        let d = dict([entry("Ara", "arra"), entry("Kraków", "krakuf")])
+        try d.write(to: url)
+        #expect(try Data(contentsOf: url) == d.encoded())
+    }
+
+    // MARK: - UnsavedCorrections: what applies when the write failed
+
+    @Test("with nothing remembered the overlay changes nothing")
+    func unsavedOverlayEmpty() {
+        let base = dict([entry("Ara", "arra")])
+        #expect(UnsavedCorrections().applied(to: base) == base)
+    }
+
+    /// A correction whose write failed still applies for the rest of the
+    /// session: replayed, in order, on top of every fresh load.
+    @Test("remembered corrections apply on top of every fresh load")
+    func unsavedOverlayApplies() {
+        let unsaved = UnsavedCorrections()
+        unsaved.remember(heard: "parat", canonical: "Parrot")
+        unsaved.remember(heard: "aara", canonical: "Ara")
+        let base = dict([entry("Ara", "arra")])
+        #expect(unsaved.applied(to: base).entries
+                == [entry("Ara", "arra", "aara"), entry("Parrot", "parat")])
+    }
+
+    /// Once the file catches up — a later write succeeded, or the user added
+    /// the correction by hand — the replay must change nothing.
+    @Test("a correction the file has since gained overlays as a no-op")
+    func unsavedOverlayIsIdempotent() {
+        let unsaved = UnsavedCorrections()
+        unsaved.remember(heard: "arra", canonical: "Ara")
+        let caughtUp = dict([entry("Ara", "arra")])
+        #expect(unsaved.applied(to: caughtUp) == caughtUp)
+    }
+
+    /// A successful write clears the backlog, so a correction the user later
+    /// hand-deletes from the file cannot be resurrected by the overlay.
+    @Test("clear forgets the backlog once a write has landed it")
+    func unsavedClearForgets() {
+        let unsaved = UnsavedCorrections()
+        unsaved.remember(heard: "arra", canonical: "Ara")
+        unsaved.clear()
+        #expect(unsaved.applied(to: dict([])) == dict([]))
     }
 }

@@ -258,4 +258,70 @@ public struct LocalDictionary: Sendable, Equatable {
                                     .withoutEscapingSlashes]
         return try encoder.encode(entries)
     }
+
+    /// Writes `encoded()` to `url`, creating the directory if needed — the
+    /// menu form's save. Throws rather than warns: persistence is best-effort
+    /// *at the call site* (the daemon's failure line lives next to the
+    /// microphone one in `Run`), and only the caller knows that a failed save
+    /// still applies in memory this session.
+    ///
+    /// Atomic, like `Config.persistMicrophone`: a crash mid-write must not
+    /// leave a truncated file for the next utterance's `load` to warn about.
+    public func write(to url: URL) throws {
+        try FileManager.default.createDirectory(
+            at: url.deletingLastPathComponent(),
+            withIntermediateDirectories: true)
+        try encoded().write(to: url, options: .atomic)
+    }
+}
+
+/// Corrections added through the menu that could not be written to disk.
+///
+/// The dictionary has no in-memory store to fall back on — `load` runs fresh
+/// per utterance, which is the hot-reload mechanism — so a failed save would
+/// otherwise mean the user's correction silently never applies. This is the
+/// missing half of the microphone-persist pattern: remembered here, replayed
+/// on top of every load, and forgotten the moment a write lands them on disk.
+///
+/// Replaying goes through `adding`, so it is idempotent: a correction the
+/// file has since gained (a later successful write, or the user's hand edit)
+/// overlays as a no-op.
+///
+/// `@unchecked Sendable` for the same reason as `LocalDictionary.FailureLog`:
+/// remembered on the main thread by the menu, read by the session's loader on
+/// whatever thread the utterance runs on, guarded by the lock.
+public final class UnsavedCorrections: @unchecked Sendable {
+    private let lock = NSLock()
+    private var corrections: [(heard: String, canonical: String)] = []
+
+    public init() {}
+
+    /// Records a correction whose write failed, to replay until quit.
+    public func remember(heard: String, canonical: String) {
+        lock.lock()
+        corrections.append((heard, canonical))
+        lock.unlock()
+    }
+
+    /// Forgets the backlog — called after a successful write, which by
+    /// construction persisted everything remembered here. Without this, a
+    /// once-unsaved correction the user later hand-deletes from the file
+    /// would be resurrected on every load.
+    public func clear() {
+        lock.lock()
+        corrections = []
+        lock.unlock()
+    }
+
+    /// The dictionary with every remembered correction merged in, in the
+    /// order they were added.
+    public func applied(to dictionary: LocalDictionary) -> LocalDictionary {
+        lock.lock()
+        let pending = corrections
+        lock.unlock()
+        return pending.reduce(dictionary) { partial, correction in
+            partial.adding(heard: correction.heard,
+                           canonical: correction.canonical)
+        }
+    }
 }

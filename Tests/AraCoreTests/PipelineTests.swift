@@ -221,6 +221,25 @@ struct PipelineTests {
         #expect(out == "tell Ara hello")
     }
 
+    /// The daemon passes a *source* rather than a URL when it has corrections
+    /// that could not be written to disk (`UnsavedCorrections`); a session
+    /// that quietly kept loading from the URL would drop exactly those.
+    @Test("makeSession consults a custom dictionary source when given one")
+    func dictionarySourceOverride() async {
+        var config = Config()
+        config.engine = .off
+        let out = await Pipeline.makeSession(
+            config: config, apiKey: nil, mlx: nil, apple: nil,
+            dictionary: {
+                LocalDictionary(entries: [
+                    .init(canonical: "Ara", variants: ["arra"]),
+                ])
+            })
+            .process("tell arra hello", override: nil, manual: nil,
+                     frontmostBundleID: nil)
+        #expect(out == "tell Ara hello")
+    }
+
     /// Corrections are about what the user said, not how it is formatted:
     /// verbatim mode skips the language model, and must not skip the
     /// dictionary with it.

@@ -113,6 +113,12 @@ public enum Pipeline {
     /// production location next to `config.json`. The session gets a *loader*,
     /// not a dictionary: `LocalDictionary.load` runs per utterance, which is
     /// the entire hot-reload mechanism — see `DictationSession.init`.
+    ///
+    /// `dictionary` overrides the loader wholesale. The daemon uses it to
+    /// overlay `UnsavedCorrections` — menu additions whose write to disk
+    /// failed — on every load; a session built from the URL alone would drop
+    /// exactly those. When given, `dictionaryURL` is ignored: the source owns
+    /// the whole answer, including where (or whether) it reads a file.
     public static func makeSession(config: Config,
                                    apiKey: String?,
                                    mlx: (any Formatter)?,
@@ -121,6 +127,7 @@ public enum Pipeline {
                                    rules: any Formatter = RuleBasedFormatter(),
                                    cloudTransport: CloudFormatter.Transport? = nil,
                                    dictionaryURL: URL? = nil,
+                                   dictionary: (@Sendable () -> LocalDictionary)? = nil,
                                    onModeResolved: (@Sendable (Mode) -> Void)? = nil)
         -> DictationSession
     {
@@ -130,7 +137,7 @@ public enum Pipeline {
                                  apple: apple, rules: rules,
                                  cloudTransport: cloudTransport),
             resolver: ModeResolver(registry: registry, defaultID: config.mode),
-            dictionary: { LocalDictionary.load(from: dictionaryURL) },
+            dictionary: dictionary ?? { LocalDictionary.load(from: dictionaryURL) },
             onModeResolved: onModeResolved)
     }
 }
