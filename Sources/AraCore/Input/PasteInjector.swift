@@ -61,6 +61,13 @@ public struct PasteboardItemSnapshot: Equatable, Sendable {
 /// where the existing injector already runs and where AppKit is comfortable.
 @MainActor
 public protocol TranscriptPasteboard: AnyObject {
+    /// A counter that changes whenever *anyone* — this process or any other —
+    /// takes ownership of the pasteboard (`NSPasteboard.changeCount` in
+    /// production). The injector records it after writing the transcript and
+    /// compares before restoring: a mismatch means the user copied something
+    /// during the settle window, and the restore must stand down.
+    var changeCount: Int { get }
+
     /// The current contents, every representation of every item.
     func snapshot() -> [PasteboardItemSnapshot]
 
@@ -79,25 +86,33 @@ public protocol TranscriptPasteboard: AnyObject {
 /// are restored immediately and the text goes out through `typeFallback` —
 /// the pre-existing typing path. Degraded delivery, never no delivery.
 ///
-/// ## The generation counter
+/// ## The generation counter, and the change count
 ///
-/// Restore happens on a timer, and a user can dictate twice inside one settle
-/// window. Two hazards, one counter:
+/// Restore happens on a timer, and the world can move during the window. The
+/// generation counter defends against *our own* overlapping writes; the
+/// pasteboard's change count defends against *everyone else's*:
 ///
-/// - the second dictation must not snapshot the first one's transcript as
-///   "the user's pasteboard" — so the saved snapshot is only taken while no
-///   restore is pending, and held until one restore completes;
+/// - a second dictation inside the settle window must not snapshot the first
+///   one's transcript as "the user's pasteboard" — so the saved snapshot is
+///   only taken while no restore is pending, and held until one restore
+///   completes;
 /// - the first dictation's timer must not restore underneath the second
 ///   paste — each scheduled restore carries the generation it was armed for,
 ///   and a stale generation does nothing. The *last* dictation's timer
 ///   performs the one restore, so the transcript can neither leak onto the
-///   pasteboard permanently nor clobber it with stale content.
+///   pasteboard permanently nor clobber it with stale content;
+/// - a copy the *user* makes during the window (⌘C in any app) changes the
+///   pasteboard's change count past the value recorded at the transcript
+///   write, and the restore stands down entirely, dropping the snapshot: the
+///   pasteboard belongs to whoever wrote it last, and "restoring" over their
+///   copy would replace it with stale content.
 @MainActor
 public final class PasteInjector {
     private let pasteboard: any TranscriptPasteboard
     private let postPaste: () -> Bool
     private let typeFallback: (String) -> Void
     private let schedule: (TimeInterval, @escaping @MainActor () -> Void) -> Void
+    private let warn: (String) -> Void
 
     /// How long the target app gets to service the synthesized ⌘V before the
     /// user's pasteboard is put back. See `Config.pasteRestoreMs` for the
@@ -105,21 +120,35 @@ public final class PasteInjector {
     public let settleDelay: TimeInterval
 
     /// The user's pasteboard, held while one or more pastes are in flight.
-    private var saved: [PasteboardItemSnapshot]?
+    /// Internal (not private) so the tests can assert what is held — the
+    /// concealed-item filter runs at snapshot time precisely so password
+    /// bytes never sit here for the settle window.
+    private(set) var saved: [PasteboardItemSnapshot]?
     /// Identifies the newest paste; a scheduled restore for any older one
     /// finds the numbers unequal and stands down.
     private var generation = 0
+    /// `pasteboard.changeCount` as of our own transcript write. A different
+    /// value at restore time means some other app wrote during the settle
+    /// window — the pasteboard belongs to the user again.
+    private var ownedChangeCount: Int?
 
     public init(pasteboard: any TranscriptPasteboard,
                 settleDelay: TimeInterval,
                 postPaste: @escaping () -> Bool,
                 typeFallback: @escaping (String) -> Void,
-                schedule: @escaping (TimeInterval, @escaping @MainActor () -> Void) -> Void) {
+                schedule: @escaping (TimeInterval, @escaping @MainActor () -> Void) -> Void,
+                warn: @escaping (String) -> Void = PasteInjector.warnToStderr) {
         self.pasteboard = pasteboard
         self.settleDelay = settleDelay
         self.postPaste = postPaste
         self.typeFallback = typeFallback
         self.schedule = schedule
+        self.warn = warn
+    }
+
+    /// One line on stderr, matching how the rest of the daemon reports.
+    public static let warnToStderr: @Sendable (String) -> Void = { message in
+        FileHandle.standardError.write(Data("inject: \(message)\n".utf8))
     }
 
     /// Delivers `text` by paste, or by the typing fallback when the paste
@@ -129,15 +158,26 @@ public final class PasteInjector {
         guard !text.isEmpty else { return }
 
         // Snapshot only while no restore is pending: mid-window the pasteboard
-        // holds the previous transcript, not anything worth preserving.
-        if saved == nil { saved = pasteboard.snapshot() }
+        // holds the previous transcript, not anything worth preserving. The
+        // concealed filter runs *here*, not at restore, so a password's bytes
+        // never sit in this process's memory for the settle window.
+        if saved == nil { saved = Self.restorable(pasteboard.snapshot()) }
         generation &+= 1
         let armed = generation
 
-        guard pasteboard.setItems([Self.transcriptItem(text)]), postPaste() else {
-            // Whatever half-happened, put the user's pasteboard back and let
-            // the typing path deliver the words. This also invalidates any
-            // pending restore — the pasteboard is already correct again.
+        guard pasteboard.setItems([Self.transcriptItem(text)]) else {
+            // Put the user's pasteboard back and let the typing path deliver
+            // the words. This also invalidates any pending restore — the
+            // pasteboard is already correct again.
+            restoreNow()
+            typeFallback(text)
+            return
+        }
+        // Recorded after our own write, so any different value seen at
+        // restore time is someone else's.
+        ownedChangeCount = pasteboard.changeCount
+
+        guard postPaste() else {
             restoreNow()
             typeFallback(text)
             return
@@ -157,26 +197,43 @@ public final class PasteInjector {
         ])
     }
 
-    /// What restore is allowed to write back: everything except concealed
-    /// items. Dropping them is deliberate — see `PasteboardConvention` — and
-    /// means a pasteboard that held only a password restores to empty.
+    /// What may be held for restore: everything except concealed items.
+    /// Dropping them is deliberate — see `PasteboardConvention` — and means a
+    /// pasteboard that held only a password restores to empty. Applied at
+    /// snapshot time so the bytes are never held at all.
     static func restorable(_ items: [PasteboardItemSnapshot]) -> [PasteboardItemSnapshot] {
         items.filter { !$0.isConcealed }
     }
 
     private func completeRestore(generation armed: Int) {
         guard armed == generation else { return }  // superseded; a newer paste owns the restore
-        if let saved {
-            _ = pasteboard.setItems(Self.restorable(saved))
+        defer {
+            saved = nil
+            ownedChangeCount = nil
         }
-        saved = nil
+        // The generation counter defends against our *own* overlapping
+        // writes; the change count defends against everyone else's. If any
+        // other process wrote during the settle window — the user's ⌘C in
+        // another app — the pasteboard is theirs again, and writing the
+        // snapshot over it would replace their copy with stale content. The
+        // snapshot is dropped instead.
+        guard pasteboard.changeCount == ownedChangeCount else { return }
+        if let saved { write(saved) }
     }
 
     private func restoreNow() {
         generation &+= 1  // stand down any restore already scheduled
-        if let saved {
-            _ = pasteboard.setItems(Self.restorable(saved))
-        }
+        ownedChangeCount = nil
+        if let saved { write(saved) }
         saved = nil
+    }
+
+    /// A restore that fails must say so: `setItems` has already cleared the
+    /// pasteboard by the time it can fail, so the user's contents are gone
+    /// and pretending otherwise would make the loss silent.
+    private func write(_ items: [PasteboardItemSnapshot]) {
+        if !pasteboard.setItems(items) {
+            warn("could not restore the pasteboard; its previous contents were lost")
+        }
     }
 }

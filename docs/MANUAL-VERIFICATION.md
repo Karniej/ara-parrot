@@ -530,6 +530,12 @@ no `--inject` flag, i.e. the default `auto`.
       the transcript must be absent (it is marked
       `org.nspasteboard.TransientType`) if the tool honours the convention.
       Record the tool and whether it did.
+- [ ] 👤 **9p-h. Your own copy during the window wins.** Copy word A, set
+      `pasteRestoreMs` high (say 3000), dictate into Terminal, and ⌘C word B
+      in another app before the window closes. A later ⌘V must paste **B** —
+      the restore checks the pasteboard's change count and stands down
+      rather than overwrite a copy you just made. Word A is forfeit; that is
+      the documented trade.
 
 ## 9ter. Microphone: picking, fallback, and hardware churn
 
@@ -689,8 +695,10 @@ promises against a fake pasteboard — snapshot-before-write, restore after the
 settle delay with every representation intact, the transient marking of the
 transcript item, the refusal to restore concealed items, the fall-back to
 typing when the pasteboard write or ⌘V synthesis fails (with the pasteboard
-restored first), and the generation counter that makes overlapping dictations
-restore the user's pasteboard exactly once;
+restored first, and a warning when even that restore fails), the generation
+counter that makes overlapping dictations restore the user's pasteboard
+exactly once, and the change-count guard that forfeits the restore when the
+user copies something mid-window;
 that `doctor` reports on-device formatting as a warning rather than a failure;
 mode resolution precedence; and that the pipeline the daemon assembles honours
 `engine`, `timeoutMs`, `mode`, and the cloud account and key.

@@ -25,6 +25,7 @@ struct PasteInjectorTests {
     @MainActor
     final class FakePasteboard: TranscriptPasteboard {
         var current: [PasteboardItemSnapshot]
+        private(set) var changeCount = 0
         var snapshotCount = 0
         var writes: [[PasteboardItemSnapshot]] = []
         /// Set to make the next `setItems` fail (and consume the failure).
@@ -46,7 +47,15 @@ struct PasteInjectorTests {
             }
             writes.append(items)
             current = items
+            changeCount += 1
             return true
+        }
+
+        /// Another process takes the pasteboard — the user's ⌘C in some other
+        /// app. Bumps `changeCount` exactly as `NSPasteboard` would.
+        func externalWrite(_ items: [PasteboardItemSnapshot]) {
+            current = items
+            changeCount += 1
         }
     }
 
@@ -115,7 +124,8 @@ struct PasteInjectorTests {
     private func makeHarness(
         current: [PasteboardItemSnapshot] = [],
         settleDelay: TimeInterval = 0.3,
-        pasteSucceeds: Bool = true
+        pasteSucceeds: Bool = true,
+        onWarn: ((String) -> Void)? = nil
     ) -> (FakePasteboard, FakeClock, PasteInjector,
           pasteCount: () -> Int, typed: () -> [String]) {
         let pasteboard = FakePasteboard(current: current)
@@ -127,7 +137,8 @@ struct PasteInjectorTests {
             settleDelay: settleDelay,
             postPaste: { counter.pastes += 1; return pasteSucceeds },
             typeFallback: { counter.typed.append($0) },
-            schedule: { delay, work in clock.schedule(delay, work) })
+            schedule: { delay, work in clock.schedule(delay, work) },
+            warn: onWarn ?? { _ in })
         return (pasteboard, clock, injector,
                 { counter.pastes }, { counter.typed })
     }
@@ -277,6 +288,59 @@ struct PasteInjectorTests {
         #expect(pasteboard.snapshotCount == 2)
         clock.fire(1)
         #expect(pasteboard.current == newCopy)
+    }
+
+    // MARK: - The pasteboard belongs to whoever wrote it last
+
+    @Test("an external copy during the settle window wins; the restore stands down")
+    func externalCopyWins() {
+        let original = [Self.image]
+        let (pasteboard, clock, injector, _, _) = makeHarness(current: original)
+
+        injector.inject("hello")
+        // The user ⌘C's something in another app before the settle delay
+        // fires. The generation counter cannot see this — only the
+        // pasteboard's own change count can.
+        let userCopy = [Self.item("public.utf8-plain-text", "user copy")]
+        pasteboard.externalWrite(userCopy)
+
+        clock.fire(0)
+        #expect(pasteboard.current == userCopy)
+
+        // And the stale snapshot was dropped, not parked: the next dictation
+        // snapshots the user's copy afresh and restores *that*.
+        injector.inject("second")
+        #expect(pasteboard.snapshotCount == 2)
+        clock.fire(1)
+        #expect(pasteboard.current == userCopy)
+    }
+
+    // MARK: - A restore that fails says so
+
+    @Test("a failed restore warns instead of silently losing the snapshot")
+    func failedRestoreWarns() {
+        final class Warnings { var lines: [String] = [] }
+        let warnings = Warnings()
+        let (pasteboard, clock, injector, _, _) = makeHarness(
+            current: [Self.image], onWarn: { warnings.lines.append($0) })
+
+        injector.inject("hello")
+        pasteboard.failNextWrite = true
+        clock.fire(0)
+
+        #expect(warnings.lines.count == 1)
+        #expect(warnings.lines.joined().contains("restore"))
+    }
+
+    // MARK: - Concealed bytes never sit in the daemon's memory
+
+    @Test("concealed items are dropped at snapshot time, not merely at restore")
+    func concealedDroppedAtSnapshot() {
+        let (_, _, injector, _, _) = makeHarness(current: [Self.secret, Self.image])
+        injector.inject("hello")
+        // The held snapshot must not contain the password bytes for the
+        // duration of the settle window — filtering only at restore would.
+        #expect(injector.saved == [Self.image])
     }
 
     @Test("a fallback mid-window cancels the pending restore after restoring now")

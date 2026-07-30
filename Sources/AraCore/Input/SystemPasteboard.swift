@@ -9,6 +9,17 @@ import Foundation
 final class SystemPasteboard: TranscriptPasteboard {
     private let pasteboard = NSPasteboard.general
 
+    var changeCount: Int { pasteboard.changeCount }
+
+    /// Reading `data(forType:)` forces any *promised* representation to be
+    /// furnished synchronously by the source app, on our main thread. A source
+    /// that is slow (or beachballing) can therefore stall the daemon here,
+    /// before the transcript is delivered. Accepted risk: promised data is
+    /// rare outside drag-and-drop, the common copies (text, images, files)
+    /// are concrete, and the alternatives — skipping promised types or
+    /// capping sizes — silently degrade the restore, which is the wrong
+    /// default for a mechanism whose whole promise is "your pasteboard comes
+    /// back exactly as it was".
     func snapshot() -> [PasteboardItemSnapshot] {
         (pasteboard.pasteboardItems ?? []).map { item in
             PasteboardItemSnapshot(representations: item.types.compactMap { type in

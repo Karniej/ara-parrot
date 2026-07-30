@@ -122,12 +122,16 @@ The paste path is careful with your pasteboard:
   are deliberately **not restored**. They are ephemeral by their producer's
   design; putting a password back on the pasteboard after its manager retired
   it would be a leak. Copy the password again if you need it after dictating.
+- Anything **you** copy during the restore window wins: the restore checks
+  the pasteboard's change count and stands down rather than overwrite a ⌘C
+  you just made in another app.
 - `pasteRestoreMs` (default 300, clamped to 50–5000) is how long the target
   app gets to service the ⌘V before the snapshot is restored. Too low and a
   slow app pastes your *old* pasteboard instead of the transcript; higher
   values just mean the transcript sits on the pasteboard longer after each
-  dictation. Raise it if a laggy app (remote desktop, a busy Electron app)
-  pastes stale content.
+  dictation (a ⌘V of your own in that window pastes the transcript). Raise
+  it if a laggy app (remote desktop, a busy Electron app) pastes stale
+  content.
 - If the pasteboard write or the ⌘V synthesis fails, the transcript is
   delivered through the typing path instead — it is never lost.
 

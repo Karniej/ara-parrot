@@ -127,10 +127,14 @@ public struct Config: Codable, Sendable {
     /// target app services the synthesized ⌘V *after* the user's pasteboard is
     /// back, and pastes the wrong thing — the one bug this whole mechanism
     /// exists to prevent. Too long and the pasteboard spends seconds holding
-    /// the transcript, so a user's own ⌘C in that window is clobbered by the
-    /// restore. 50ms rejects values that lose the race unconditionally;
-    /// 5000ms caps the exposure while still accommodating genuinely slow
-    /// pasters (a remote-desktop session, an Electron app under load).
+    /// the transcript: a ⌘V of your own in that window pastes the transcript,
+    /// and a ⌘C forfeits the restore (deliberately — `PasteInjector` checks
+    /// the pasteboard's change count and stands down rather than clobber a
+    /// copy the user just made, which also makes large values far cheaper
+    /// than they would otherwise be). 50ms rejects values that lose the race
+    /// unconditionally; 5000ms caps the exposure while still accommodating
+    /// genuinely slow pasters (a remote-desktop session, an Electron app
+    /// under load).
     public static let minimumPasteRestoreMs = 50
     public static let maximumPasteRestoreMs = 5000
 
