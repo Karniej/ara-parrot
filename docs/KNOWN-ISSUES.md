@@ -175,6 +175,29 @@ unsigned binary, no stable ACL identity), and a silent migration would raise
 an Allow/Deny dialog at whatever moment the fallback first fired. Re-running
 key setup writes under the new service.
 
+## Deferred: the release workflow cannot produce the artefact we ship
+
+`.github/workflows/release.yml` triggers on `v*` tags and uploads exactly two
+files: `ara-macos-arm64.tar.gz` and its `.sha256`. It has no
+`scripts/package-app.sh` or `scripts/package-dmg.sh` step, so it cannot build
+an app bundle at all — and the bundle is the artefact that matters, because the
+Info.plist is what makes the microphone and accessibility grants stick to Ara
+rather than to whatever launched it.
+
+v0.1.0's `Ara-0.1.0.dmg` and `Ara-0.1.0.dmg.sha256` were therefore attached by
+hand, and no workflow run exists for that tag. Left alone, the next `v*` tag
+push publishes a release containing only the bare CLI — a silent downgrade for
+anyone who installs from it, since `install.sh` prefers a DMG and falls back to
+the tarball without complaint. The fix is a packaging step in the workflow
+(build, `build-metallib.sh`, `package-app.sh`, `package-dmg.sh`, attach both
+the image and its checksum); the metallib step is the awkward part, since it
+needs the Metal toolchain on the runner.
+
+Docs consequence worth knowing: the `install.sh` served from gh-pages handles
+both asset shapes and is ahead of the `scripts/install.sh` committed here,
+which only knows about the tarball and installs to `/usr/local/bin` with
+`sudo`. The README points at the gh-pages URL for that reason.
+
 ## Deferred: `checkLaunchAgentLogPaths` is dead in practice
 
 It inspects the *current* agent plist for `/tmp` std paths, but only a

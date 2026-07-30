@@ -46,9 +46,76 @@ the Apple Neural Engine via CoreML, so Intel is not supported. The default
 formatting engine additionally needs macOS 15.4 — below that it is skipped and
 cleanup is rule-based, which `ara doctor` reports.
 
+### The installer
+
+One command, no sudo:
+
+```sh
+curl -fsSL https://karniej.github.io/ara-parrot/install.sh | sh
+```
+
+It resolves the latest release, downloads `Ara-<version>.dmg`, checks it
+against the published `sha256` and **refuses to install on a mismatch**, mounts
+it, and installs to `~/Applications/Ara.app` with a symlink at
+`~/.local/bin/ara` so `ara …` works from a terminal. It also strips the
+quarantine flag, so there is no right-click dance on this path. If
+`~/.local/bin` is not on your `PATH` it tells you how to add it.
+
+Both destinations are per-user by default — a `curl | sh` that asks for a
+password you cannot audit at the moment it asks is a bad trade. For a
+machine-wide install, opt in explicitly:
+
+```sh
+ARA_APP_DIR=/Applications ARA_BIN_DIR=/usr/local/bin \
+  sh -c "$(curl -fsSL https://karniej.github.io/ara-parrot/install.sh)"
+```
+
+If a release ever publishes the bare CLI tarball instead of a DMG, the
+installer handles that too — you get `ara` on your `PATH` and no app bundle,
+which means no Info.plist and a process running under the identity of whatever
+launched it.
+
+### From the DMG, by hand
+
+[**Download `Ara-<version>.dmg`**](https://github.com/Karniej/ara-parrot/releases/latest)
+from the releases page — 0.1.0 ships it, alongside `Ara-0.1.0.dmg.sha256`.
+
+1. Verify it, since unsigned means the checksum is the only integrity check
+   there is: `shasum -a 256 Ara-<version>.dmg` against the published
+   `.sha256`.
+2. Open the image and drag **Ara** onto **Applications**.
+3. Launch it. Builds are unsigned, so a hand-downloaded app needs
+   **right-click → Open** on the *first* launch rather than a double-click —
+   see [Unsigned builds](#unsigned-builds). (The installer above avoids this
+   by stripping the quarantine flag for you.)
+4. Ara is a menu-bar app: no Dock icon, no window, no app-switcher entry. The
+   bird in the status bar is the whole interface. macOS will ask for the
+   microphone the first time you dictate, and for Accessibility (which is what
+   lets it read the `fn` key and type at your cursor) from
+   **System Settings → Privacy & Security**.
+5. The local formatting model is a separate one-time ~900 MB download, and it
+   is always a terminal command — the menu's **Download formatting model…**
+   item shows you the command and copies it, it never fetches anything itself:
+
+   ```sh
+   /Applications/Ara.app/Contents/MacOS/ara models download-formatter
+   ```
+
+The app bundle contains the same `ara` CLI, so every command below works from
+it. Put it on your `PATH` if you want `ara` from anywhere:
+
+```sh
+ln -sf /Applications/Ara.app/Contents/MacOS/ara ~/.local/bin/ara
+```
+
+`ara install --launch-at-login` then registers the login agent, and — running
+from inside the bundle — points it at `Ara.app`, not at any older
+`/usr/local/bin/ara` you may still have.
+
 ### From source
 
-This is what works today. One build command plus a Metal step:
+For the current `master` rather than the last release, or to hack on it. One
+build command plus a Metal step:
 
 ```sh
 git clone https://github.com/Karniej/ara-parrot.git && cd ara-parrot
@@ -74,52 +141,6 @@ terminal launched it: it inherits that terminal's microphone and accessibility
 grants, and `ara --version` reports `source build (unversioned)` rather than a
 release number.
 
-### From the DMG
-
-**`v0.1.0` is tagged, but no published release carries a DMG yet** — the
-release workflow (`.github/workflows/release.yml`) builds and uploads the CLI
-tarball `ara-macos-arm64.tar.gz`, not an app bundle, and the newest release on
-GitHub is still `v0.0.5`. So the steps below describe what the download will
-be. Until it exists, `scripts/package-app.sh` and `scripts/package-dmg.sh`
-build `Ara-<version>.dmg` from a local checkout, and `package-dmg.sh` prints
-the image's `sha256` as it goes.
-
-1. Open `Ara-<version>.dmg` and drag **Ara** onto **Applications**.
-2. Launch it. Builds are unsigned, so the *first* launch needs
-   **right-click → Open** rather than a double-click — see
-   [Unsigned builds](#unsigned-builds).
-3. Ara is a menu-bar app: no Dock icon, no window, no app-switcher entry. The
-   bird in the status bar is the whole interface. macOS will ask for the
-   microphone the first time you dictate, and for Accessibility (which is what
-   lets it read the `fn` key and type at your cursor) from
-   **System Settings → Privacy & Security**.
-4. The local formatting model is a separate one-time ~900 MB download, and it
-   is always a terminal command — the menu's **Download formatting model…**
-   item shows you the command and copies it, it never fetches anything itself:
-
-   ```sh
-   /Applications/Ara.app/Contents/MacOS/ara models download-formatter
-   ```
-
-The app bundle contains the same `ara` CLI, so every command below works from
-it. Put it on your `PATH` if you want `ara` from anywhere:
-
-```sh
-ln -sf /Applications/Ara.app/Contents/MacOS/ara ~/.local/bin/ara
-```
-
-`ara install --launch-at-login` then registers the login agent, and — running
-from inside the bundle — points it at `Ara.app`, not at any older
-`/usr/local/bin/ara` you may still have.
-
-If you would rather have only the CLI and no app, `scripts/install.sh` fetches
-the release tarball into `/usr/local/bin/ara`
-(`curl -fsSL .../install.sh | sh`). It resolves whatever GitHub calls the
-*latest* release, which today is `v0.0.5` — considerably older than this
-checkout, so build from source if you want current behaviour. You also lose the
-Info.plist and everything that hangs off it: the process runs under the
-identity of whatever launched it.
-
 ### Unsigned builds
 
 Ara has no Apple Developer ID certificate, so nothing it ships is signed or
@@ -137,13 +158,17 @@ notarized. What that means when you download the DMG:
 - Or strip the flag yourself:
 
   ```sh
-  xattr -d com.apple.quarantine /Applications/Ara.app
+  xattr -dr com.apple.quarantine ~/Applications/Ara.app
   ```
 
-- Verify what you got against the image's `sha256` — `package-dmg.sh` prints it
-  when it builds one, and a published release should carry it in the notes.
-  Compare with `shasum -a 256 Ara-<version>.dmg`. Unsigned means the checksum is
-  the only integrity check there is, so it is worth actually running.
+  This is exactly what the `install.sh` one-liner does for you, which is why
+  that path never shows the dialog.
+- Verify what you got against the image's `sha256`. 0.1.0 publishes it as a
+  release asset (`Ara-0.1.0.dmg.sha256`), `package-dmg.sh` prints it when it
+  builds an image locally, and the installer checks it automatically and
+  aborts on a mismatch. By hand: `shasum -a 256 Ara-<version>.dmg`. Unsigned
+  means the checksum is the only integrity check there is, so it is worth
+  actually running.
 
 Signing is not a thing this repo can do for you — the certificate belongs to an
 Apple developer account. For a maintainer who has one, the commands are:

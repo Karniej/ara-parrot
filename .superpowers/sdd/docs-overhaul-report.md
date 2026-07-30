@@ -156,31 +156,70 @@ fallback rather than a migration — it belongs next to the existing argument fo
 keeping blocking keychain work off the dictation path, since it is the same
 blocking call.
 
-### The premise I could not confirm: there is no downloadable 0.1.0
+### A wrong conclusion of mine, and the tooling trap that caused it
 
-I was asked to reference the shipped 0.1.0 release rather than calling it
-unreleased. The evidence does not support that, so I did not write it:
+I reported that no downloadable 0.1.0 existed. **That was wrong.** The release
+is published, with both assets:
 
-- `git ls-remote --tags fork` — the tag **`v0.1.0` does exist and is pushed**,
-  pointing at `b6a38a3`.
-- `gh release view v0.1.0` — **`release not found`**. `gh release list` shows
-  the newest published release is `v0.0.5`, from 2026-05-10.
-- `gh run list` shows no `release` workflow run for `v0.1.0`; the last one is
-  `v0.0.5`.
-- `.github/workflows/release.yml` uploads `ara-macos-arm64.tar.gz` and its
-  `.sha256` — **it has never built or published a DMG**. A DMG has only ever
-  been produced locally by `scripts/package-dmg.sh`; `dist/Ara-0.1.0.dmg` exists
-  in the working checkout, built today, with sha256 `41c0981…`.
+```
+gh release view v0.1.0 --repo Karniej/ara-parrot
+  title: Ara 0.1.0   draft: false   prerelease: false
+  url:    https://github.com/Karniej/ara-parrot/releases/tag/v0.1.0
+  asset:  Ara-0.1.0.dmg
+  asset:  Ara-0.1.0.dmg.sha256
+```
 
-So "0.1.0 shipped with a DMG" is true of the local `dist/` directory and not of
-anything a user can download. Telling readers to download it would have been the
-same class of error as fix 1. What the section says instead is accurate on every
-point: the tag is cut, no published release carries a DMG, the workflow builds
-the CLI tarball, and the scripts build the image locally in the meantime. I also
-added a caveat to the `scripts/install.sh` paragraph — it resolves GitHub's
-*latest* release, which is `v0.0.5` and considerably older than this checkout.
+**The cause is worth recording, because it will recur.** `gh` without `--repo`
+does not resolve from git remotes in this checkout — it resolves to
+**`digimata/parrot`**, the upstream this project forked from. Confirmed from
+the worktree:
 
-**If a v0.1.0 release with a DMG is meant to exist, something upstream of the
-docs is incomplete** — either the tag push did not trigger the workflow, or the
-workflow needs a step that runs `package-app.sh`/`package-dmg.sh` and attaches
-the image. Worth checking before the install section is revised again.
+```
+$ gh repo view --json nameWithOwner -q .nameWithOwner
+digimata/parrot
+$ git remote -v
+fork  https://github.com/Karniej/ara-parrot.git   (fetch/push)
+upstream  https://github.com/digimata/parrot.git  (fetch/push)
+```
+
+So every `gh` fact in my previous section was upstream's: "release not found",
+"latest is v0.0.5", "no workflow run for the tag". All true of
+`digimata/parrot`, none of them true of ours. The tell was there and I missed
+it — `git ls-remote --tags fork` showed `v0.1.0` pushed, which should have
+contradicted `gh release view` loudly enough to make me check which repo `gh`
+was answering about.
+
+**Rules for this repo, going forward:** pass `--repo Karniej/ara-parrot` to
+every `gh` invocation, and prefer `git ls-remote fork` over `gh` for remote
+facts. A tag that exists on the remote while `gh` denies the release is the
+signature of this exact mistake.
+
+The install section is rewritten accordingly: the DMG download is the primary
+path, `curl -fsSL https://karniej.github.io/ara-parrot/install.sh | sh` is
+documented as the one-liner (per-user by default — `~/Applications` and
+`~/.local/bin`, no sudo — with `ARA_APP_DIR`/`ARA_BIN_DIR` for a machine-wide
+install), the hand-download path keeps the checksum step, and the source build
+is retained below both, reframed as "for current master rather than the last
+release". The Gatekeeper caveat stands but is now scoped correctly: the
+installer strips the quarantine flag, so the right-click dance applies only to
+a hand-downloaded image. All of this was read out of the live gh-pages
+`install.sh`, not assumed.
+
+### The one real gap this did surface (noted, not fixed)
+
+Recorded as a KNOWN-ISSUES entry, "the release workflow cannot produce the
+artefact we ship", rather than in the README — it is a CI defect, not something
+a reader needs.
+
+`.github/workflows/release.yml` uploads only `ara-macos-arm64.tar.gz` and its
+`.sha256`. It has no `package-app.sh` / `package-dmg.sh` step, so it cannot
+build an app bundle, and no workflow run exists for `v0.1.0` — that release's
+DMG was attached by hand. Left alone, the next `v*` tag publishes a release
+with no app bundle, which is a silent downgrade: `install.sh` prefers a DMG and
+falls back to the tarball without complaint, so an installer would quietly hand
+users the bundle-less CLI with none of the TCC identity the Info.plist provides.
+
+A second, smaller divergence noted in the same entry: the gh-pages `install.sh`
+is ahead of the `scripts/install.sh` committed in this tree, which still knows
+only about the tarball and installs to `/usr/local/bin` with `sudo`. The README
+points at the gh-pages URL for that reason.
