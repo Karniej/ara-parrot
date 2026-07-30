@@ -252,6 +252,26 @@ public struct Config: Codable, Sendable {
     /// formatting and key order. Comments could not survive, but comments
     /// were never valid in this file to begin with.
     public static func persistMicrophone(_ uid: String?, at url: URL? = nil) throws {
+        try rewriteOneKey("microphone", to: uid, at: url)
+    }
+
+    /// Sets the `cleanup` key in the config file, with `persistMicrophone`'s
+    /// guarantees — every other key survives, a file that cannot be parsed is
+    /// left byte-for-byte untouched — because it is the same rewrite. The
+    /// caller (the Cleanup submenu) owns telling the user a saved pick still
+    /// applies on restart, not on the next utterance: the session's intensity
+    /// is stamped when the daemon builds it.
+    public static func persistCleanup(_ intensity: CleanupIntensity,
+                                      at url: URL? = nil) throws {
+        try rewriteOneKey("cleanup", to: intensity.rawValue, at: url)
+    }
+
+    /// The shared mechanics of the two persists above: read back as generic
+    /// JSON, change one key, rewrite. `nil` removes the key — and a missing
+    /// file stays missing then, because clearing a preference that was never
+    /// written needs no file.
+    private static func rewriteOneKey(_ key: String, to value: String?,
+                                      at url: URL?) throws {
         let target = url ?? defaultURL
 
         var object: [String: Any]
@@ -263,14 +283,14 @@ public struct Config: Codable, Sendable {
             }
             object = dictionary
         } else {
-            guard uid != nil else { return }
+            guard value != nil else { return }
             object = [:]
         }
 
-        if let uid {
-            object["microphone"] = uid
+        if let value {
+            object[key] = value
         } else {
-            object.removeValue(forKey: "microphone")
+            object.removeValue(forKey: key)
         }
 
         try FileManager.default.createDirectory(

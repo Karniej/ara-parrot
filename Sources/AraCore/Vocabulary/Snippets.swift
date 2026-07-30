@@ -142,6 +142,83 @@ public struct Snippets: Sendable, Equatable {
         FileHandle.standardError.write(Data("snippets: \(message)\n".utf8))
     }
 
+    // MARK: - Starter file
+
+    /// What "Edit snippets…" writes when there is no file yet. JSON has no
+    /// comments, so the example entry is the documentation: the README's own
+    /// trigger with a placeholder URL that says "put yours here". One line,
+    /// so it is also safe to leave in place — the worst it can do is type a
+    /// visibly-placeholder link when the trigger is dictated verbatim. It
+    /// round-trips through `load` cleanly, so the first thing the editor
+    /// shows is a working file, not a template the next utterance would warn
+    /// about.
+    public static let starter = Snippets(entries: [
+        Entry(trigger: "insert my scheduling link",
+              expansion: "https://example.com/your-scheduling-link")
+    ])
+
+    /// Writes `starter` where no file exists, creating the directory too —
+    /// the half of "Edit snippets…" that guarantees the editor opens on
+    /// something. Any existing file, parseable or not, is left byte-for-byte
+    /// alone: the user's accumulated snippets (or their half-finished hand
+    /// edit) must never be replaced by an example.
+    ///
+    /// Returns whether it wrote; throws only when the write itself fails,
+    /// which the menu reports best-effort, like every other persistence
+    /// failure.
+    @discardableResult
+    public static func createStarterFileIfAbsent(at url: URL) throws -> Bool {
+        guard !FileManager.default.fileExists(atPath: url.path) else {
+            return false
+        }
+        try starter.write(to: url)
+        return true
+    }
+
+    // MARK: - Encoding
+
+    /// The entries as stable, pretty-printed JSON — the same contract as
+    /// `LocalDictionary.encoded()`, for the same reason: the file is meant to
+    /// be hand-edited after we write it.
+    public func encoded() throws -> Data {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys,
+                                    .withoutEscapingSlashes]
+        return try encoder.encode(entries)
+    }
+
+    /// Writes `encoded()` to `url`, creating the directory if needed.
+    /// Atomic, like every other config-directory write: a crash mid-write
+    /// must not leave a truncated file for the next utterance's `load` to
+    /// warn about.
+    public func write(to url: URL) throws {
+        try FileManager.default.createDirectory(
+            at: url.deletingLastPathComponent(),
+            withIntermediateDirectories: true)
+        try encoded().write(to: url, options: .atomic)
+    }
+
+    // MARK: - Listing
+
+    /// The `parrot snippets` printout, pure so it is testable: the path, then
+    /// one `trigger → expansion` line per entry, in file order. Expansions
+    /// are multiline by design and a listing is not the place to unspool
+    /// them, so only the first line is shown, with an ellipsis owning up to
+    /// the rest. Empty collapses to a single line that still names the path,
+    /// because the path *is* the answer to "where do I add one".
+    public func listingLines(path: String) -> [String] {
+        guard !entries.isEmpty else {
+            return ["no snippets yet — snippets will live at \(path)"]
+        }
+        return [path] + entries.map { entry in
+            let lines = entry.expansion
+                .split(separator: "\n", omittingEmptySubsequences: false)
+            let first = lines.first.map(String.init) ?? ""
+            let preview = lines.count > 1 ? "\(first) …" : first
+            return "\(entry.trigger) → \(preview)"
+        }
+    }
+
     // MARK: - Matching
 
     /// The characters an ASR appends to a sentence that a trigger's author
