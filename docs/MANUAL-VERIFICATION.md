@@ -866,6 +866,19 @@ restart, and each submenu's caption says which.
       honest too: `chmod -w ~/Library/LaunchAgents`, toggle on — an alert
       must report the failure and the checkmark must stay **off** (the
       state is re-read from disk, never assumed). `chmod +w` afterwards.
+- [ ] **9sp-f-bis. The pre-rename agent is cleared, not inherited.** The
+      unit tests cover the decision against temp files; what only a real
+      machine can show is that launchd agrees. Fake an old install:
+      `cp ~/Library/LaunchAgents/com.silpho.ara.plist
+      ~/Library/LaunchAgents/com.digimata.parrot.plist`, edit its `Label` to
+      `com.digimata.parrot`, and `launchctl bootstrap gui/$UID` it. Two
+      daemons must now answer the hotkey — that is the defect. Run
+      `./.build/release/ara doctor`: it must warn `legacy launch agent` and
+      name the old plist's path. Then run
+      `./.build/release/ara install --launch-at-login`: it must print the
+      path it removed, the old plist must be gone, `launchctl print
+      gui/$UID/com.digimata.parrot` must fail, and exactly one daemon must
+      answer the hotkey. `ara doctor` must come back clean on that line.
 - [ ] 👤 **9sp-g. Run Diagnostics is doctor in a window.** Click **Run
       Diagnostics…**. An alert must appear in front with the same lines
       `ara doctor` prints, monospaced and aligned, and the menu bar must

@@ -55,6 +55,37 @@ The installer drops the binary in `/usr/local/bin/ara`. Builds are unsigned for 
 > Until then Ara is source-only: use [Build from
 > source](#build-from-source) below. Builds will stay unsigned for now.
 
+### Upgrading from `parrot`
+
+This tool used to be called `parrot`. The binary is now `ara`, and that is the
+only thing that moves.
+
+**The background daemon.** The LaunchAgent's label changed too
+(`com.digimata.parrot` → `com.silpho.ara`), and launchd sees no connection
+between the two — left alone, the old agent goes on starting the old binary at
+every login, so enabling Start at Login would leave two daemons fighting over
+the hotkey. You do not have to clean that up by hand: both
+`ara install --launch-at-login` and `ara install --uninstall` boot the old
+agent out and delete its plist, printing the path they removed. `ara doctor`
+warns while one is still there.
+
+**A symlink on your `PATH`.** If you had `~/.local/bin/parrot` pointing at a
+build directory, repoint it — the built binary has a new name:
+
+```sh
+ln -sf "$(pwd)/.build/release/ara" ~/.local/bin/ara && rm -f ~/.local/bin/parrot
+```
+
+**Your settings.** Nothing to do. The config directory has been `~/.config/ara/`
+since before the rename, so `config.json`, `dictionary.json` and
+`snippets.json` are already where the new binary looks — same paths, same
+contents, no migration step.
+
+**The old transcript logs.** `/tmp/parrot.out.log` and `/tmp/parrot.err.log`
+keep those names forever: they are files already on your disk, not branding, so
+that is what `ara install --purge-legacy-logs` still looks for. See
+[Privacy](#privacy) for the order to run things in.
+
 ## How to use
 
 1. **Run it.** Either `ara install --launch-at-login` (daemonized, runs forever, lives in the menu bar), or `ara` in any terminal tab.
