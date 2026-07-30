@@ -43,8 +43,48 @@ or reading your screen.
 **Requires:** macOS 14+ on Apple Silicon (M1 or newer). Transcription runs on
 the Apple Neural Engine via CoreML, so Intel is not supported.
 
-Ara is source-only today — no tagged release has shipped yet, so there is
-nothing for a download to fetch. Building takes one command plus a Metal step:
+### From the DMG
+
+**No release has been tagged yet, so there is nothing to download today.** This
+is what the download will be, and the packaging that produces it is in the repo
+now — `scripts/package-app.sh` and `scripts/package-dmg.sh` build
+`Ara-<version>.dmg` from a local checkout if you want it before then.
+
+1. Open `Ara-<version>.dmg` and drag **Ara** onto **Applications**.
+2. Launch it. Builds are unsigned, so the *first* launch needs
+   **right-click → Open** rather than a double-click — see
+   [Unsigned builds](#unsigned-builds).
+3. Ara is a menu-bar app: no Dock icon, no window, no app-switcher entry. The
+   bird in the status bar is the whole interface. macOS will ask for the
+   microphone the first time you dictate, and for Accessibility (which is what
+   lets it read the `fn` key and type at your cursor) from
+   **System Settings → Privacy & Security**.
+4. The local formatting model is a separate one-time ~900 MB download. From the
+   menu bar, or from a terminal:
+
+   ```sh
+   /Applications/Ara.app/Contents/MacOS/ara models download-formatter
+   ```
+
+The app bundle contains the same `ara` CLI, so every command below works from
+it. Put it on your `PATH` if you want `ara` from anywhere:
+
+```sh
+ln -sf /Applications/Ara.app/Contents/MacOS/ara ~/.local/bin/ara
+```
+
+`ara install --launch-at-login` then registers the login agent, and — running
+from inside the bundle — points it at `Ara.app`, not at any older
+`/usr/local/bin/ara` you may still have.
+
+If you would rather have only the CLI and no app, `scripts/install.sh` fetches
+the release tarball into `/usr/local/bin/ara`
+(`curl -fsSL .../install.sh | sh`). You lose the Info.plist and everything that
+hangs off it: the process runs under the identity of whatever launched it.
+
+### From source
+
+This is what works today. Building takes one command plus a Metal step:
 
 ```sh
 git clone https://github.com/Karniej/ara-parrot.git && cd ara-parrot
@@ -65,9 +105,52 @@ Then `ara install --launch-at-login` registers the background daemon, which is
 the recommended way to run it: models warm once at login instead of on every
 launch. See [Build from source](#build-from-source) for what each step does.
 
-When a tagged release ships, `scripts/install.sh` becomes the one-line path
-(`curl -fsSL .../install.sh | sh`, dropping the binary in `/usr/local/bin/ara`).
-Builds will be unsigned at first, so macOS will ask you to confirm the first run.
+A source build has no bundle, so it runs as a plain process under whatever
+terminal launched it: it inherits that terminal's microphone and accessibility
+grants, and `ara --version` reports `source build (unversioned)` rather than a
+release number.
+
+### Unsigned builds
+
+Ara has no Apple Developer ID certificate, so nothing it ships is signed or
+notarized. What that means when you download the DMG:
+
+- macOS attaches `com.apple.quarantine` to anything downloaded, and Gatekeeper
+  refuses to launch a quarantined app that is neither signed nor notarized. A
+  double-click gets *"Ara is damaged and can't be opened"* or *"cannot be opened
+  because the developer cannot be verified"* — neither of which is true; both
+  are what "unsigned" looks like.
+- **Right-click the app → Open → Open** once. That records your consent and
+  every later launch is a normal double-click.
+- Or strip the flag yourself:
+
+  ```sh
+  xattr -d com.apple.quarantine /Applications/Ara.app
+  ```
+
+- Verify what you got against the `sha256` the release notes publish for the
+  DMG (`shasum -a 256 Ara-<version>.dmg`). Unsigned means the checksum is the
+  only integrity check there is, so it is worth actually running.
+
+Signing is not a thing this repo can do for you — the certificate belongs to an
+Apple developer account. For a maintainer who has one, the three commands are:
+
+```sh
+scripts/package-app.sh
+codesign --deep --force --options runtime --timestamp \
+    --sign "Developer ID Application: NAME (TEAMID)" dist/Ara.app
+scripts/package-dmg.sh                       # rebuild the image around the signed app
+xcrun notarytool submit dist/Ara-<version>.dmg \
+    --keychain-profile "AC_PASSWORD" --wait
+xcrun stapler staple dist/Ara-<version>.dmg
+```
+
+The DMG has to be rebuilt between signing and submission — an image built
+around the unsigned app stays unsigned no matter what happens to `dist/Ara.app`
+afterwards. With the ticket stapled, Gatekeeper stops objecting. Note
+that `--options runtime` (the hardened runtime) is required for notarization
+and is also what makes the microphone and accessibility entitlements stick to
+the bundle rather than to whoever launched it.
 
 ### Upgrading from `parrot`
 
@@ -102,7 +185,7 @@ that is what `ara install --purge-legacy-logs` still looks for. See
 
 ## How to use
 
-1. **Run it.** Either `ara install --launch-at-login` (daemonized, runs forever, lives in the menu bar), or `ara` in any terminal tab.
+1. **Run it.** Double-click `Ara.app`, or `ara install --launch-at-login` (daemonized, runs forever, lives in the menu bar), or `ara` in any terminal tab.
 2. **Click into the text field you want to dictate into** — Messages, the address bar, a Slack thread, anywhere a cursor blinks.
 3. **Hold the `fn` key, speak, release.** A small pill appears at the bottom of the screen while the mic is hot.
 4. **The transcript types itself in at the cursor** when you release. Usually within 200-300ms.
@@ -412,3 +495,29 @@ only, and `ara doctor` will say so. The script compiles the kernel library
 once through `xcodebuild` and drops `mlx.metallib` next to the binary. The
 model itself is a separate one-time download:
 `ara models download-formatter` (~900 MB).
+
+### Packaging
+
+```sh
+swift build -c release
+scripts/build-metallib.sh
+scripts/package-app.sh       # dist/Ara.app
+scripts/package-dmg.sh       # dist/Ara-<version>.dmg
+```
+
+The version comes from the `VERSION` file at the repository root — the one
+place the number lives. `package-app.sh` stamps it into
+`Ara.app/Contents/Info.plist`, `package-dmg.sh` names the image after it, and
+`ara --version` reads it back out of the plist at runtime.
+
+`mlx.metallib` is copied to `Contents/MacOS/`, beside the executable, and not
+to `Contents/Resources/`. MLX resolves its kernel library relative to the
+*binary*: it calls `dladdr` on its own statically linked code and then tries
+`<dir>/mlx.metallib` and `<dir>/Resources/mlx.metallib`. Inside a bundle
+`<dir>` is `Contents/MacOS`, which makes `Contents/Resources/mlx.metallib` — a
+level up from anything the loader looks at — invisible. Getting this wrong
+fails silently: the app launches, dictation works, and every transcript comes
+out with rule-based cleanup instead of the model.
+
+`scripts/build-icon.sh` regenerates `packaging/Ara.icns` from the README
+banner. The `.icns` is committed, so packaging does not depend on it.

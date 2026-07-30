@@ -5,10 +5,12 @@ output cannot be exercised by `swift test`. Everything below needs a human at
 the keyboard with a working microphone, and some of it needs machine state this
 repository has never had.
 
-**Status of this document: nothing in it has been run.** It was written by the
-implementer of the wiring, who cannot press a key or speak into a microphone.
-Treat every box as unchecked and every claim in it as a prediction until someone
-records a result.
+**Status of this document: almost nothing in it has been run.** It was written
+by the implementer of the wiring, who cannot press a key or speak into a
+microphone. Treat every box as unchecked and every claim in it as a prediction
+until someone records a result. The exceptions are the handful of boxes already
+marked `[x]` — in section 9octies, where the checks were command-line
+observable and were actually observed.
 
 ## Legend
 
@@ -886,6 +888,114 @@ restart, and each submenu's caption says which.
       main thread). **Copy report** must put the full text on the
       pasteboard. No keychain prompt may appear — the report has no
       keychain check.
+
+## 9octies. The packaged app: the DMG, the bundle, and the login agent
+
+Everything above runs `.build/release/ara` from a terminal. That process
+inherits the terminal's microphone and Accessibility grants, has no Info.plist,
+and is not what a downloader gets. This section is about the artefact that
+ships. Two things in it are **verified**, not predicted, and are marked so; the
+rest needs a human, a mouse, and a fresh permission state.
+
+Build it:
+
+```sh
+swift build -c release
+scripts/build-metallib.sh
+scripts/package-app.sh                 # dist/Ara.app
+scripts/package-dmg.sh                 # dist/Ara-<version>.dmg
+```
+
+- [ ] **9o-a. The scripts refuse to produce a broken artefact.** With
+      `.build/release/ara` moved away, `scripts/package-app.sh` must fail
+      naming `swift build -c release`. With the binary back but
+      `.build/release/mlx.metallib` moved away, it must fail naming
+      `scripts/build-metallib.sh` — a bundle without the kernel library is the
+      exact silent degradation this whole section exists to catch. With
+      `dist/Ara.app` deleted, `scripts/package-dmg.sh` must fail naming
+      `scripts/package-app.sh`.
+- [x] **9o-b. The metallib is beside the executable, and only there works.**
+      *Verified.* `Ara.app/Contents/MacOS/mlx.metallib` — not
+      `Contents/Resources/` — because MLX resolves its kernel library against
+      the binary (`dladdr`, then `<dir>/mlx.metallib` and
+      `<dir>/Resources/mlx.metallib`) and inside a bundle `<dir>` is
+      `Contents/MacOS`. Running `Ara.app/Contents/MacOS/ara run --skip-doctor`
+      with the file in `Contents/MacOS` printed
+      `✓ mlx-community/Qwen2.5-1.5B-Instruct-4bit ready (2.5s)`; with the same
+      file moved to `Contents/Resources` and nothing else changed, the same
+      command printed `! local formatting unavailable: this build has no Metal
+      kernel library` and armed the hotkey anyway. Re-run both halves if the
+      layout ever changes.
+- [x] **9o-c. The version has one source.** *Verified.* `VERSION` says `0.1.0`;
+      `Ara.app/Contents/MacOS/ara --version` says `0.1.0`;
+      `.build/release/ara --version` says `source build (unversioned)`; the
+      image is `dist/Ara-0.1.0.dmg`.
+- [ ] 👤 **9o-d. The DMG installs by drag.** Double-click
+      `dist/Ara-<version>.dmg`. The mounted volume must contain **Ara** and an
+      **Applications** alias; drag one onto the other. The app in
+      `/Applications` must show the macaw icon in Finder (a generic icon means
+      `packaging/Ara.icns` did not make it into `Contents/Resources`, or the
+      icon cache is stale — `killall Finder` before concluding anything).
+- [ ] 👤 **9o-e. Gatekeeper blocks the first launch, and the documented
+      workaround works.** Download the DMG through a browser (or
+      `xattr -w com.apple.quarantine "0081;0;;" dist/Ara-<version>.dmg`
+      to simulate it) before mounting. A double-click on `Ara.app` must be
+      refused with a Gatekeeper dialog. **Right-click → Open → Open** must then
+      launch it, and every subsequent double-click must work without the
+      dialog. `xattr -d com.apple.quarantine /Applications/Ara.app` must be an
+      equivalent path from a clean quarantined state. Both are what the
+      README's "Unsigned builds" section promises.
+- [ ] 👤 **9o-f. It behaves as a background app, not a terminal process.**
+      After launch: the bird appears in the menu bar, **no Dock icon appears**,
+      and ⌘-Tab does not list Ara. That is `LSUIElement`. Quitting from the
+      menu must remove the status item.
+- [ ] 👤 **9o-g. The microphone prompt shows the sentence from the plist.**
+      This needs a machine that has never granted Ara.app the microphone:
+      `tccutil reset Microphone com.silpho.ara` first (it resets *the bundle
+      id*, which is precisely the identity the app has and the terminal binary
+      does not). Dictate once. The system prompt must quote
+      `NSMicrophoneUsageDescription` — "Ara turns what you say into text at
+      your cursor. Recording starts when you hold the hotkey and stops when you
+      release it; the audio is transcribed on this Mac and never leaves it."
+      A prompt with no sentence, or with the terminal's name in it, means the
+      app was launched from a terminal rather than by Finder. Accessibility is
+      a separate grant, from **System Settings → Privacy & Security →
+      Accessibility**, and must list **Ara**, not your terminal.
+- [ ] 👤 **9o-h. Dictation works end to end from the bundle, *with*
+      formatting.** With the app running from `/Applications` and no terminal
+      copy alive, click into TextEdit, hold `fn`, say
+      "um so I think we should uh ship this on friday", release. The text must
+      arrive punctuated and capitalised with the fillers gone — **that is the
+      metallib check that matters**, because a bundle whose kernel library is
+      missing still types text, just rule-cleaned. If you cannot tell the two
+      apart by eye, run `Ara.app/Contents/MacOS/ara doctor`: the
+      `local formatting model` line must be `✓`, and no line may mention
+      `mlx.metallib`.
+- [ ] 👤 **9o-i. Start at Login from inside the bundle produces a working
+      agent.** Quit any terminal-run ara. From the app's menu bar, toggle
+      **Start at Login** on. Then:
+
+      ```sh
+      plutil -p ~/Library/LaunchAgents/com.silpho.ara.plist | grep -A2 ProgramArguments
+      ```
+
+      The first argument must be `/Applications/Ara.app/Contents/MacOS/ara` —
+      **not** `/usr/local/bin/ara`, even if you also have one there. That is
+      the whole point of the bundle-aware resolution: the loose binary is a
+      different TCC identity with different (probably absent) permissions, and
+      on an upgraded machine it is an older build. To prove the agent actually
+      works rather than merely exists, quit the app, then
+      `launchctl kickstart -k gui/$UID/com.silpho.ara`, and dictate: the menu
+      bar item must come back and dictation must work with formatting.
+      Log out and back in for the real test. Toggle it off afterwards and
+      confirm the plist is gone.
+- [ ] 👤 **9o-j. An old `/usr/local/bin/ara` does not hijack the agent.** With
+      `Ara.app` installed *and* a stale binary at `/usr/local/bin/ara`
+      (`cp .build/release/ara /usr/local/bin/ara`), repeat 9o-i. The plist must
+      still name the bundle. Then delete the app, run
+      `/usr/local/bin/ara install --launch-at-login`, and confirm the plist
+      names `/usr/local/bin/ara` — the pre-bundle behaviour is unchanged for
+      the CLI-only install.
 
 ## 10. Judgement calls to make with real dictation
 
