@@ -454,18 +454,26 @@ struct Run: ParsableCommand {
         // of it. The completion hops to the main actor to arm the hotkey;
         // failure semantics are unchanged from the blocking design: a cold
         // transcriber is fatal, a cold formatter is a warning and the rules
-        // floor. (Skipping the formatter after a fatal transcriber failure is
-        // the one difference — there is no point loading 0.9GB for a process
-        // about to exit.)
+        // floor.
+        //
+        // The two loads run CONCURRENTLY: measured on this machine (M3 Pro),
+        // Whisper's prewarm takes ~4.0s warm and MLX ~1.0s, and running them
+        // back-to-back put every millisecond of the second load on the
+        // startup clock. Concurrent, startup costs max(4.0, 1.0) not the sum
+        // — MLX loads entirely inside Whisper's shadow. They touch different
+        // engines (ANE vs Metal) and different code, and each runs off the
+        // cooperative pool internally, so the overlap is contention-free.
+        // The MLX result is awaited even when the transcriber failed — the
+        // process is about to exit then, and abandoning the load would leak
+        // nothing, but awaiting keeps this block free of unstructured
+        // abandonment. Failure precedence is unchanged: fatal transcriber
+        // first, formatter warning second.
         Task.detached {
-            var transcriberFailure: Error?
-            do {
-                try await transcriber.warmUp()
-            } catch {
-                transcriberFailure = error
-            }
-            var mlxFailure: Error?
-            if transcriberFailure == nil, warmsMLX {
+            async let transcriberResult: Error? = {
+                do { try await transcriber.warmUp(); return nil } catch { return error }
+            }()
+            async let mlxResult: Error? = {
+                guard warmsMLX else { return nil }
                 FileHandle.standardError.write(Data(
                     "loading \(MLXModel.id) (formatting — the first run can take a while)...\n"
                         .utf8))
@@ -475,12 +483,13 @@ struct Run: ParsableCommand {
                     FileHandle.standardError.write(Data(String(
                         format: "✓ %@ ready (%.1fs)\n",
                         MLXModel.id, Date().timeIntervalSince(started)).utf8))
+                    return nil
                 } catch {
-                    mlxFailure = error
+                    return error
                 }
-            }
-            let warmupError = transcriberFailure
-            let mlxWarmupError = mlxFailure
+            }()
+            let warmupError = await transcriberResult
+            let mlxWarmupError = await mlxResult
             await MainActor.run {
                 if let warmupError {
                     FileHandle.standardError.write(Data("warmup failed: \(warmupError)\n".utf8))

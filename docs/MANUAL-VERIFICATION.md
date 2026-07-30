@@ -72,12 +72,15 @@ the whole first-launch experience.
       nothing (no `● recording`, no overlay): the hotkey is not armed until
       warm-up completes, by design.
 - [ ] 👤 **0bis-b.** With the default `mlx` engine and both models on disk,
-      the log must show, in order: `loading whisper-… ` then
-      `✓ whisper-… ready`, then `loading mlx-community/… (formatting — the
-      first run can take a while)...` then `✓ mlx-community/… ready (N.Ns)`,
-      then `listening on …`. On a genuinely first run the whisper gap is
-      download-sized; the menu item must be present and its menu openable the
-      whole time.
+      the log must show both `loading whisper-…` and `loading
+      mlx-community/… (formatting — the first run can take a while)...`
+      near-simultaneously — the loads run concurrently, and on this machine
+      MLX finishes first (`✓ mlx-community/… ready (N.Ns)`) while Whisper's
+      prewarm continues — then `✓ whisper-… ready`, then `listening on …`.
+      Measured: concurrent loading took warm startup from ~5.5 s to ~4.2 s;
+      if the two `loading` lines ever print sequentially again, the overlap
+      regressed. On a genuinely first run the whisper gap is download-sized;
+      the menu item must be present and its menu openable the whole time.
 - [ ] 👤 **0bis-c.** The moment `listening on …` prints, the state line must
       flip to `idle · hold … to dictate`, and the next hotkey hold must record
       normally.
