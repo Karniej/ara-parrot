@@ -129,4 +129,22 @@ struct ModeTests {
         #expect(r.mode(id: "email")?.name == "Second")
         #expect(r.all.filter { $0.id == "email" }.count == 1)
     }
+
+    /// The bug this pins: `code` mode listed `com.cmuxterm.app`, an identifier
+    /// no shipping application has ever had, so dictating into a terminal
+    /// resolved to `default` and got prose treatment — identifiers reworded,
+    /// paths punctuated. Every id here is one `InjectionPolicy` also knows.
+    @Test("terminals and editors resolve to code mode")
+    func terminalsResolveToCode() {
+        let resolver = ModeResolver(registry: ModeRegistry(userModes: []),
+                                    defaultID: "default")
+        for bundle in ["com.apple.Terminal", "com.googlecode.iterm2",
+                       "net.kovidgoyal.kitty", "org.alacritty",
+                       "com.github.wez.wezterm", "com.microsoft.VSCode",
+                       "com.apple.dt.Xcode", "com.todesktop.230313mzl4w4u92"] {
+            let m = resolver.resolve(override: nil, manual: nil,
+                                     frontmostBundleID: bundle)
+            #expect(m.id == "code", "\(bundle) resolved to \(m.id)")
+        }
+    }
 }

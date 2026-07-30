@@ -48,7 +48,21 @@ public enum KeychainError: Error, Sendable, CustomStringConvertible, LocalizedEr
 /// have. In practice every rebuild produces a binary the ACL does not
 /// recognise, so the user is prompted again.
 public enum Keychain {
-    private static let service = "com.digimata.ara"
+    static let service = "com.silpho.ara"
+
+    /// The service string this tool stored keys under before the rebrand —
+    /// `com.digimata.*` from upstream, briefly half-renamed to
+    /// `com.digimata.ara`. Read-only: `readPassword` falls back to it so an
+    /// existing key keeps working, and nothing ever writes here again.
+    ///
+    /// A key stored under the old service is not migrated automatically. The
+    /// write that would move it prompts — this is the legacy keychain, and an
+    /// unsigned binary's ACL identity does not survive a rebuild — so a silent
+    /// migration would put an Allow/Deny dialog in front of the user at
+    /// whatever moment the fallback first fired. The fallback read costs
+    /// nothing and keeps working indefinitely; re-running the key setup writes
+    /// under the new service.
+    static let legacyService = "com.digimata.ara"
 
     /// The stored password for `account`, or `nil` if there is none.
     ///
@@ -70,6 +84,13 @@ public enum Keychain {
     /// Non-throwing because every caller's response to a failed read is the
     /// same: behave as if no key were configured.
     public static func readPassword(account: String) -> String? {
+        read(account: account, service: service)
+            ?? read(account: account, service: legacyService)
+    }
+
+    /// The query itself, per service, so the current-then-legacy fallback in
+    /// `readPassword` is one line rather than a duplicated dictionary.
+    private static func read(account: String, service: String) -> String? {
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,

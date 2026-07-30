@@ -163,15 +163,17 @@ These are not bugs — they are things no automated test in this repo can reach.
   TSan either reports the race with both stacks, or reports nothing — in which
   case it is a labelling gap fixable with `@preconcurrency`.
 
-## Deferred: reverse-DNS prefixes diverge after the rebrand
+## Resolved: the keychain service is `com.silpho.ara`
 
-The LaunchAgent label is `com.silpho.ara`; the Keychain service that stores a
-cloud API key is still `com.digimata.ara` (`Sources/AraCore/Formatting/Keychain.swift`).
-Both were `digimata` before the rename; renaming the keychain service would
-orphan any stored key with no migration and no loud failure — the cloud engine
-would simply behave as though no key were set. Deliberately deferred. The fix
-when it matters: read the new service first, fall back to the old one, and
-rewrite under the new name on a successful legacy read.
+It was briefly `com.digimata.ara` after the rebrand — half the old vendor,
+half the new product. It now matches the launch agent's prefix. The old
+string survives as `Keychain.legacyService`, read-only: `readPassword` tries
+the current service and falls back to it, so a key stored before the rename
+keeps working. Nothing writes there again, and there is no automatic
+migration — the write that would move the item prompts (legacy keychain,
+unsigned binary, no stable ACL identity), and a silent migration would raise
+an Allow/Deny dialog at whatever moment the fallback first fired. Re-running
+key setup writes under the new service.
 
 ## Deferred: `checkLaunchAgentLogPaths` is dead in practice
 
