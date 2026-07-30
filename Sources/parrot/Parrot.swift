@@ -157,6 +157,14 @@ struct Run: ParsableCommand {
 
         let monitor = HotkeyMonitor(hotkey: chosenHotkey, debug: debugHotkey)
         let capture = AudioCapture()
+        // The store watches the hardware for the whole process; the capture
+        // consults it at every `start()` and on every mid-recording rebuild.
+        // That is the entire idle-time story: a device change while idle
+        // re-arms nothing, because the next utterance resolves afresh anyway.
+        // With no config key and no menu pick the provider yields the system
+        // default input — exactly what an unrouted engine would have used.
+        let micStore = MicrophoneStore(preferredUID: config.microphone)
+        capture.deviceProvider = { micStore.effective.device?.id }
         let dumpWav = self.dumpWav
         let overlay: RecordingOverlay? = noOverlay ? nil : MainActor.assumeIsolated { RecordingOverlay() }
         if let overlay {
@@ -183,6 +191,41 @@ struct Run: ParsableCommand {
         let menuBar = MainActor.assumeIsolated {
             MenuBarController(modelID: chosenModel.id, hotkeyLabel: hotkeyLabel,
                               modeID: startingMode)
+        }
+
+        // The submenu's contents are computed by `MicrophoneMenuModel.compute`
+        // (unit-tested); this closure only ferries store state to the shell.
+        let refreshMicrophoneMenu: @MainActor () -> Void = {
+            menuBar.setMicrophoneMenu(MicrophoneMenuModel.compute(
+                devices: micStore.devices,
+                preferredUID: micStore.preferredUID,
+                effective: micStore.effective))
+        }
+        MainActor.assumeIsolated {
+            refreshMicrophoneMenu()
+            menuBar.onMicrophonePicked = { uid in
+                // The store first: it re-resolves and fires `onChange`, which
+                // repaints the submenu. Persistence is best-effort — a config
+                // file that cannot be rewritten must not undo the pick, so the
+                // failure is one warning line and the choice holds in memory.
+                micStore.setPreferredUID(uid)
+                do {
+                    try Config.persistMicrophone(uid)
+                } catch {
+                    // Our own error explains itself; a foreign one is reduced
+                    // to its type name, the same rule `Config.load` follows.
+                    let reason = (error as? Config.PersistError)?.description
+                        ?? "\(type(of: error))"
+                    FileHandle.standardError.write(Data(
+                        "config: microphone choice not saved (\(reason)); it applies until quit\n"
+                            .utf8))
+                }
+            }
+        }
+        // Hardware events arrive on the store's listener queue; the menu is
+        // main-actor state, so hop before repainting.
+        micStore.onChange = {
+            Task { @MainActor in refreshMicrophoneMenu() }
         }
 
         let modeOverride = mode
