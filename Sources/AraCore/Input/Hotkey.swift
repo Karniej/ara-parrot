@@ -7,7 +7,7 @@ import CoreGraphics
 /// both Option keys — so left/right variants are told apart by the keycode on the
 /// `flagsChanged` event. Fn is the exception: it matches on the flag alone,
 /// preserving the original behaviour on Apple's built-in keyboard.
-public enum Hotkey: String, CaseIterable, ExpressibleByArgument {
+public enum Hotkey: String, CaseIterable, Sendable, ExpressibleByArgument {
     case fn
     case leftOption = "left-option"
     case rightOption = "right-option"

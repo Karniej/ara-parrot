@@ -201,6 +201,13 @@ struct Run: ParsableCommand {
         let snippetsURL = Snippets.defaultURL
         let unsavedCorrections = UnsavedCorrections()
 
+        // The session's manual mode override, main-actor state like the menu
+        // that sets it: the Mode submenu writes it, and the released-handler
+        // reads it at the same main-actor sample point as the frontmost app —
+        // by value, into that utterance. Deliberately not persisted: it is a
+        // session override, and `config.mode` stays the startup default.
+        let manualMode = MainActor.assumeIsolated { ManualMode() }
+
         // The submenu's contents are computed by `MicrophoneMenuModel.compute`
         // (unit-tested); this closure only ferries store state to the shell.
         let refreshMicrophoneMenu: @MainActor () -> Void = {
@@ -296,6 +303,124 @@ struct Run: ParsableCommand {
                     FileHandle.standardError.write(Data(
                         "config: cleanup choice not saved (\(reason)); the saved setting is unchanged\n"
                             .utf8))
+                }
+            }
+
+            // The Mode submenu — the one live pick. It writes the session
+            // override the released-handler samples per utterance, and never
+            // the config: `mode` in config.json stays the startup default
+            // (see ModeMenuModel for why). Repainted on every pick so the
+            // check follows the override; the `mode:` label line keeps
+            // showing what each utterance actually resolved.
+            menuBar.setModeMenu(ModeMenuModel.compute(
+                modes: registry.all, manual: manualMode.id))
+            menuBar.onModePicked = { id in
+                manualMode.id = id
+                menuBar.setModeMenu(ModeMenuModel.compute(
+                    modes: registry.all, manual: id))
+            }
+
+            // Model, Hotkey, Engine: the cleanup pattern verbatim — the check
+            // shows what the running daemon resolved at startup, a pick
+            // persists via the same one-key rewrite, and the check moves only
+            // when the pick actually landed in the file (a failed write
+            // changes nothing on restart, so re-checking would be a lie).
+            // Each submenu's caption owns the "applies on restart" truth.
+            let repaintModelMenu: @MainActor (String) -> Void = { current in
+                menuBar.setModelMenu(ModelMenuModel.compute(
+                    models: ModelRegistry.shared,
+                    currentID: current,
+                    formatterDownloaded: MLXModel.isPresent))
+            }
+            repaintModelMenu(chosenModel.id)
+            menuBar.onModelPicked = { id in
+                do {
+                    try Config.persistModel(id)
+                    repaintModelMenu(id)
+                } catch {
+                    let reason = (error as? Config.PersistError)?.description
+                        ?? "\(type(of: error))"
+                    FileHandle.standardError.write(Data(
+                        "config: model choice not saved (\(reason)); the saved setting is unchanged\n"
+                            .utf8))
+                }
+            }
+
+            menuBar.setHotkeyMenu(HotkeyMenuModel.compute(current: chosenHotkey))
+            menuBar.onHotkeyPicked = { picked in
+                do {
+                    try Config.persistHotkey(picked)
+                    menuBar.setHotkeyMenu(HotkeyMenuModel.compute(current: picked))
+                } catch {
+                    let reason = (error as? Config.PersistError)?.description
+                        ?? "\(type(of: error))"
+                    FileHandle.standardError.write(Data(
+                        "config: hotkey choice not saved (\(reason)); the saved setting is unchanged\n"
+                            .utf8))
+                }
+            }
+
+            // `hasAPIKey` is the startup keychain read's result, carried by
+            // value — the menu must never read the keychain itself, because
+            // that read can raise a blocking prompt (see Keychain's doc).
+            let hasAPIKey = apiKey != nil
+            menuBar.setEngineMenu(EngineMenuModel.compute(
+                current: config.engine, hasAPIKey: hasAPIKey))
+            menuBar.onEnginePicked = { picked in
+                do {
+                    try Config.persistEngine(picked)
+                    menuBar.setEngineMenu(EngineMenuModel.compute(
+                        current: picked, hasAPIKey: hasAPIKey))
+                } catch {
+                    let reason = (error as? Config.PersistError)?.description
+                        ?? "\(type(of: error))"
+                    FileHandle.standardError.write(Data(
+                        "config: engine choice not saved (\(reason)); the saved setting is unchanged\n"
+                            .utf8))
+                }
+            }
+
+            // Start at Login: the checkmark is always a fresh disk read —
+            // after success *and* failure — never an assumption about what
+            // the toggle did. Install remains the single source of truth for
+            // the plist and the launchctl choreography; the notice after
+            // enabling is honest about what `installAgent` actually does
+            // (RunAtLoad + bootstrap start the login copy *now*).
+            menuBar.setStartAtLogin(Install.isInstalled())
+            menuBar.onStartAtLoginToggled = { enable in
+                do {
+                    if enable {
+                        try Install.installAgent()
+                        menuBar.showNotice(
+                            title: "Start at Login enabled",
+                            message: "A login copy of parrot has started now "
+                                + "and will start at every login. If you are "
+                                + "running parrot from a terminal, quit that "
+                                + "one — two daemons would both respond to "
+                                + "the hotkey.")
+                    } else {
+                        try Install.uninstallAgent()
+                    }
+                } catch {
+                    menuBar.showNotice(
+                        title: enable
+                            ? "Could not enable Start at Login"
+                            : "Could not disable Start at Login",
+                        message: "\(error)")
+                }
+                menuBar.setStartAtLogin(Install.isInstalled())
+            }
+
+            // Run Diagnostics: the checks read disk and spawn `defaults`/`ps`
+            // (and touch no keychain — DoctorReport.run has no keychain
+            // check), so they run off the main thread; only the alert hops
+            // back.
+            menuBar.onRunDiagnostics = {
+                Task.detached {
+                    let text = DoctorReport.rendered(DoctorReport.run())
+                    await MainActor.run {
+                        menuBar.showDiagnosticsReport(text)
+                    }
                 }
             }
         }
@@ -399,12 +524,16 @@ struct Run: ParsableCommand {
                         // is legal — and then carried by value into this utterance's
                         // task. Not read later from a shared slot: formatting starts
                         // seconds from now, and by then a user who has begun their
-                        // next utterance would have moved the answer on.
-                        let frontmostBundleID: String? = MainActor.assumeIsolated {
+                        // next utterance would have moved the answer on. The manual
+                        // mode override rides the same sample for the same reason:
+                        // a pick made while this utterance formats belongs to the
+                        // next one.
+                        let (frontmostBundleID, manualModeID): (String?, String?)
+                            = MainActor.assumeIsolated {
                             let id = FrontmostApp.bundleID
                             overlay?.show(.transcribing)
                             menuBar.setTranscribing()
-                            return id
+                            return (id, manualMode.id)
                         }
                         let seconds = Double(samples.count) / AudioCapture.targetSampleRate
                         let rms = computeRMS(samples)
@@ -440,7 +569,7 @@ struct Run: ParsableCommand {
                                 // returns a String and cannot fail, so a broken
                                 // formatter can only ever degrade to raw text.
                                 let cleaned = await session.process(
-                                    text, override: modeOverride, manual: nil,
+                                    text, override: modeOverride, manual: manualModeID,
                                     frontmostBundleID: frontmostBundleID)
                                 let total = Date().timeIntervalSince(started)
                                 if cleaned.isEmpty, !text.isEmpty {
@@ -584,6 +713,17 @@ struct Run: ParsableCommand {
             app.run()
         }
     }
+}
+
+/// The Mode submenu's session override: `nil` is Auto (the resolver's
+/// frontmost-app rule decides), a mode id pins every following utterance
+/// until changed or quit. Main-actor because both its writer (the menu) and
+/// its reader (the released-handler's sample point) already live there.
+/// Never persisted — see `ModeMenuModel`'s doc for why a session override
+/// must not rewrite the config's startup default.
+@MainActor
+private final class ManualMode {
+    var id: String?
 }
 
 /// Read-only in v1: the file is the editor (see "Edit dictionary…" in the
