@@ -107,7 +107,18 @@ with retuned guard bounds and the eval harness re-run with FM as a column. Ara's
 KNOWN-ISSUES is explicit that the FoundationModels path has never executed and its numbers
 "do not automatically transfer".
 
-**5. Dictation is a separate, later product** on the container-app architecture, using
+**5a. Dictation v1 is nearly free — and this is the best effort:value ratio in the
+analysis.** On Face ID iPhones, iOS draws **its own dictation button** over a third-party
+keyboard *unless* you set `hasDictationKey = true`. So: don't set it. Apple provides the
+microphone, the ASR, the permission prompt and the privileged audio path at zero
+engineering cost, dictated text arrives via `UITextInputDelegate` — and then you run it
+through Ara's cleanup chain. **Apple's dictation is already good at transcription and bad
+at cleanup; Ara is a cleanup engine.** That is ~90% of the Ara experience for ~0% of the
+audio engineering, on every device, with no Full Access and no app hop. **2–3 days.**
+Known wrinkle: a developer reports the final `textDidChange` lowercases dictated text on
+acceptance — Ara's capitalisation rules mask it anyway.
+
+**5b. Dictation v2 — the containing-app recorder — only if v1's ceiling proves real.** on the container-app architecture, using
 `SpeechAnalyzer` rather than WhisperKit (runs outside your address space — zero app-size and
 zero runtime-memory cost). Accept the app-hop: Grammarly and Wispr Flow both ship it, and
 both document that **iOS 26 removed the automatic return** — the user must swipe back
@@ -128,3 +139,37 @@ keyboard is allowed; sending the user back has "no API available".
 Foundation Models reachability from a keyboard sandbox (the spike). Any Apple-published
 extension memory number (none exists). Whether the increased-memory-limit entitlement
 affects an appex. `documentContextBeforeInput` behaviour across hosts.
+
+## Three traps specific to this port
+
+**The cooperative pool is 2–6 threads wide on an iPhone, not 12.** `FormatterChain`'s doc
+comment measures orphaned blocking work stalling calls by ~9.16 s once orphan count reached
+pool width — on a Mac that was call 12. On a phone it arrives at call 2 or 3. In a 30 MB
+extension an orphaned task holding allocations is also a jetsam vector. `runOffCooperativePool`
+becomes stricter, not optional.
+
+**Text replacement is where keyboard projects actually die.** `UITextDocumentProxy` has no
+ranged replace and no whole-document read: rewriting a 200-character paragraph means 200
+`deleteBackward()` calls across an IPC boundary, then `insertText`. Compute a **minimal
+diff** and apply only the changed suffix; cap scope at the current sentence. And note what
+this does to an existing invariant — `Formatter`'s "never return empty for non-empty input"
+stops being politeness and becomes a **data-loss guard**: an empty return after 200
+deletions has erased the user's paragraph. Assert before deleting.
+
+**Secure fields never reach you.** `isSecureTextEntry` and phone-pad fields always fall back
+to the system keyboard. Legally excellent; means you cannot promise "works everywhere".
+
+## Effort, solo
+
+| Work | Estimate |
+|---|---|
+| The Foundation-Models-in-an-appex spike | **1 day, do it first** |
+| `AraCore` → `AraEngine` + `AraMacOS` refactor (de-ArgumentParser, store/log seams) | 3–5 days |
+| Architecture C slice 1 — deterministic keyboard, no ML | 2–3 weeks |
+| Slice 2 — Foundation Models engine, conditional on the spike | 1 week |
+| Polish to submittable (memory instrumentation, host matrix, IAP, manifests) | 1–2 weeks |
+| **Dictation v1 — free system mic + Ara cleanup** | **2–3 days** |
+| Dictation v2 — containing-app recorder, background audio survival | 4–6 weeks, high risk |
+
+**~5–7 weeks to a submittable Grammarly replacement**, of which the first four days are a
+refactor and one spike that could invalidate the plan.
