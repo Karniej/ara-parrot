@@ -161,6 +161,69 @@ public struct Config: Codable, Sendable {
         return config
     }
 
+    /// Why a menu pick could not be saved. Thrown rather than warned from
+    /// here because only the caller knows what "not saved" costs the user (the
+    /// in-memory pick still holds until the daemon exits).
+    public enum PersistError: Error, CustomStringConvertible {
+        /// The file's top level is not a JSON object, so there is no place a
+        /// `microphone` key could be set without discarding the user's content.
+        case notAnObject(path: String)
+
+        public var description: String {
+            switch self {
+            case .notAnObject(let path):
+                return "\(path) is not a JSON object"
+            }
+        }
+    }
+
+    /// Sets or removes the `microphone` key in the config file, touching
+    /// nothing else — *including keys this version of parrot does not know
+    /// about*. The file is read back as generic JSON, one key is changed, and
+    /// the object is rewritten; decoding through `Config` and re-encoding
+    /// would silently drop every field the struct has never heard of, which
+    /// turns a menu click into data loss the day a newer config meets an
+    /// older binary.
+    ///
+    /// A file that cannot be parsed is left byte-for-byte untouched and the
+    /// failure is thrown: overwriting it would replace a repairable typo with
+    /// our guess at the user's intent. A missing file is created only when
+    /// there is a pick to record — clearing a preference that was never
+    /// written needs no file.
+    ///
+    /// JSON guarantees keys and values, not bytes: rewriting normalizes
+    /// formatting and key order. Comments could not survive, but comments
+    /// were never valid in this file to begin with.
+    public static func persistMicrophone(_ uid: String?, at url: URL? = nil) throws {
+        let target = url ?? defaultURL
+
+        var object: [String: Any]
+        if FileManager.default.fileExists(atPath: target.path) {
+            let data = try Data(contentsOf: target)
+            let parsed = try JSONSerialization.jsonObject(with: data)
+            guard let dictionary = parsed as? [String: Any] else {
+                throw PersistError.notAnObject(path: target.path)
+            }
+            object = dictionary
+        } else {
+            guard uid != nil else { return }
+            object = [:]
+        }
+
+        if let uid {
+            object["microphone"] = uid
+        } else {
+            object.removeValue(forKey: "microphone")
+        }
+
+        try FileManager.default.createDirectory(
+            at: target.deletingLastPathComponent(), withIntermediateDirectories: true)
+        let data = try JSONSerialization.data(
+            withJSONObject: object,
+            options: [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes])
+        try data.write(to: target, options: .atomic)
+    }
+
     /// Renders a decoding failure as one line the user can act on.
     ///
     /// `DecodingError`'s own description names the offending key and what was

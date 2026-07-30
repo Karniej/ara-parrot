@@ -211,6 +211,95 @@ struct ConfigTests {
         #expect(warnings.joined.contains("microphone"))
     }
 
+    // MARK: - persistMicrophone rewrites one key and spares the rest
+
+    private func json(at url: URL) throws -> [String: Any] {
+        let parsed = try JSONSerialization.jsonObject(with: Data(contentsOf: url))
+        return parsed as? [String: Any] ?? [:]
+    }
+
+    /// The critical property: a menu pick must not destroy keys this version
+    /// of parrot does not know about. A user running a newer config against an
+    /// older binary would otherwise lose settings by touching a menu.
+    @Test("setting the key preserves every other key, known and unknown")
+    func persistPreservesUnknownKeys() throws {
+        let url = write(#"""
+        {"engine":"rules","timeoutMs":900,"cloud":{"model":"m"},
+         "futureKey":{"nested":[1,2]},"flag":true}
+        """#)
+        try Config.persistMicrophone("uid-x", at: url)
+
+        let saved = try json(at: url)
+        #expect(saved["microphone"] as? String == "uid-x")
+        #expect(saved["engine"] as? String == "rules")
+        #expect(saved["timeoutMs"] as? Int == 900)
+        #expect((saved["cloud"] as? [String: Any])?["model"] as? String == "m")
+        #expect((saved["futureKey"] as? [String: Any])?["nested"] as? [Int] == [1, 2])
+        #expect(saved["flag"] as? Bool == true)
+
+        // And the rewritten file still loads without a single warning.
+        let warnings = Warnings()
+        let cfg = Config.load(from: url, warn: warnings.sink)
+        #expect(cfg.microphone == "uid-x")
+        #expect(cfg.engine == .rules)
+        #expect(warnings.lines.isEmpty)
+    }
+
+    @Test("clearing the key removes only it")
+    func persistRemoveOnlyMicrophone() throws {
+        let url = write(#"{"microphone":"old","futureKey":"survives"}"#)
+        try Config.persistMicrophone(nil, at: url)
+        let saved = try json(at: url)
+        #expect(!saved.keys.contains("microphone"))
+        #expect(saved["futureKey"] as? String == "survives")
+    }
+
+    @Test("setting the key overwrites a previous pick")
+    func persistOverwritesPreviousPick() throws {
+        let url = write(#"{"microphone":"old"}"#)
+        try Config.persistMicrophone("new", at: url)
+        #expect(try json(at: url)["microphone"] as? String == "new")
+    }
+
+    @Test("a missing file is created, directories included, when setting")
+    func persistCreatesFile() throws {
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("ara-cfg-\(UUID().uuidString)")
+            .appendingPathComponent("config.json")
+        try Config.persistMicrophone("uid-x", at: url)
+        let saved = try json(at: url)
+        #expect(saved["microphone"] as? String == "uid-x")
+        #expect(saved.count == 1)
+    }
+
+    @Test("a missing file stays missing when clearing — nothing to remove")
+    func persistMissingFileStaysMissing() throws {
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("ara-cfg-\(UUID().uuidString).json")
+        try Config.persistMicrophone(nil, at: url)
+        #expect(!FileManager.default.fileExists(atPath: url.path))
+    }
+
+    /// A file that cannot be parsed cannot be selectively rewritten; writing
+    /// anyway would replace the user's (repairable) file with our guess at it.
+    @Test("a malformed file throws and is left byte-for-byte untouched")
+    func persistMalformedUntouched() throws {
+        let url = write("{ not json")
+        #expect(throws: (any Error).self) {
+            try Config.persistMicrophone("uid-x", at: url)
+        }
+        #expect(try String(contentsOf: url, encoding: .utf8) == "{ not json")
+    }
+
+    @Test("a non-object top level throws and is left untouched")
+    func persistNonObjectUntouched() throws {
+        let url = write("[1,2,3]")
+        #expect(throws: (any Error).self) {
+            try Config.persistMicrophone("uid-x", at: url)
+        }
+        #expect(try String(contentsOf: url, encoding: .utf8) == "[1,2,3]")
+    }
+
     @Test("a partial cloud object keeps sibling settings and cloud defaults")
     func partialCloudObject() {
         let cfg = Config.load(from: write(#"""
