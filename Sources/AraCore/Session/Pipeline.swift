@@ -138,6 +138,7 @@ public enum Pipeline {
                                  cloudTransport: cloudTransport),
             resolver: ModeResolver(registry: registry, defaultID: config.mode),
             dictionary: dictionary ?? { LocalDictionary.load(from: dictionaryURL) },
+            cleanup: config.cleanup,
             onModeResolved: onModeResolved)
     }
 }

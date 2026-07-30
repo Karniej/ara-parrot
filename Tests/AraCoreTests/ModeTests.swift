@@ -1,3 +1,4 @@
+import Foundation
 import Testing
 @testable import AraCore
 
@@ -63,6 +64,59 @@ struct ModeTests {
         let resolver = ModeResolver(registry: registry, defaultID: "default")
         let m = resolver.resolve(override: "nope", manual: nil, frontmostBundleID: nil)
         #expect(m.id == "default")
+    }
+
+    // MARK: - cleanup intensity riding the mode
+
+    @Test("a mode is built at medium cleanup unless told otherwise")
+    func modeDefaultsToMedium() {
+        #expect(ModeRegistry.defaultMode.cleanup == .medium)
+    }
+
+    @Test("applying an intensity carries it and preserves the mode's identity")
+    func applyingCarriesIntensity() {
+        let applied = ModeRegistry.defaultMode.applying(cleanup: .high)
+        #expect(applied.cleanup == .high)
+        #expect(applied.id == "default")
+        #expect(applied.name == "Default")
+        #expect(applied.prompt == ModeRegistry.defaultMode.prompt)
+        #expect(applied.usesLLM)
+    }
+
+    /// The verbatim seam: `cleanup: none` must reach `FormatterChain` as the
+    /// same property verbatim mode uses, so no chain logic changes at all.
+    @Test("applying none turns the LLM off")
+    func applyingNoneDisablesLLM() {
+        #expect(ModeRegistry.defaultMode.applying(cleanup: CleanupIntensity.none)
+            .usesLLM == false)
+    }
+
+    @Test("no intensity can turn the LLM on for a verbatim mode")
+    func applyingNeverEnablesLLM() {
+        let verbatim = registry.mode(id: "verbatim")!
+        for intensity in CleanupIntensity.allCases {
+            #expect(verbatim.applying(cleanup: intensity).usesLLM == false)
+        }
+    }
+
+    /// User modes are documented as decodable from `config.json`; a mode file
+    /// written before `cleanup` existed must keep decoding, at the default.
+    @Test("a mode encoded before cleanup existed still decodes, at medium")
+    func modeWithoutCleanupKeyDecodes() throws {
+        let json = #"""
+        {"id":"x","name":"X","prompt":"p","appBundleIDs":[],"usesLLM":true}
+        """#
+        let mode = try JSONDecoder().decode(Mode.self, from: Data(json.utf8))
+        #expect(mode.cleanup == .medium)
+        #expect(mode.usesLLM)
+    }
+
+    @Test("a mode round-trips its cleanup through Codable")
+    func modeCleanupRoundTrips() throws {
+        let mode = Mode(id: "x", name: "X", prompt: "p", appBundleIDs: [],
+                        usesLLM: true, cleanup: .light)
+        let data = try JSONEncoder().encode(mode)
+        #expect(try JSONDecoder().decode(Mode.self, from: data).cleanup == .light)
     }
 
     @Test("a duplicated user mode id yields last-write-wins with no duplicate entry")

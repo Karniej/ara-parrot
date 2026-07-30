@@ -234,6 +234,52 @@ struct DictationSessionTests {
         #expect(await second == "mode code for second utterance spoken here")
     }
 
+    // MARK: - Cleanup intensity
+
+    /// The configured intensity rides the resolved mode into every formatter,
+    /// which is how `TranscriptPrompt` picks its variant without any formatter
+    /// knowing the config exists.
+    @Test("the configured cleanup intensity rides the resolved mode")
+    func cleanupRidesTheMode() async {
+        let seen = Box<Mode>()
+        let session = DictationSession(
+            formatter: StubFormatter { text, mode in seen.set(mode); return text },
+            resolver: resolver, dictionary: { LocalDictionary() },
+            cleanup: .high)
+        _ = await session.process("hello there friend", override: nil, manual: nil,
+                                  frontmostBundleID: nil)
+        #expect(seen.current?.cleanup == .high)
+        #expect(seen.current?.usesLLM == true)
+    }
+
+    /// `cleanup: none` reaches the formatter as `usesLLM == false` — the exact
+    /// seam verbatim mode already uses, so `FormatterChain` skips the model
+    /// with no new logic and the rules floor still runs.
+    @Test("cleanup none reaches the formatter with the LLM switched off")
+    func cleanupNoneDisablesTheLLM() async {
+        let seen = Box<Mode>()
+        let session = DictationSession(
+            formatter: StubFormatter { text, mode in seen.set(mode); return text },
+            resolver: resolver, dictionary: { LocalDictionary() },
+            cleanup: CleanupIntensity.none)
+        _ = await session.process("hello there friend", override: nil, manual: nil,
+                                  frontmostBundleID: nil)
+        #expect(seen.current?.usesLLM == false)
+        #expect(seen.current?.cleanup == CleanupIntensity.none)
+        // The mode itself is still the resolved one, so the UI label is honest.
+        #expect(seen.current?.id == "default")
+    }
+
+    @Test("a session built without an intensity behaves as medium — today's default")
+    func cleanupDefaultsToMedium() async {
+        let seen = Box<Mode>()
+        let session = session(StubFormatter { text, mode in seen.set(mode); return text })
+        _ = await session.process("hello there friend", override: nil, manual: nil,
+                                  frontmostBundleID: nil)
+        #expect(seen.current?.cleanup == .medium)
+        #expect(seen.current?.usesLLM == true)
+    }
+
     // MARK: - Cancellation
 
     /// A withdrawn request must not produce text. `process` cannot throw — that

@@ -54,6 +54,7 @@ public actor DictationSession {
     private let formatter: any Formatter
     private let resolver: ModeResolver
     private let dictionary: @Sendable () -> LocalDictionary
+    private let cleanup: CleanupIntensity
     private let onModeResolved: (@Sendable (Mode) -> Void)?
 
     /// - Parameters:
@@ -69,16 +70,24 @@ public actor DictationSession {
     ///     argument would disable the user's corrections with no symptom.
     ///     Runs on this actor's executor: small local file I/O is fine,
     ///     anything slower is not.
+    ///   - cleanup: The editing intensity from `config.json`, stamped onto
+    ///     every resolved mode before formatting — see `Mode.applying(cleanup:)`
+    ///     for how `.none` becomes the verbatim seam. Defaulted, unlike the
+    ///     other collaborators, because `.medium` *is* the absent-key
+    ///     behaviour: a call site that forgets it gets exactly what an
+    ///     unconfigured user gets, which is not a defect to surface.
     ///   - onModeResolved: Notified with the resolved mode before formatting
     ///     starts, so a UI can show which mode an utterance was treated as.
     ///     Called from this actor's executor: it must not block.
     public init(formatter: any Formatter,
                 resolver: ModeResolver,
                 dictionary: @escaping @Sendable () -> LocalDictionary,
+                cleanup: CleanupIntensity = .medium,
                 onModeResolved: (@Sendable (Mode) -> Void)? = nil) {
         self.formatter = formatter
         self.resolver = resolver
         self.dictionary = dictionary
+        self.cleanup = cleanup
         self.onModeResolved = onModeResolved
     }
 
@@ -122,8 +131,12 @@ public actor DictationSession {
         var corrected = dictionary().apply(raw)
         if corrected.isEmpty { corrected = raw }
 
+        // The configured intensity rides the resolved mode into the chain and
+        // the prompt; `.none` arrives as `usesLLM == false`, the seam verbatim
+        // mode already takes, so no formatter learns a new concept here.
         let mode = resolver.resolve(override: override, manual: manual,
                                     frontmostBundleID: frontmostBundleID)
+            .applying(cleanup: cleanup)
         onModeResolved?(mode)
 
         do {

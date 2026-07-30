@@ -319,4 +319,60 @@ struct ConfigTests {
         #expect(cfg.cloud?.model == "claude-opus-5")
         #expect(cfg.cloud?.keychainAccount == "ara-cloud")
     }
+
+    // MARK: - cleanup
+
+    @Test("cleanup decodes every intensity")
+    func cleanupDecodes() {
+        #expect(Config.load(from: write(#"{"cleanup":"none"}"#)).cleanup == CleanupIntensity.none)
+        #expect(Config.load(from: write(#"{"cleanup":"light"}"#)).cleanup == .light)
+        #expect(Config.load(from: write(#"{"cleanup":"medium"}"#)).cleanup == .medium)
+        #expect(Config.load(from: write(#"{"cleanup":"high"}"#)).cleanup == .high)
+    }
+
+    @Test("cleanup defaults to medium when absent — today's behaviour")
+    func cleanupAbsentIsMedium() {
+        let warnings = Warnings()
+        let cfg = Config.load(from: write("{}"), warn: warnings.sink)
+        #expect(cfg.cleanup == .medium)
+        #expect(warnings.lines.isEmpty)
+    }
+
+    @Test("a null cleanup is medium and silent")
+    func cleanupNull() {
+        let warnings = Warnings()
+        let cfg = Config.load(from: write(#"{"cleanup":null}"#), warn: warnings.sink)
+        #expect(cfg.cleanup == .medium)
+        #expect(warnings.lines.isEmpty)
+    }
+
+    /// The microphone guarantee, extended to `cleanup`: a typo in an editing
+    /// preference must never discard the file — losing the cloud section over
+    /// `"cleanup": "hgih"` would turn a taste setting into an engine downgrade.
+    @Test("an invalid cleanup warns, keeps every sibling, and uses medium")
+    func cleanupInvalidKeepsSiblings() {
+        let warnings = Warnings()
+        let url = write(#"{"engine":"rules","timeoutMs":900,"cleanup":"hgih"}"#)
+        let cfg = Config.load(from: url, warn: warnings.sink)
+        #expect(cfg.engine == .rules)      // not the default — the file survived
+        #expect(cfg.timeoutMs == 900)
+        #expect(cfg.cleanup == .medium)
+        #expect(warnings.lines.count == 1)
+        #expect(warnings.joined.contains(url.path))
+        #expect(warnings.joined.contains("cleanup"))
+        // The warning teaches the valid spellings rather than only rejecting.
+        #expect(warnings.joined.contains("none, light, medium, high"))
+    }
+
+    @Test("a wrongly typed cleanup behaves as unset, siblings intact")
+    func cleanupWrongTypeKeepsSiblings() {
+        let warnings = Warnings()
+        let cfg = Config.load(
+            from: write(#"{"cleanup":42,"cloud":{"model":"m"}}"#),
+            warn: warnings.sink)
+        #expect(cfg.cleanup == .medium)
+        #expect(cfg.cloud?.model == "m")
+        #expect(warnings.lines.count == 1)
+        #expect(warnings.joined.contains("cleanup"))
+    }
 }
