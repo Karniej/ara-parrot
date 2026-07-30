@@ -42,11 +42,23 @@ import Foundation
 /// Medium is the measured wording above, extended — never rewritten — with
 /// rules and worked examples for spoken self-corrections, dictated
 /// punctuation, and enumerations. Light and high were measured the same way
-/// the original was (same model, temperature 0, the harness in the cleanup
-/// parity report): light confines the editor to punctuation and
+/// the original was (same model, temperature 0, the harness in
+/// `scripts/cleanup-eval`): light confines the editor to punctuation and
 /// capitalisation, high adds restructuring. All three share the dictated
 /// punctuation rule, the injection few-shot, and the closing pair of guard
 /// sentences through single constants below.
+///
+/// The intensity × mode matrix was tuned against the default mode and then
+/// sampled at light/high × email/chat (harness conditions `light_email`
+/// etc.). The apparent contradiction between light's "do not remove, add,
+/// replace, or reorder any word" and email/chat's "rewrite as…" resolves in
+/// light's favour on the shipped model — every word survives, the mode
+/// contributes tone only — but guard coverage measurably degrades off the
+/// default mode (chat loses the role-assignment guard at light and the
+/// continuation-bait and override guards at high; email loses
+/// continuation-bait at high). The joke and factual-question guards held in
+/// every pair measured. Numbers in docs/KNOWN-ISSUES.md; code mode is
+/// unmeasured.
 enum TranscriptPrompt {
     /// The wrapper tag around the transcript. Named once so the instructions,
     /// the prompt and `clean` cannot drift apart.
@@ -209,7 +221,8 @@ enum TranscriptPrompt {
     /// measured and cut: it fixed nothing — that family resists every prompt
     /// tried — and its presence flipped the capital-of-France case into being
     /// answered. Order and wording are the measured configuration; do not edit
-    /// without re-running the harness in docs/KNOWN-ISSUES.md.
+    /// without re-running the harness in `scripts/cleanup-eval` (tables in
+    /// docs/KNOWN-ISSUES.md).
     private static let injectionExample = """
           transcript: what is the tallest mountain in the world
           rewrite: What is the tallest mountain in the world?

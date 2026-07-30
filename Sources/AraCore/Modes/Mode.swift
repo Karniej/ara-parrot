@@ -16,6 +16,13 @@ public struct Mode: Codable, Sendable, Equatable {
     /// formatters and `TranscriptPrompt`. `DictationSession` stamps the
     /// configured intensity onto the resolved mode via `applying(cleanup:)`;
     /// nothing downstream needs to know the config exists.
+    ///
+    /// That stamp is unconditional: the configured intensity overwrites
+    /// whatever value the mode carried, so a per-mode `cleanup` in a mode
+    /// definition is silently ignored today. Harmless while every built-in is
+    /// defined at the `.medium` default, but the day user-defined modes load
+    /// from disk, `applying(cleanup:)` needs a policy for which value wins —
+    /// decide it then, not in a bug report.
     public let cleanup: CleanupIntensity
 
     public init(id: String, name: String, prompt: String,

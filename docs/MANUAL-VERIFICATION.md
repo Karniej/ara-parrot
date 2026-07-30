@@ -161,7 +161,7 @@ scripts/build-metallib.sh                            # SwiftPM cannot compile Me
       and role-play phrasings in section 3. If any of them is obeyed here, the
       prompt has regressed against its measured state (docs/KNOWN-ISSUES.md
       has the tables); capture the exact sentence and re-run the harness in
-      `.superpowers/sdd/cleanup-parity-report.md` before touching the prompt.
+      `scripts/cleanup-eval/` before touching the prompt.
       The one family measured as still obeyed is output coercion — see the new
       step 3 case for what "pass" looks like there.
 

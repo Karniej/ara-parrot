@@ -40,8 +40,9 @@ These are not bugs — they are things no automated test in this repo can reach.
 - **Spoken injection: improved by the measured hardening pass, not fully
   fixed.** The cleanup-parity branch re-measured the recorded failure and a
   wider attack suite on the real model (Qwen2.5-1.5B-Instruct-4bit, temp 0,
-  prompts dumped byte-exact from `TranscriptPrompt`; harness and full tables
-  in `.superpowers/sdd/cleanup-parity-report.md`). Six injection phrasings,
+  prompts dumped byte-exact from `TranscriptPrompt`; the harness lives in
+  `scripts/cleanup-eval/` — see its README — with full tables in
+  `.superpowers/sdd/cleanup-parity-report.md`). Six injection phrasings,
   before → after, where "after" holds at every cleanup intensity:
 
   | attack family | before | after |
@@ -62,11 +63,34 @@ These are not bugs — they are things no automated test in this repo can reach.
   fails `OutputGuard`'s lower length-ratio bound, the chain falls to the rules
   floor, and the raw words are typed — pinned by `OutputGuardTests`.
 
+  The table above is the default mode. Sampling the intensity × mode matrix
+  (`light`/`high` × `email`/`chat`) shows the guard few-shots weaken when a
+  mode's "rewrite as…" framing composes with them — injections passed, out
+  of 6:
+
+  | | default | email | chat |
+  |---|---|---|---|
+  | light | 5 | 5 | 4 (loses role-assignment) |
+  | high | 5 | 4 (loses continuation-bait) | 3 (loses continuation-bait and override) |
+
+  The recorded joke failure and the factual question held in every pair
+  measured; output coercion fails everywhere and is OutputGuard's to catch.
+  The light × email/chat wording tension ("keep every word" vs "rewrite as
+  polished prose / a terse message") measurably resolves in light's favour:
+  every word survives and the mode contributes tone only. Code mode and the
+  medium × email/chat pairs are unmeasured.
+
+  These numbers are the MLX engine's only. They do not automatically
+  transfer to the cloud model or Apple's FoundationModels engine, which share
+  the prompt but not the weights — a larger model may treat the guard
+  few-shots (or the attacks) entirely differently; neither has been measured.
+
   Two cautions from the measurement. First, the capital-of-France case is
   knife-edge: seemingly unrelated prompt edits (adding an example, rewording a
   rule) flipped it repeatedly during tuning, and only the factual-question
   guard example held it stable — treat any future edit to
-  `TranscriptPrompt` as unmeasured until the harness is re-run. Second, the
+  `TranscriptPrompt` as unmeasured until the harness in
+  `scripts/cleanup-eval/` is re-run. Second, the
   echo behaviour means the *attack text itself* is typed at the cursor, which
   is the correct outcome for dictation: the user said those words.
 - **Dictated "new line" / "new paragraph" never produce a real line break on
