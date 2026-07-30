@@ -49,6 +49,18 @@ public enum StartupResolution {
         return .fn
     }
 
+    /// Injection method setting: flag, then `config.inject`, then `auto`.
+    public static func injection(flag: InjectionSetting?,
+                                 config: String?,
+                                 warn: (String) -> Void = Config.warnToStderr) -> InjectionSetting {
+        if let flag { return flag }
+        guard let raw = config else { return .auto }
+        if let parsed = InjectionSetting(rawValue: raw) { return parsed }
+        warn("unknown inject in config: \(raw) — using \(InjectionSetting.auto.rawValue)")
+        warn("known values: \(InjectionSetting.valueNames)")
+        return .auto
+    }
+
     /// Transcription model: flag, then `config.model`, then the recommended one.
     public static func model(flag: String?,
                              config: String?,
