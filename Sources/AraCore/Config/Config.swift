@@ -230,7 +230,10 @@ public struct Config: Codable, Sendable {
     /// wrong with it, which is the whole point; anything else is reduced to its
     /// type name, following `CloudFormatter.translate`'s rule that a foreign
     /// error's message is a channel its producer controls.
-    private static func describe(_ error: any Error) -> String {
+    ///
+    /// Internal rather than private because `LocalDictionary.load` reports
+    /// its malformed file the same way, and two renderers would drift.
+    static func describe(_ error: any Error) -> String {
         guard let error = error as? DecodingError else { return "\(type(of: error))" }
         let (context, what): (DecodingError.Context, String) = {
             switch error {
