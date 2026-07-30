@@ -162,3 +162,24 @@ These are not bugs — they are things no automated test in this repo can reach.
   `-sanitize=thread`, run the daemon, and exercise the hotkey during UI updates.
   TSan either reports the race with both stacks, or reports nothing — in which
   case it is a labelling gap fixable with `@preconcurrency`.
+
+## Deferred: reverse-DNS prefixes diverge after the rebrand
+
+The LaunchAgent label is `com.silpho.ara`; the Keychain service that stores a
+cloud API key is still `com.digimata.ara` (`Sources/AraCore/Formatting/Keychain.swift`).
+Both were `digimata` before the rename; renaming the keychain service would
+orphan any stored key with no migration and no loud failure — the cloud engine
+would simply behave as though no key were set. Deliberately deferred. The fix
+when it matters: read the new service first, fall back to the old one, and
+rewrite under the new name on a successful legacy read.
+
+## Deferred: `checkLaunchAgentLogPaths` is dead in practice
+
+It inspects the *current* agent plist for `/tmp` std paths, but only a
+post-rename build writes that plist, and post-rename builds never write `/tmp`
+paths. The upgrade scenario it was built for is now covered by
+`checkLegacyLaunchAgent` (which finds the pre-rename agent) plus
+`checkLegacyLogs` (which finds the files it left). The check and its three
+tests are dead weight, and the `DoctorTests` fixture pairing a `com.silpho.ara`
+label with `/tmp/parrot.out.log` describes a state no build can produce.
+Cleanup, not a defect.

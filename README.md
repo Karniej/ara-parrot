@@ -40,20 +40,34 @@ or reading your screen.
 
 ## Install
 
+**Requires:** macOS 14+ on Apple Silicon (M1 or newer). Transcription runs on
+the Apple Neural Engine via CoreML, so Intel is not supported.
+
+Ara is source-only today — no tagged release has shipped yet, so there is
+nothing for a download to fetch. Building takes one command plus a Metal step:
+
 ```sh
-curl -fsSL https://raw.githubusercontent.com/Karniej/ara-parrot/master/scripts/install.sh | sh
-ara setup                       # grants mic + accessibility, downloads the model
-ara install --launch-at-login   # optional — runs in the background on login
+git clone https://github.com/Karniej/ara-parrot.git && cd ara-parrot
+swift build -c release
+scripts/build-metallib.sh                     # compiles the Metal kernels SwiftPM cannot
+./.build/release/ara models download-formatter  # the local formatting model, ~900 MB, once
+./.build/release/ara setup                    # microphone + accessibility permissions
+./.build/release/ara                          # run it
 ```
 
-**Requires:** macOS 14+ on Apple Silicon (M1 or newer). Transcription runs on the Apple Neural Engine via CoreML — so the installer refuses to run on Intel.
+Put it on your `PATH` if you want `ara` from anywhere:
 
-The installer drops the binary in `/usr/local/bin/ara`. Builds are unsigned for now, so the installer strips the quarantine xattr — once you've inspected the script you'll see exactly what it does.
+```sh
+ln -sf "$PWD/.build/release/ara" ~/.local/bin/ara
+```
 
-> **Fork note:** an Ara release pipeline exists but has not shipped a tagged
-> build yet, so the curl installer above has nothing to fetch until it does.
-> Until then Ara is source-only: use [Build from
-> source](#build-from-source) below. Builds will stay unsigned for now.
+Then `ara install --launch-at-login` registers the background daemon, which is
+the recommended way to run it: models warm once at login instead of on every
+launch. See [Build from source](#build-from-source) for what each step does.
+
+When a tagged release ships, `scripts/install.sh` becomes the one-line path
+(`curl -fsSL .../install.sh | sh`, dropping the binary in `/usr/local/bin/ara`).
+Builds will be unsigned at first, so macOS will ask you to confirm the first run.
 
 ### Upgrading from `parrot`
 
