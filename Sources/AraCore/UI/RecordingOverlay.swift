@@ -9,15 +9,25 @@ public final class RecordingOverlay {
         case hidden
         case recording
         case transcribing
+        /// A short message in place of the waveform — "no microphone". Unlike
+        /// the other states, which the daemon's lifecycle hides, this one has
+        /// no "release the key" moment guaranteed to follow, so it hides
+        /// itself after a beat (unless a newer state supersedes it first).
+        case error(String)
     }
 
     private var window: NSPanel?
     private let model = OverlayModel()
+    /// Bumped on every show/hide; the error state's auto-hide fires only if
+    /// its token is still current, so a recording that starts inside the
+    /// error's lifetime is never yanked off screen.
+    private var showToken = 0
 
     public init() {}
 
     public func show(_ state: State) {
         ensureWindow()
+        showToken += 1
         if state == .recording {
             model.resetLevels()
         }
@@ -34,9 +44,17 @@ public final class RecordingOverlay {
         } else {
             model.state = state
         }
+        if case .error = state {
+            let token = showToken
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.6) { [weak self] in
+                guard let self, self.showToken == token else { return }
+                self.hide()
+            }
+        }
     }
 
     public func hide() {
+        showToken += 1
         model.state = .hidden
         // Let the SwiftUI scale+fade animation play out before yanking the
         // window — otherwise it just pops away.
@@ -55,8 +73,11 @@ public final class RecordingOverlay {
 
     private func ensureWindow() {
         if window != nil { return }
+        // Wider than the waveform pill needs: the capsule hugs its content
+        // and the rest of the panel is clear and click-through, so the extra
+        // width is invisible — it only gives the error text room to render.
         let panel = NSPanel(
-            contentRect: NSRect(x: 0, y: 0, width: 96, height: 44),
+            contentRect: NSRect(x: 0, y: 0, width: 280, height: 44),
             styleMask: [.borderless, .nonactivatingPanel],
             backing: .buffered,
             defer: false
@@ -144,6 +165,14 @@ private struct OverlayPill: View {
                 .controlSize(.small)
                 .scaleEffect(0.8)
                 .frame(width: 54, height: 22)
+        case .error(let message):
+            // Same pill, words instead of bars; the desaturated red is the
+            // waveform blue's tone shifted to "something is wrong".
+            Text(message)
+                .font(.system(size: 12, weight: .medium))
+                .foregroundStyle(Color(red: 255/255.0, green: 173/255.0, blue: 173/255.0))
+                .fixedSize()
+                .frame(height: 22)
         }
     }
 }

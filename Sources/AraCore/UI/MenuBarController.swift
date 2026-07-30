@@ -70,6 +70,24 @@ public final class MenuBarController {
         stateLabel.title = "transcribing…"
     }
 
+    /// The capture could not start, or lost every input mid-utterance: the
+    /// state line must not keep claiming "recording" (or promising that
+    /// holding the hotkey will dictate). Cleared by the next state change, or
+    /// by `clearNoMicrophone()` when a device returns while idle.
+    public func setNoMicrophone() {
+        stateLabel.title = Self.noMicrophoneTitle
+    }
+
+    /// Restores the idle line — but only over the no-microphone message, so a
+    /// device change can never clobber "● recording" or "transcribing…".
+    public func clearNoMicrophone() {
+        if stateLabel.title == Self.noMicrophoneTitle {
+            stateLabel.title = idleTitle
+        }
+    }
+
+    private static let noMicrophoneTitle = "no microphone"
+
     /// Shows the mode the current utterance is being formatted in. The daemon
     /// resolves a mode per utterance from the `--mode` flag, the config default
     /// and the frontmost application, so this is the only way to see which of

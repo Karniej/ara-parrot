@@ -232,7 +232,15 @@ struct Run: ParsableCommand {
         // degraded capture re-resolves here or not at all.
         micStore.onChange = {
             capture.retryIfDegraded()
-            Task { @MainActor in refreshMicrophoneMenu() }
+            Task { @MainActor in
+                refreshMicrophoneMenu()
+                // A device came back while the state line still said
+                // "no microphone" — let it offer dictation again. Guarded
+                // inside the controller: only that message is replaced.
+                if micStore.effective.device != nil {
+                    menuBar.clearNoMicrophone()
+                }
+            }
         }
 
         let modeOverride = mode
@@ -258,7 +266,19 @@ struct Run: ParsableCommand {
                             menuBar.setRecording(true)
                         }
                     } catch {
+                        // A stderr line is invisible for a menu-bar daemon;
+                        // the spec's contract is an on-screen answer: an
+                        // error pill (self-hiding — there is no release-path
+                        // cleanup coming for a recording that never started)
+                        // and a menu state line that stops promising
+                        // dictation. The Microphone submenu already explains
+                        // itself: the store repainted it "no microphone
+                        // connected" when the last device left.
                         FileHandle.standardError.write(Data("capture failed: \(error)\n".utf8))
+                        MainActor.assumeIsolated {
+                            overlay?.show(.error("no microphone"))
+                            menuBar.setNoMicrophone()
+                        }
                     }
                 case .released:
                     let samples = capture.stop()
