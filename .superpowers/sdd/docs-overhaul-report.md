@@ -96,7 +96,91 @@ script after the rewrite.
   latency and warm-up figures quoted in both documents are the ones already
   recorded in source doc comments and `MANUAL-VERIFICATION.md`; I re-measured
   none of them and cited each one's origin so a future reader can.
-- **`com.cmuxterm.app`** in `ModeRegistry`'s code-mode bundle list looks like a
+- **`com.cmuxterm.app`** in `ModeRegistry`'s code-mode bundle list looked like a
   typo for a terminal identifier, but I could not determine the intent, so the
-  README lists only VS Code and Xcode for that row rather than guessing. Not a
-  doc bug — flagged here in case it is a code one.
+  README listed only VS Code and Xcode for that row rather than guessing.
+  **Resolved:** it was a code bug, fixed on master in `b6a38a3` — the id matched
+  no application, so terminals fell through to `default` mode. See the follow-up
+  pass below.
+
+---
+
+## Follow-up pass (2026-07-30): three fixes, and one premise that did not hold
+
+Master moved after this branch point; `b6a38a3` was merged in before these
+fixes so they were written against a current tree.
+
+**1. A false claim of my own, in the Dictionary section.** The illustrative JSON
+showed two entries (`Ara` and `Kraków`), and the prose below then said
+"Edit dictionary…" writes "the example entry above". `LocalDictionary.starter`
+contains exactly one entry, pinned by
+`LocalDictionaryTests.starterMatchesREADMEExample` and spelled out in
+`MANUAL-VERIFICATION.md:707-711`. The two-entry block is worth keeping — it is
+what a real file looks like — so it is now introduced as "a file with two
+corrections in it looks like this", and the starter sentence says "a one-entry
+example… (just the `Ara` correction above)", matching the phrasing the Snippets
+section already used correctly.
+
+**2. The MLX startup timing was three figures measured under three conditions.**
+Re-measured by the coordinator on 2026-07-30, M3 Pro, release build, current
+master with concurrent warm-up: total to `listening` 9.51 s and 5.91 s across
+two runs; MLX load+priming 1.0, 1.2, 4.2, 4.3, 5.2 s across five; Whisper's
+phase 4.0–7.7 s in the same runs. The spread has a cause — since warm-up became
+concurrent, MLX's load overlaps and contends with Whisper's ANE prewarm, so the
+*phase* is slower than the ~1 s it measured alone while the *total* is lower.
+
+Both documents now say that plainly. `architecture.md`'s single table is split
+into "measured with each phase running alone" (the figures the source doc
+comments argue from) and "measured 2026-07-30 on the shipped concurrent
+warm-up" (what a user experiences), with a paragraph explaining that the gap
+between them is contention and that the number to watch is the total. Two
+specific corrections: the old table said "MLX load, warm, plus the priming
+generation | ~1.8 s", which read as though priming were additive —
+`MLXFormatter.swift:31-33` says priming is *inside* that figure, so the row now
+says so explicitly. And the prose claim that "startup costs `max(4.0, 1.0)`" is
+gone; the overlap is real but not free, so it now says startup *approaches* the
+larger of the two. The README's warm-up paragraph gives the user-facing version:
+expect roughly 6–10 s warm, dominated by Whisper.
+
+**3. Two facts went stale between the branch point and master (`b6a38a3`).**
+
+| Doc said | `b6a38a3` does |
+|---|---|
+| The cloud API key lives under keychain service `com.digimata.ara` | `Keychain.service` is now `com.silpho.ara`, matching the launch agent's prefix. `legacyService = "com.digimata.ara"` is tried second by `readPassword` so an existing key still resolves, and **nothing writes there again** — there is deliberately no automatic migration, because that write is the blocking Allow/Deny call and firing it silently would put a dialog in front of the user unprompted |
+| `code` mode is auto-selected in "VS Code, Xcode" | Also Cursor and five real terminals — Terminal, iTerm2, kitty, Alacritty, WezTerm. The previous list carried `com.cmuxterm.app`, which matches no application, so terminals silently fell through to `default` mode |
+
+Fixed in both places in the README (the config reference's key paragraph and
+the privacy table for the keychain; the mode table for `code`), and
+`architecture.md` gained a paragraph on why the keychain rename is a read
+fallback rather than a migration — it belongs next to the existing argument for
+keeping blocking keychain work off the dictation path, since it is the same
+blocking call.
+
+### The premise I could not confirm: there is no downloadable 0.1.0
+
+I was asked to reference the shipped 0.1.0 release rather than calling it
+unreleased. The evidence does not support that, so I did not write it:
+
+- `git ls-remote --tags fork` — the tag **`v0.1.0` does exist and is pushed**,
+  pointing at `b6a38a3`.
+- `gh release view v0.1.0` — **`release not found`**. `gh release list` shows
+  the newest published release is `v0.0.5`, from 2026-05-10.
+- `gh run list` shows no `release` workflow run for `v0.1.0`; the last one is
+  `v0.0.5`.
+- `.github/workflows/release.yml` uploads `ara-macos-arm64.tar.gz` and its
+  `.sha256` — **it has never built or published a DMG**. A DMG has only ever
+  been produced locally by `scripts/package-dmg.sh`; `dist/Ara-0.1.0.dmg` exists
+  in the working checkout, built today, with sha256 `41c0981…`.
+
+So "0.1.0 shipped with a DMG" is true of the local `dist/` directory and not of
+anything a user can download. Telling readers to download it would have been the
+same class of error as fix 1. What the section says instead is accurate on every
+point: the tag is cut, no published release carries a DMG, the workflow builds
+the CLI tarball, and the scripts build the image locally in the meantime. I also
+added a caveat to the `scripts/install.sh` paragraph — it resolves GitHub's
+*latest* release, which is `v0.0.5` and considerably older than this checkout.
+
+**If a v0.1.0 release with a DMG is meant to exist, something upstream of the
+docs is incomplete** — either the tag push did not trigger the workflow, or the
+workflow needs a step that runs `package-app.sh`/`package-dmg.sh` and attaches
+the image. Worth checking before the install section is revised again.

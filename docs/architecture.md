@@ -231,25 +231,55 @@ its own thread**, and `CloudFormatter.init` takes a `String?` rather than a
 closure so there is no lazy work a caller can smuggle onto the dictation path.
 The cost is that a rotated key needs a restart.
 
+The same prompt is why the service rename is a *read* fallback and not a
+migration. `Keychain.service` is `com.silpho.ara`; `legacyService`
+(`com.digimata.ara`) is tried second, so an existing key keeps resolving. The
+write that would move it is exactly the blocking Allow/Deny call above, and
+firing it silently at whatever moment the fallback first hit would put a dialog
+in front of the user for no benefit they asked for. The fallback read costs
+nothing and works indefinitely; re-running the key setup writes under the new
+name.
+
 ### Models load at startup, never on the dictation path
 
 Both loads happen before the hotkey arms, and the menu bar item is created
 before either starts — for a LaunchAgent user with no terminal, the
 `warming up models…` state line is the whole first-launch experience.
 
-Numbers, all measured on an M3 Pro:
+Numbers, all on an M3 Pro. They come from two different measurement
+conditions, and the difference between those conditions is itself the finding,
+so they are kept apart rather than averaged.
+
+**Measured with each phase running alone**, and recorded in the source doc
+comments that argue for the design:
 
 | | |
 |---|---|
-| MLX load, cold (including download) | 38.4 s |
-| MLX load, warm, plus the priming generation | ~1.8 s |
-| First `format` after a load, without priming | 3424 ms, against a 2500 ms deadline |
+| MLX load, cold (including the download) | 38.4 s |
+| MLX load, warm — the priming generation is *inside* this figure | ~1.8 s |
+| First `format` after a load, with priming removed | 3424 ms, against a 2500 ms deadline |
 | Every later `format` | ~480 ms |
-| Whisper prewarm, warm | ~4.0 s |
-| Warm startup, loads run sequentially | ~5.5 s |
-| Warm startup, loads run concurrently | ~4.2 s |
 | MLX `format` through the shipped prompt, six transcripts | 787 ms median, 888 ms max |
-| The same before the injection-guard examples were added | 429 ms median |
+| The same, before the injection-guard examples were added | 429 ms median |
+
+**Measured 2026-07-30 on the shipped concurrent warm-up**, release build,
+which is what a user actually experiences:
+
+| | |
+|---|---|
+| Total startup to `listening`, two runs | 9.51 s and 5.91 s |
+| Whisper's prewarm phase, same runs | 4.0 – 7.7 s |
+| MLX load + priming, as its own timer reports it, five runs | 1.0, 1.2, 4.2, 4.3, 5.2 s |
+
+**The MLX spread is contention, not noise, and it is the price of the
+concurrency.** Since the two loads were made concurrent, MLX's load overlaps
+Whisper's ANE prewarm and competes with it, so the phase reports several
+seconds where it reported about one second running alone — while *total*
+startup falls, because the phases overlap instead of queueing. Do not read the
+isolated ~1.8 s as what the phase costs today, and do not read a slow MLX phase
+as a regression: the number to watch is the total, and it is dominated by
+Whisper. Anything that changes either model, the ANE contention, or the
+decision to load concurrently invalidates the second table.
 
 Three decisions follow. A lazy first load would be abandoned every time, and an
 abandoned load is *worse* than a slow one because abandoning does not stop
@@ -259,8 +289,9 @@ generation after a load pays a one-time Metal pipeline-state cost that would
 otherwise land on the first utterance and lose; without it, the user's
 impression of the default engine is formed by the one call it is guaranteed to
 lose. And the two loads run **concurrently** — they touch different engines
-(ANE vs Metal) and different code, so startup costs `max(4.0, 1.0)` rather than
-the sum.
+(ANE vs Metal) and different code, so startup approaches the larger of the two
+rather than their sum. "Approaches", not "equals": the measurements above show
+the overlap is real but not free.
 
 Failure semantics are asymmetric on purpose: a cold transcriber is fatal
 (transcription without formatting is the whole app minus its polish; formatting
@@ -269,7 +300,7 @@ the fix, and the daemon runs on the rules floor.
 
 The MLX formatter is built unconditionally but only *warmed* under the engines
 that consult it (`mlx` and `cloud`) — otherwise `apple`, `rules` and `off`
-would pay a second of startup and 0.9 GB of resident memory for a model they
+would pay that load phase and 0.9 GB of resident memory for a model they
 never call. It stays in the chain even when unwarmed, deliberately: it throws
 `.unavailable` in microseconds, and the cost of one stderr line per utterance
 naming the missing engine is much lower than the silent degradation of a chain
@@ -519,7 +550,7 @@ on install and uninstall), `Setup`, `Version`, `TranscriptLog`, `LegacyLogs`.
 
 ## Test layout
 
-`Tests/AraCoreTests/`, 33 files, 478 `@Test` declarations, swift-testing
+`Tests/AraCoreTests/`, 33 files, 480 `@Test` declarations, swift-testing
 throughout — no XCTest. Naming follows the type under test
 (`FormatterChainTests`, `MicrophoneStoreTests`, `ModeMenuModelTests`).
 

@@ -76,10 +76,13 @@ release number.
 
 ### From the DMG
 
-**No release has been tagged yet, so there is nothing to download today.** This
-is what the download will be, and the packaging that produces it is in the repo
-now — `scripts/package-app.sh` and `scripts/package-dmg.sh` build
-`Ara-<version>.dmg` from a local checkout if you want it before then.
+**`v0.1.0` is tagged, but no published release carries a DMG yet** — the
+release workflow (`.github/workflows/release.yml`) builds and uploads the CLI
+tarball `ara-macos-arm64.tar.gz`, not an app bundle, and the newest release on
+GitHub is still `v0.0.5`. So the steps below describe what the download will
+be. Until it exists, `scripts/package-app.sh` and `scripts/package-dmg.sh`
+build `Ara-<version>.dmg` from a local checkout, and `package-dmg.sh` prints
+the image's `sha256` as it goes.
 
 1. Open `Ara-<version>.dmg` and drag **Ara** onto **Applications**.
 2. Launch it. Builds are unsigned, so the *first* launch needs
@@ -111,8 +114,11 @@ from inside the bundle — points it at `Ara.app`, not at any older
 
 If you would rather have only the CLI and no app, `scripts/install.sh` fetches
 the release tarball into `/usr/local/bin/ara`
-(`curl -fsSL .../install.sh | sh`). You lose the Info.plist and everything that
-hangs off it: the process runs under the identity of whatever launched it.
+(`curl -fsSL .../install.sh | sh`). It resolves whatever GitHub calls the
+*latest* release, which today is `v0.0.5` — considerably older than this
+checkout, so build from source if you want current behaviour. You also lose the
+Info.plist and everything that hangs off it: the process runs under the
+identity of whatever launched it.
 
 ### Unsigned builds
 
@@ -134,9 +140,10 @@ notarized. What that means when you download the DMG:
   xattr -d com.apple.quarantine /Applications/Ara.app
   ```
 
-- Verify what you got against the `sha256` the release notes publish for the
-  DMG (`shasum -a 256 Ara-<version>.dmg`). Unsigned means the checksum is the
-  only integrity check there is, so it is worth actually running.
+- Verify what you got against the image's `sha256` — `package-dmg.sh` prints it
+  when it builds one, and a published release should carry it in the notes.
+  Compare with `shasum -a 256 Ara-<version>.dmg`. Unsigned means the checksum is
+  the only integrity check there is, so it is worth actually running.
 
 Signing is not a thing this repo can do for you — the certificate belongs to an
 Apple developer account. For a maintainer who has one, the commands are:
@@ -211,12 +218,20 @@ models are `ara models download` and `ara models download-formatter`.
 
 **Warm-up.** The menu bar bird appears immediately and its first line reads
 `warming up models…`. The hotkey is **not armed** during this window — holding
-it does nothing, by design. Two loads run concurrently: Whisper's prewarm
-(~4.0 s warm on an M3 Pro) and the MLX formatting model (~1.0 s, plus a priming
-generation), so startup costs the larger of the two rather than their sum —
-measured, that took warm startup from ~5.5 s to ~4.2 s. A genuinely first run
-is download-sized instead. When `listening on <key> hold` prints, the state
-line flips to `idle · hold <key> to dictate` and the key is live.
+it does nothing, by design.
+
+Two loads run concurrently — Whisper's ANE prewarm and the MLX formatting
+model — so startup costs roughly the larger of the two rather than their sum.
+**Expect about 6–10 seconds on a warm start**, dominated by Whisper. Measured
+on 2026-07-30, M3 Pro, release build: two full startups reached `listening` in
+9.51 s and 5.91 s, with Whisper's phase 4.0–7.7 s and MLX's load-plus-priming
+1.0–5.2 s across five runs. That MLX spread is contention, not noise: the phase
+takes about a second when it runs alone and several seconds when it overlaps
+Whisper's prewarm, which is the trade concurrency buys — a slower MLX phase for
+a faster total. A genuinely first run is download-sized instead.
+
+When `listening on <key> hold` prints, the state line flips to
+`idle · hold <key> to dictate` and the key is live.
 
 If the *transcription* model fails to load, the daemon prints `warmup failed:`
 and exits. If the *formatting* model fails, it prints
@@ -263,7 +278,7 @@ frontmost application, then the `mode` config key.
 | `default` | remove fillers and false starts, repair sentence boundaries and capitalisation, preserve wording | everything unmapped |
 | `email` | polished email prose with paragraph breaks; never invents a greeting or sign-off | Mail, Spark |
 | `chat` | terse message, no greeting or pleasantries | Slack, Discord, Messages |
-| `code` | concise technical note; identifiers, file paths and symbols preserved exactly | VS Code, Xcode |
+| `code` | concise technical note; identifiers, file paths and symbols preserved exactly | VS Code, Xcode, Cursor, and the terminals — Terminal, iTerm2, kitty, Alacritty, WezTerm |
 
 Controlled by the **Mode** menu (session override, applies to the next
 utterance) or the `mode` config key (the startup default).
@@ -419,8 +434,12 @@ and the bad value. **Any line starting `config:` means part of your file did not
 take effect.** The daemon never refuses to start over a config file.
 
 The API key never goes in this file. It lives in the keychain, under service
-`com.digimata.ara` and the account `keychainAccount` names. No subcommand
-writes it yet — see [docs/KNOWN-ISSUES.md](docs/KNOWN-ISSUES.md).
+`com.silpho.ara` and the account `keychainAccount` names. A key stored under
+the older `com.digimata.ara` service still works — that name is read as a
+fallback — but nothing writes there any more, and there is no automatic
+migration: the write that would move it raises a keychain prompt, so it is left
+for you to redo when convenient. No subcommand writes the key yet either — see
+[docs/KNOWN-ISSUES.md](docs/KNOWN-ISSUES.md).
 
 ## Injection: typing vs paste
 
@@ -505,7 +524,8 @@ corrected — no restart, nothing to reload.
 
 Corrections live at `~/.config/ara/dictionary.json`, next to the config, and
 the file is meant to be hand-edited too — it is written pretty-printed with
-stable ordering for exactly that reason:
+stable ordering for exactly that reason. A file with two corrections in it
+looks like this:
 
 ```json
 [
@@ -539,8 +559,9 @@ never stops dictation: one `dictionary:` line on stderr — once, not once per
 utterance — and corrections sit out until the file parses again.
 
 **Edit dictionary…**, right below the correction form in the menu, opens the
-file in whatever edits JSON on your Mac — writing it first with the example
-entry above if it does not exist yet, so the format explains itself. An
+file in whatever edits JSON on your Mac — writing it first with a one-entry
+example if it does not exist yet (just the `Ara` correction above), so the
+format explains itself. An
 existing file is never touched, and neither is a broken one: a correction added
 through the menu while the file is unparseable is applied in memory until you
 quit rather than overwriting your accumulated vocabulary. To see what is there
@@ -604,7 +625,7 @@ writing it first with a one-entry example if it does not exist yet — and
 | Dictionary corrections | `~/.config/ara/dictionary.json` |
 | Voice snippets | `~/.config/ara/snippets.json` |
 | Transcription and formatting models | the shared HuggingFace hub cache, `~/Documents/huggingface/models/<org>/<repo>` by default |
-| The cloud API key, if you configure one | the login keychain, service `com.digimata.ara` — never `config.json` |
+| The cloud API key, if you configure one | the login keychain, service `com.silpho.ara` (the older `com.digimata.ara` is still read as a fallback) — never `config.json` |
 | The LaunchAgent | `~/Library/LaunchAgents/com.silpho.ara.plist` |
 
 **Transcripts are never written to disk.** The daemon's per-utterance log lines
