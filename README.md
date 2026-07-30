@@ -76,6 +76,7 @@ parrot models list                     # list available models
 parrot models download <id>            # pre-download a model
 parrot --model whisper-large-v3-turbo  # bigger, multilingual, slower first-run
 parrot --hotkey right-option           # change the push-to-talk key
+parrot --inject type                   # force typing (or: paste); default is auto
 parrot --no-overlay                    # disable the bottom-of-screen pill
 parrot --echo-transcripts              # log full transcript text (off by default)
 ```
@@ -104,12 +105,53 @@ default**, and every key is optional:
 ```json
 {"hotkey": "right-command", "model": "whisper-base.en",
  "engine": "mlx", "timeoutMs": 2500, "mode": "default",
+ "inject": "auto", "pasteRestoreMs": 300,
  "microphone": "AppleUSBAudioEngine:Blue:Yeti:123:1"}
 ```
 
 A value the file gets wrong never stops the daemon: it warns on stderr with a
 `config:` prefix and falls back. A `config:` line means part of the file did not
 take effect.
+
+### Injection: typing vs paste
+
+Parrot has two ways to deliver a transcript, controlled by the `inject` key
+(or `--inject`):
+
+- **`type`** synthesizes the characters as keyboard events. It leaves your
+  pasteboard alone, but terminals and Electron apps (VS Code, Slack, Discord…)
+  drop or mangle synthesized unicode typing — the platform API reports success
+  either way, so the failure is silently missing characters.
+- **`paste`** snapshots your pasteboard, puts the transcript on it, sends ⌘V,
+  and restores the snapshot a moment later. This is what every serious
+  dictation tool does in those apps, because paste is the one path they all
+  handle correctly.
+- **`auto`** (the default) pastes into a built-in list of terminals and
+  Electron apps — Terminal, iTerm2, VS Code, Cursor, Slack, Discord, kitty,
+  Alacritty, WezTerm — and types everywhere else.
+
+The paste path is careful with your pasteboard:
+
+- The snapshot keeps **every representation of every item**, so a copied
+  image or file survives the round trip intact.
+- The transcript is marked `org.nspasteboard.TransientType`, so clipboard
+  managers that honour the convention will not record it.
+- Items marked `org.nspasteboard.ConcealedType` — password-manager copies —
+  are deliberately **not restored**. They are ephemeral by their producer's
+  design; putting a password back on the pasteboard after its manager retired
+  it would be a leak. Copy the password again if you need it after dictating.
+- Anything **you** copy during the restore window wins: the restore checks
+  the pasteboard's change count and stands down rather than overwrite a ⌘C
+  you just made in another app.
+- `pasteRestoreMs` (default 300, clamped to 50–5000) is how long the target
+  app gets to service the ⌘V before the snapshot is restored. Too low and a
+  slow app pastes your *old* pasteboard instead of the transcript; higher
+  values just mean the transcript sits on the pasteboard longer after each
+  dictation (a ⌘V of your own in that window pastes the transcript). Raise
+  it if a laggy app (remote desktop, a busy Electron app) pastes stale
+  content.
+- If the pasteboard write or the ⌘V synthesis fails, the transcript is
+  delivered through the typing path instead — it is never lost.
 
 ### Microphone
 

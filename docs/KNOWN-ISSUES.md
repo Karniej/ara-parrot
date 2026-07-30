@@ -39,6 +39,17 @@ These are not bugs — they are things no automated test in this repo can reach.
   transcript text the logging work just took out of /tmp; the same fix applies —
   a `0600` file in `~/Library/Caches/parrot/` instead. Bounded: debug-only flag,
   never set by the LaunchAgent, one utterance retained at a time.
+
+- **The synthesized ⌘V assumes keycode 9 is `v`.** True on ANSI QWERTY and on
+  non-Latin layouts (which fall back to QWERTY for key equivalents), false on
+  rearranged Latin layouts: on Dvorak keycode 9 is `k`, and an app that
+  matches ⌘-equivalents by *character* rather than keycode can treat the
+  synthesized event as ⌘K — which in Terminal clears the scrollback. Fix
+  shape: resolve the keycode that produces "v" on the current keyboard layout
+  at post time, via `TISCopyCurrentKeyboardLayoutInputSource` +
+  `UCKeyTranslate` over the layout's `kTISPropertyUnicodeKeyLayoutData`,
+  falling back to 9 when the lookup fails. Until then, Dvorak/Colemak users
+  should set `"inject": "type"`.
 - **No CLI subcommand writes the API key.** `Keychain.writePassword` exists and
   is unused; the cloud path is configurable only via `security add-generic-password`.
   Needed before anyone but the author can use it.

@@ -104,4 +104,38 @@ struct StartupResolutionTests {
         #expect(model.recommended)
         #expect(warnings.joined.contains("whisper-enormous"))
     }
+
+    // MARK: - injection
+
+    @Test("the --inject flag outranks config.inject")
+    func injectionFlagWins() {
+        let warnings = Warnings()
+        #expect(StartupResolution.injection(flag: .type, config: "paste",
+                                            warn: warnings.sink) == .type)
+        #expect(warnings.lines.isEmpty)
+    }
+
+    @Test("every injection setting round-trips through the config")
+    func everyInjectionFromConfig() {
+        for setting in InjectionSetting.allCases {
+            #expect(StartupResolution.injection(flag: nil, config: setting.rawValue,
+                                                warn: { _ in }) == setting)
+        }
+    }
+
+    @Test("no flag and no config yields auto")
+    func injectionDefault() {
+        #expect(StartupResolution.injection(flag: nil, config: nil,
+                                            warn: { _ in }) == .auto)
+    }
+
+    @Test("an unparseable config inject warns and falls back rather than exiting")
+    func injectionUnparseable() {
+        let warnings = Warnings()
+        let resolved = StartupResolution.injection(flag: nil, config: "clipboard",
+                                                   warn: warnings.sink)
+        #expect(resolved == .auto)
+        #expect(warnings.joined.contains("clipboard"))
+        #expect(warnings.joined.contains("paste"))  // lists what is valid
+    }
 }

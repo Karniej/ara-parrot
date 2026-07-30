@@ -498,8 +498,65 @@ error, so this needs to be a known state rather than a surprise.
       Compare the injected text against the `↦` line in the log character for
       character — the log is the ground truth for what was *sent*.
 - [ ] 👤 **9e.** If characters are dropped anywhere, record the app, the exact
-      text sent and the text received. That is the input any future fix (paste
-      via the clipboard, a slower per-chunk cadence) has to be designed against.
+      text sent and the text received. That is the input any future fix (a
+      slower per-chunk cadence, an addition to the paste list in
+      `InjectionPolicy`) has to be designed against. Note that under the
+      default `inject: auto`, the apps most prone to dropping characters are
+      already served by paste — see 9pent — so 9b/9d need `--inject type` to
+      exercise the typing path in them at all.
+
+## 9pent. Paste injection: terminals, Electron apps, and the pasteboard
+
+The selection logic (`InjectionPolicy`), the snapshot/restore ordering, the
+generation counter, the concealed-item filter, and the fall-back-to-typing
+path are all unit-tested against a fake pasteboard. What no test can do is
+paste into a real Terminal, watch a real clipboard manager, or copy a real
+password — that half is here. Everything below runs with no `inject` key and
+no `--inject` flag, i.e. the default `auto`.
+
+- [ ] 👤 **9p-a. TextEdit gets the typing path.** Dictate into TextEdit.
+      The text must appear at the cursor and the pasteboard must be
+      untouched: copy something first, dictate, press ⌘V — what you copied
+      must paste, not the transcript.
+- [ ] 👤 **9p-b. Terminal gets the paste path.** Dictate a sentence with
+      awkward unicode (say *"café naïve — twenty"*) at a shell prompt in
+      Terminal.app. The full sentence must appear, no dropped or reordered
+      characters. Repeat in VS Code and, if installed, iTerm2 / kitty /
+      Alacritty / WezTerm / Cursor / Slack / Discord.
+- [ ] 👤 **9p-c. A copied image survives the round trip.** Copy an image
+      (⌘⇧⌃4 a screen region, or Copy Image in a browser), dictate into
+      Terminal, wait half a second, then paste into Preview (File → New from
+      Clipboard). The image must come back whole — the snapshot keeps every
+      representation of every item, not just text.
+- [ ] 👤 **9p-d. The held modifier does not corrupt the paste.** Dictate with
+      a chorded hotkey (e.g. `--hotkey right-option`) and keep the modifier
+      held a beat after finishing the utterance. The paste must still land as
+      plain ⌘V — the synthesized event sets its flags to command-only
+      explicitly, masking out whatever is physically held.
+- [ ] 👤 **9p-e. A password-manager copy is NOT restored.** Copy a password
+      from a manager that marks copies concealed (1Password, Bitwarden,
+      KeePassXC…), dictate into Terminal, wait, then press ⌘V. The password
+      must **not** come back — a concealed item is ephemeral by its
+      producer's design, and re-publishing it would be a leak. Expect an
+      empty paste (or the item's non-concealed siblings). This is the
+      documented behaviour, not a bug.
+- [ ] 👤 **9p-f. Rapid double dictation does not cross-restore.** Copy a
+      distinctive word, then dictate twice into Terminal as fast as the
+      daemon allows — the second utterance inside the first's restore window
+      if you can manage it. Both transcripts must land, and a ⌘V afterwards
+      must paste the distinctive word: the original pasteboard, restored
+      exactly once, never the first transcript.
+- [ ] 👤 **9p-g. A clipboard manager does not record the transcript.** If a
+      clipboard-history tool is running, check its history after a dictation:
+      the transcript must be absent (it is marked
+      `org.nspasteboard.TransientType`) if the tool honours the convention.
+      Record the tool and whether it did.
+- [ ] 👤 **9p-h. Your own copy during the window wins.** Copy word A, set
+      `pasteRestoreMs` high (say 3000), dictate into Terminal, and ⌘C word B
+      in another app before the window closes. A later ⌘V must paste **B** —
+      the restore checks the pasteboard's change count and stands down
+      rather than overwrite a copy you just made. Word A is forfeit; that is
+      the documented trade.
 
 ## 9ter. Microphone: picking, fallback, and hardware churn
 
@@ -702,8 +759,18 @@ rendering can carry a payload out of the framework or the network into a log
 line; `CloudFormatter` response handling (refusal, truncation, non-200, redirect
 refusal, error-body suppression) against a stubbed transport; `Config` decoding
 with missing, malformed and out-of-range values, and the warning each produces;
-`hotkey`/`model` precedence between flag, config and default; the press/release
-edge logic for a modifier whose sibling is held, against captured flag values;
+`hotkey`/`model`/`inject` precedence between flag, config and default; the
+press/release edge logic for a modifier whose sibling is held, against captured
+flag values; the `pasteRestoreMs` clamp; the type-vs-paste selection per app
+under `auto` and the absoluteness of an explicit setting; and the paste path's
+promises against a fake pasteboard — snapshot-before-write, restore after the
+settle delay with every representation intact, the transient marking of the
+transcript item, the refusal to restore concealed items, the fall-back to
+typing when the pasteboard write or ⌘V synthesis fails (with the pasteboard
+restored first, and a warning when even that restore fails), the generation
+counter that makes overlapping dictations restore the user's pasteboard
+exactly once, and the change-count guard that forfeits the restore when the
+user copies something mid-window;
 that `doctor` reports on-device formatting as a warning rather than a failure;
 mode resolution precedence; and that the pipeline the daemon assembles honours
 `engine`, `timeoutMs`, `mode`, and the cloud account and key.

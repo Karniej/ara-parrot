@@ -319,4 +319,42 @@ struct ConfigTests {
         #expect(cfg.cloud?.model == "claude-opus-5")
         #expect(cfg.cloud?.keychainAccount == "ara-cloud")
     }
+
+    // MARK: - inject / pasteRestoreMs
+
+    @Test("inject decodes as a raw string and defaults to absent")
+    func injectDecodes() {
+        #expect(Config.load(from: write(#"{"inject":"paste"}"#)).inject == "paste")
+        #expect(Config.load(from: write(#"{}"#)).inject == nil)
+    }
+
+    @Test("pasteRestoreMs decodes and defaults to 300")
+    func pasteRestoreMsDecodes() {
+        #expect(Config.load(from: write(#"{"pasteRestoreMs":150}"#)).pasteRestoreMs == 150)
+        #expect(Config.load(from: write(#"{}"#)).pasteRestoreMs == 300)
+    }
+
+    @Test("a too-small pasteRestoreMs is clamped up and warned about")
+    func pasteRestoreMsClampedLow() {
+        let warnings = Warnings()
+        let cfg = Config.load(from: write(#"{"pasteRestoreMs":0}"#), warn: warnings.sink)
+        #expect(cfg.pasteRestoreMs == Config.minimumPasteRestoreMs)
+        #expect(warnings.joined.contains("pasteRestoreMs"))
+    }
+
+    @Test("an absurdly large pasteRestoreMs is clamped down and warned about")
+    func pasteRestoreMsClampedHigh() {
+        let warnings = Warnings()
+        let cfg = Config.load(from: write(#"{"pasteRestoreMs":60000}"#), warn: warnings.sink)
+        #expect(cfg.pasteRestoreMs == Config.maximumPasteRestoreMs)
+        #expect(warnings.joined.contains("pasteRestoreMs"))
+    }
+
+    @Test("a deliberately slow but sane pasteRestoreMs survives")
+    func pasteRestoreMsInRangeKept() {
+        let warnings = Warnings()
+        let cfg = Config.load(from: write(#"{"pasteRestoreMs":1000}"#), warn: warnings.sink)
+        #expect(cfg.pasteRestoreMs == 1000)
+        #expect(warnings.lines.isEmpty)
+    }
 }

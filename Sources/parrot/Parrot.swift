@@ -55,6 +55,14 @@ struct Run: ParsableCommand {
     @Option(name: .long, help: "Output mode. One of: verbatim, default, email, chat, code.")
     var mode: String?
 
+    // Optional for `hotkey`'s reason: `nil` means "the user said nothing",
+    // and only then does `config.inject` get a say.
+    @Option(
+        name: .long,
+        help: "How transcripts are delivered. One of: \(InjectionSetting.valueNames). Defaults to config.inject, then auto — paste into terminals and Electron apps, type everywhere else."
+    )
+    var inject: InjectionSetting?
+
     func run() throws {
         if !skipDoctor {
             let checks = DoctorReport.run()
@@ -90,9 +98,10 @@ struct Run: ParsableCommand {
             config.mode = ModeRegistry.defaultMode.id
         }
 
-        // CLI flags > config > defaults, for both of these. The rules live in
+        // CLI flags > config > defaults, for all of these. The rules live in
         // `StartupResolution` so they are covered by tests; `run()` is not.
         let chosenHotkey = StartupResolution.hotkey(flag: hotkey, config: config.hotkey)
+        let injectionSetting = StartupResolution.injection(flag: inject, config: config.inject)
         let chosenModel: TranscriptionModel
         switch StartupResolution.model(flag: model, config: config.model) {
         case .chosen(let m):
@@ -130,6 +139,13 @@ struct Run: ParsableCommand {
         app.setActivationPolicy(.accessory)
 
         let monitor = HotkeyMonitor(hotkey: chosenHotkey, debug: debugHotkey)
+        // One injector for the whole process, because it is stateful: the
+        // pasteboard snapshot and the generation counter that let overlapping
+        // dictations share one restore live in it. `pasteRestoreMs` arrives
+        // already clamped by `Config.load`.
+        let pasteInjector = MainActor.assumeIsolated {
+            PasteInjector.system(settleDelayMs: config.pasteRestoreMs)
+        }
         let capture = AudioCapture()
         // The store watches the hardware for the whole process; the capture
         // consults it at every `start()` and on every mid-recording rebuild.
@@ -390,9 +406,21 @@ struct Run: ParsableCommand {
                                     // was cancelled while it was being formatted.
                                     // Injecting a withdrawn request's text is the
                                     // failure the chain propagates cancellation to
-                                    // prevent, so the guard is the point, not tidiness.
+                                    // prevent, so the guard is the point, not
+                                    // tidiness — and it guards *both* delivery
+                                    // paths (each also refuses "" on its own).
                                     if !cleaned.isEmpty {
-                                        TextInjector.inject(cleaned)
+                                        // Method chosen from the same by-value
+                                        // bundle ID mode resolution used: the app
+                                        // the utterance was spoken into, not
+                                        // whatever is frontmost seconds later.
+                                        switch InjectionPolicy.method(
+                                            setting: injectionSetting,
+                                            frontmostBundleID: frontmostBundleID)
+                                        {
+                                        case .type: TextInjector.inject(cleaned)
+                                        case .paste: pasteInjector.inject(cleaned)
+                                        }
                                     }
                                     overlay?.hide()
                                     menuBar.setRecording(false)

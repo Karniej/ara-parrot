@@ -85,6 +85,16 @@ public struct Config: Codable, Sendable {
     /// it against the connected devices and falls back when it is absent.
     public var microphone: String?
 
+    /// How transcripts are delivered: `"auto"`, `"type"`, or `"paste"`. Kept
+    /// as the raw string and parsed in `StartupResolution.injection`, the
+    /// same lenient shape as `hotkey`: a typo here warns and falls back to
+    /// `auto` rather than discarding the whole file.
+    public var inject: String?
+
+    /// Milliseconds the paste path waits before restoring the user's
+    /// pasteboard — see `PasteInjector.settleDelay`. Clamped on load.
+    public var pasteRestoreMs: Int = 300
+
     /// Set during decoding when `microphone` was present but not a string;
     /// `load` turns it into the warning. Deferred rather than printed in
     /// `init(from:)` because the decoder does not know the file path or the
@@ -111,6 +121,22 @@ public struct Config: Codable, Sendable {
     /// remains a usable way to force the timeout path by hand, which the manual
     /// checklist does in step 4b.
     public static let minimumTimeoutMs = 50
+
+    /// The clamp on `pasteRestoreMs`, which trades two failure modes against
+    /// each other. Too short and the restore races the paste itself: the
+    /// target app services the synthesized ⌘V *after* the user's pasteboard is
+    /// back, and pastes the wrong thing — the one bug this whole mechanism
+    /// exists to prevent. Too long and the pasteboard spends seconds holding
+    /// the transcript: a ⌘V of your own in that window pastes the transcript,
+    /// and a ⌘C forfeits the restore (deliberately — `PasteInjector` checks
+    /// the pasteboard's change count and stands down rather than clobber a
+    /// copy the user just made, which also makes large values far cheaper
+    /// than they would otherwise be). 50ms rejects values that lose the race
+    /// unconditionally; 5000ms caps the exposure while still accommodating
+    /// genuinely slow pasters (a remote-desktop session, an Electron app
+    /// under load).
+    public static let minimumPasteRestoreMs = 50
+    public static let maximumPasteRestoreMs = 5000
 
     public static var defaultURL: URL {
         FileManager.default.homeDirectoryForCurrentUser
@@ -157,6 +183,18 @@ public struct Config: Codable, Sendable {
                  + "\(minimumTimeoutMs)ms minimum — using \(minimumTimeoutMs). "
                  + "A value at or below zero disables LLM formatting entirely.")
             config.timeoutMs = minimumTimeoutMs
+        }
+        if config.pasteRestoreMs < minimumPasteRestoreMs {
+            warn("pasteRestoreMs \(config.pasteRestoreMs) in \(target.path) is below the "
+                 + "\(minimumPasteRestoreMs)ms minimum — using \(minimumPasteRestoreMs). "
+                 + "A restore that fast races the paste it is waiting for.")
+            config.pasteRestoreMs = minimumPasteRestoreMs
+        }
+        if config.pasteRestoreMs > maximumPasteRestoreMs {
+            warn("pasteRestoreMs \(config.pasteRestoreMs) in \(target.path) is above the "
+                 + "\(maximumPasteRestoreMs)ms maximum — using \(maximumPasteRestoreMs). "
+                 + "The pasteboard holds the transcript for this long after every dictation.")
+            config.pasteRestoreMs = maximumPasteRestoreMs
         }
         return config
     }
@@ -256,7 +294,7 @@ public struct Config: Codable, Sendable {
     }
 
     private enum CodingKeys: String, CodingKey {
-        case engine, timeoutMs, mode, hotkey, model, cloud, microphone
+        case engine, timeoutMs, mode, hotkey, model, cloud, microphone, inject, pasteRestoreMs
     }
 
     public init(from decoder: Decoder) throws {
@@ -267,6 +305,8 @@ public struct Config: Codable, Sendable {
         hotkey = try c.decodeIfPresent(String.self, forKey: .hotkey)
         model = try c.decodeIfPresent(String.self, forKey: .model)
         cloud = try c.decodeIfPresent(CloudConfig.self, forKey: .cloud)
+        inject = try c.decodeIfPresent(String.self, forKey: .inject)
+        pasteRestoreMs = try c.decodeIfPresent(Int.self, forKey: .pasteRestoreMs) ?? 300
         do {
             microphone = try c.decodeIfPresent(String.self, forKey: .microphone)
         } catch {
