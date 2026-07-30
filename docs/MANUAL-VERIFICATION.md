@@ -262,6 +262,20 @@ unverified is that a physical keyboard produces those values.
       left/right sibling and must be decided by the class bit alone. Worth doing
       with left-command and left-option held too, since fn re-evaluates every
       modifier event rather than only its own.
+- [ ] 👤 **4o. Tap recovery through Secure Input.** The unit tests prove the
+      state reset; that macOS actually delivers `tapDisabledByUserInput` and
+      accepts the re-enable is only provable here. Hold the hotkey and start
+      speaking, then — still holding — click into a password field (Safari on
+      any login page, or `sudo` in another terminal tab, both engage Secure
+      Input). Expect, in order: one
+      `hotkey tap disabled by macOS (secure input); re-enabled` line, then the
+      ordinary `○ captured …` → `→ …` lines — the utterance up to the
+      interruption is transcribed and injected, not lost. Then click out of the
+      password field, release, and verify the hotkey still works: hold, speak,
+      release must produce a fresh `● recording` → `○ captured` cycle with no
+      restart of the daemon. If recording continues after the click instead,
+      Secure Input did not engage (some fields only engage it when focused via
+      keyboard) — use the `sudo` prompt variant.
 
 ## 5. ⚙️ On-device formatting — **never executed on this machine**
 

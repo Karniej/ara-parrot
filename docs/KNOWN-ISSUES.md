@@ -25,9 +25,20 @@ These are not bugs — they are things no automated test in this repo can reach.
 - **The dual-modifier release-edge fix has never met a physical keyboard.** The
   logic is proven against flag values captured from a real device; that a
   keyboard emits those values under a two-key hold is manual step 4j–4n.
+- **The tap-recovery glue has never run against a real macOS disable.** The
+  state-reset decisions (`ModifierEdgeDetector.reset()`) are unit-tested, but
+  the `CGEvent.tapEnable` re-enable and the synthesized release have only been
+  exercised in code review — no Secure Input session or tap timeout has fired
+  against them. Manual step 4o (click into a password field mid-hold) is the
+  closure procedure.
 
 ## Deferred work
 
+- **`--dump-wav` writes raw recorded audio to world-readable `/tmp/parrot-last.wav`**
+  (`Parrot.swift`, the release path). Recorded audio is as sensitive as the
+  transcript text the logging work just took out of /tmp; the same fix applies —
+  a `0600` file in `~/Library/Caches/parrot/` instead. Bounded: debug-only flag,
+  never set by the LaunchAgent, one utterance retained at a time.
 - **No CLI subcommand writes the API key.** `Keychain.writePassword` exists and
   is unused; the cloud path is configurable only via `security add-generic-password`.
   Needed before anyone but the author can use it.

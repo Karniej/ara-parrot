@@ -88,9 +88,13 @@ into the full text for interactive runs, and the LaunchAgent never uses it —
 its output goes to `/dev/null`.
 
 > If you installed parrot before this change, the background daemon was writing
-> every transcript to world-readable `/tmp/parrot.{out,err}.log`. `parrot doctor`
-> flags those files if they're still there; remove them with
-> `parrot install --purge-legacy-logs`.
+> every transcript to world-readable `/tmp/parrot.{out,err}.log` — and its old
+> LaunchAgent plist keeps doing so until it is rewritten. Upgrade in this order:
+> re-run `parrot install --launch-at-login` first (this rewrites the agent and
+> restarts the daemon), **then** `parrot install --purge-legacy-logs` to delete
+> the old files. Purging first is pointless — the still-loaded old agent
+> recreates them. `parrot doctor` flags both the leftover files and a stale
+> plist.
 
 ### Configuration
 

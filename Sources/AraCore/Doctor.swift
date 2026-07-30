@@ -24,7 +24,42 @@ public enum DoctorReport {
             checkLocalFormattingModel(),
             checkOnDeviceFormatting(),
             checkLegacyLogs(),
+            checkLaunchAgentLogPaths(),
         ]
+    }
+
+    /// The other half of the legacy-logs upgrade path: an agent installed
+    /// before the fix keeps its old plist — std paths at /tmp — until
+    /// `parrot install --launch-at-login` is re-run, and the running daemon
+    /// keeps writing transcripts there. Purging the files without fixing the
+    /// plist is a treadmill; this check is what points at the plist.
+    ///
+    /// A **warning, never a failure**, like every migration finding: the
+    /// daemon itself works fine, it is the leftover configuration that leaks.
+    static func checkLaunchAgentLogPaths(
+        plistPath: String = Install.plistURL.path
+    ) -> Check {
+        let name = "launch agent log paths"
+        guard let data = FileManager.default.contents(atPath: plistPath),
+              let plist = try? PropertyListSerialization.propertyList(
+                  from: data, format: nil) as? [String: Any]
+        else {
+            // No agent installed (or unreadable) — nothing writing anywhere.
+            return Check(name: name, status: .ok, remediation: nil)
+        }
+        let stale = ["StandardOutPath", "StandardErrorPath"]
+            .compactMap { plist[$0] as? String }
+            .filter { $0.hasPrefix("/tmp/") }
+        guard !stale.isEmpty else {
+            return Check(name: name, status: .ok, remediation: nil)
+        }
+        return Check(
+            name: name,
+            status: .warn("the installed agent still sends daemon output to "
+                + stale.joined(separator: ", ")),
+            remediation: "re-run `parrot install --launch-at-login` to rewrite the agent, "
+                + "then `parrot install --purge-legacy-logs`"
+        )
     }
 
     /// Flags the world-readable /tmp files earlier versions sent the
@@ -43,7 +78,12 @@ public enum DoctorReport {
             name: "legacy logs",
             status: .warn("world-readable transcript logs from an earlier version: "
                 + found.joined(separator: ", ")),
-            remediation: "review them if you like, then run `parrot install --purge-legacy-logs`"
+            // Order matters: a still-loaded old agent recreates the files, so
+            // the re-install that rewrites its plist has to come first or the
+            // purge is a treadmill.
+            remediation: "if the background daemon is installed, re-run "
+                + "`parrot install --launch-at-login` first (the old agent keeps "
+                + "writing there), then `parrot install --purge-legacy-logs`"
         )
     }
 

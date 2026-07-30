@@ -98,7 +98,7 @@ struct DoctorTests {
         #expect(DoctorReport.run().contains { $0.name == "legacy logs" })
     }
 
-    @Test("a leftover /tmp transcript log is flagged, with the purge command")
+    @Test("a leftover /tmp transcript log is flagged, re-install first, then purge")
     func legacyLogIsFlagged() throws {
         let dir = FileManager.default.temporaryDirectory
             .appendingPathComponent("doctor-legacy-\(UUID().uuidString)", isDirectory: true)
@@ -113,7 +113,81 @@ struct DoctorTests {
             return
         }
         #expect(reason.contains(log))
-        #expect(check.remediation?.contains("parrot install --purge-legacy-logs") == true)
+        // The order is the point: a still-loaded old agent recreates the files,
+        // so purging before re-installing is a treadmill. The remediation must
+        // name the re-install first and the purge second.
+        let remediation = try #require(check.remediation)
+        let reinstall = try #require(remediation.range(of: "parrot install --launch-at-login"))
+        let purge = try #require(remediation.range(of: "parrot install --purge-legacy-logs"))
+        #expect(reinstall.lowerBound < purge.lowerBound)
+    }
+
+    // MARK: - the installed agent's log paths
+
+    /// The half of the upgrade path the log files cannot tell you about: an
+    /// agent installed before the fix keeps its old plist — std paths at
+    /// /tmp — until `parrot install --launch-at-login` is re-run, and the
+    /// running daemon keeps writing there.
+    @Test("an installed plist still pointing its output at /tmp is flagged")
+    func oldAgentPlistIsFlagged() throws {
+        let dir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("doctor-plist-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let plist = dir.appendingPathComponent("com.digimata.parrot.plist")
+        let old: [String: Any] = [
+            "Label": "com.digimata.parrot",
+            "StandardOutPath": "/tmp/parrot.out.log",
+            "StandardErrorPath": "/tmp/parrot.err.log",
+        ]
+        try PropertyListSerialization.data(fromPropertyList: old, format: .xml, options: 0)
+            .write(to: plist)
+
+        let check = DoctorReport.checkLaunchAgentLogPaths(plistPath: plist.path)
+        guard case .warn(let reason) = check.status else {
+            Issue.record("an old plist writing transcripts to /tmp must be reported")
+            return
+        }
+        #expect(reason.contains("/tmp"))
+        #expect(check.remediation?.contains("parrot install --launch-at-login") == true)
+    }
+
+    @Test("a current plist, or none at all, passes the log-path check")
+    func currentOrAbsentPlistIsOK() throws {
+        // Absent: no agent installed is the default state, not a finding.
+        let ghost = FileManager.default.temporaryDirectory
+            .appendingPathComponent("no-such-\(UUID().uuidString).plist").path
+        if case .warn = DoctorReport.checkLaunchAgentLogPaths(plistPath: ghost).status {
+            Issue.record("no plist must mean nothing to report")
+        }
+
+        // Current: exactly what Install writes today.
+        let dir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("doctor-plist-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let plist = dir.appendingPathComponent("com.digimata.parrot.plist")
+        try PropertyListSerialization.data(
+            fromPropertyList: Install.agentPlist(binary: "/usr/local/bin/parrot"),
+            format: .xml, options: 0
+        ).write(to: plist)
+        if case .warn = DoctorReport.checkLaunchAgentLogPaths(plistPath: plist.path).status {
+            Issue.record("the plist Install writes today must pass its own doctor check")
+        }
+    }
+
+    @Test("an old agent plist is a warning, never a failure")
+    func oldPlistNeverBlocksStartup() throws {
+        let dir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("doctor-plist-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let plist = dir.appendingPathComponent("com.digimata.parrot.plist")
+        try PropertyListSerialization.data(
+            fromPropertyList: ["StandardErrorPath": "/tmp/parrot.err.log"],
+            format: .xml, options: 0
+        ).write(to: plist)
+        #expect(DoctorReport.allOK([DoctorReport.checkLaunchAgentLogPaths(plistPath: plist.path)]))
     }
 
     @Test("no legacy logs is a clean pass")

@@ -57,12 +57,16 @@ public struct Install: ParsableCommand {
 
     private static let label = "com.digimata.parrot"
 
-    private var plistURL: URL {
+    /// Where the agent plist lives. Static so `doctor` can inspect the
+    /// installed file without constructing the command.
+    static var plistURL: URL {
         let home = FileManager.default.homeDirectoryForCurrentUser
         return home
             .appendingPathComponent("Library/LaunchAgents", isDirectory: true)
-            .appendingPathComponent("\(Self.label).plist")
+            .appendingPathComponent("\(label).plist")
     }
+
+    private var plistURL: URL { Self.plistURL }
 
     /// The plist content, separated from the write so tests can hold it to
     /// its privacy contract:
