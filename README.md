@@ -47,12 +47,28 @@ default**, and every key is optional:
 
 ```json
 {"hotkey": "right-command", "model": "whisper-base.en",
- "engine": "mlx", "timeoutMs": 2500, "mode": "default"}
+ "engine": "mlx", "timeoutMs": 2500, "mode": "default",
+ "microphone": "AppleUSBAudioEngine:Blue:Yeti:123:1"}
 ```
 
 A value the file gets wrong never stops the daemon: it warns on stderr with a
 `config:` prefix and falls back. A `config:` line means part of the file did not
 take effect.
+
+### Microphone
+
+By default parrot records from the system default input, live — change it in
+System Settings and the next dictation follows. To pin a specific mic instead,
+use the menu bar item → **Microphone** and pick one; the choice is saved to
+the config file (the `microphone` key above — a Core Audio device UID, which
+survives replug and reboot; the menu writes it so there is no reason to type
+one by hand) and only that key is touched. Picking **System default** clears
+it.
+
+If the picked mic is unplugged, parrot falls back to the system default until
+it returns — the submenu says so — and a mic that dies mid-dictation does not
+lose the utterance: recording continues on whatever input remains, or ends
+with the audio captured so far when none does.
 
 ## Stack
 

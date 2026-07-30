@@ -450,6 +450,59 @@ error, so this needs to be a known state rather than a surprise.
       text sent and the text received. That is the input any future fix (paste
       via the clipboard, a slower per-chunk cadence) has to be designed against.
 
+## 9ter. Microphone: picking, fallback, and hardware churn
+
+The selection logic is unit-tested end to end — resolution
+(`MicrophoneStore.resolve`), the crash-proofed capture path, the mid-recording
+rebuild *decision*, the submenu's contents (`MicrophoneMenuModel`), and the
+config rewrite that preserves unknown keys. What no test can do is unplug a
+cable: the physical events below are the part only hardware can verify. Most
+steps need a **second input device** (a USB mic or AirPods) alongside the
+built-in one.
+
+- [ ] 👤 **9t-a. The menu lists what is connected.** With the daemon running,
+      open the menu bar item → **Microphone**. Every connected input must be
+      listed by name under a "System default" first entry, and "System
+      default" must carry the check when the config has no `microphone` key.
+- [ ] 👤 **9t-b. A pick routes the very next utterance.** Pick the USB mic,
+      dictate while tapping on *that* mic's body (or speaking into it from
+      close up); the transcript must clearly come from it. No restart, no
+      re-arm — the pick is resolved at the next hotkey press.
+- [ ] 👤 **9t-c. A pick persists across restart.** Quit the daemon, confirm
+      `grep microphone ~/.config/ara/config.json` shows the device's UID,
+      restart, and confirm the menu shows the same check and dictation still
+      uses that mic. Then confirm the rewrite spared the rest of the file:
+      every key that was in `config.json` before the pick must still be there.
+- [ ] 👤 **9t-d. Unplug the picked USB mic mid-dictation.** Hold the hotkey,
+      speak, yank the cable mid-sentence, keep speaking, release. The
+      utterance must **survive on the fallback device** — text appears, the
+      daemon stays alive, and the submenu now shows
+      `preferred mic disconnected — using <device>` with **no row checked**
+      (the pick is remembered, not silently rewritten).
+- [ ] 👤 **9t-e. Replug it.** The submenu's check must return to the USB mic
+      by itself — no restart — and the next utterance must record from it.
+- [ ] 👤 **9t-f. Unplug with no other mic** (a Mac whose built-in mic can be
+      counted out is rare; a USB-only setup or muting alternatives via Audio
+      MIDI Setup may be needed). Yank the only device mid-dictation and
+      release. The utterance must **end with the audio captured up to the
+      unplug** — whatever was said before the yank is transcribed and typed —
+      and the daemon must stay alive. The submenu must read
+      `no microphone connected`.
+- [ ] 👤 **9t-g. Hotkey with no mic at all.** With no input devices, hold the
+      hotkey. Expect one `capture failed: …` line, no overlay stuck on
+      screen, an idle menu state, and a daemon that shrugs it off — the next
+      press after a mic returns must record normally.
+- [ ] 👤 **9t-h. AirPods connect and disconnect.** With "System default"
+      picked, connect AirPods (macOS usually makes them the default input):
+      the submenu must gain the AirPods row and the next utterance must
+      follow the system default onto them. Put them back in the case
+      mid-dictation: the utterance must survive on whatever input remains.
+      Repeat both with the AirPods explicitly picked in the menu.
+- [ ] 👤 **9t-i. Idle churn re-arms nothing.** With the daemon idle, unplug
+      and replug devices a few times. No log output beyond the menu updating,
+      no engine restarts; the next utterance simply resolves against whatever
+      is connected then.
+
 ## 10. Judgement calls to make with real dictation
 
 These are not pass/fail; they need a human's ear over a few days of real use.
@@ -481,6 +534,15 @@ edge logic for a modifier whose sibling is held, against captured flag values;
 that `doctor` reports on-device formatting as a warning rather than a failure;
 mode resolution precedence; and that the pipeline the daemon assembles honours
 `engine`, `timeoutMs`, `mode`, and the cloud account and key.
+
+✅ For the microphone path: device resolution (preference → system default →
+first input → none, and every fallback transition); that a dead device's
+format is refused before the tap that would crash on it; the mid-recording
+rebuild decision, including degrading while keeping captured samples; the
+submenu's titles, checks, and status lines for every store state; and that
+persisting a menu pick rewrites only the `microphone` key, preserving keys
+the binary does not know about. Only the physical unplug (section 9ter) is
+manual.
 
 Not covered by any test, and not coverable: `Run`'s three lines of glue —
 transcribe, `process`, inject — which sections 1 through 4 above exist to check.
