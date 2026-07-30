@@ -9,47 +9,261 @@ on:
 permissions:
   contents: write
 
+env:
+  # `swift build --arch arm64` writes here, and `.build/release` is only a
+  # symlink SwiftPM happens to maintain. Naming the real directory removes the
+  # question: scripts/package-app.sh reads ARA_RELEASE_DIR, and
+  # scripts/build-metallib.sh hard-codes the same path.
+  ARA_RELEASE_DIR: .build/arm64-apple-macosx/release
+
 jobs:
   build:
-    name: build arm64 macOS binary
-    runs-on: macos-15
-    timeout-minutes: 30
+    name: build, package, and publish Ara.app
+    # macos-26 is an Apple Silicon (arm64) image — GitHub's runner reference
+    # lists macos-14, macos-15, macos-26 and macos-latest as arm64, with
+    # macos-15-intel / macos-26-intel as the x64 variants.
+    #
+    # It has to be macos-26 rather than macos-15, and the reason is not
+    # architecture. mlx-swift 0.31.6 (pinned in Package.resolved) declares
+    # `// swift-tools-version: 6.3;(experimentalCGen)`. Swift 6.3 first ships
+    # in Xcode 26.4, which itself requires macOS Tahoe 26.2 or later, so it can
+    # never appear on the macOS 15 image — that image tops out at Xcode 26.3 =
+    # Swift 6.2.3 (its toolset pins `"default": "16.4"`). On macos-15 this job
+    # would not fail at the Metal step; it would fail at manifest parsing.
+    #
+    # The macos-26 image ships Xcode 26.0.1 through 26.6 on macOS 26.4, and
+    # runner-images runs `xcodebuild -downloadComponent MetalToolchain` at image
+    # build time for every Xcode whose major version is >= 26
+    # (images/macos/scripts/build/Install-Xcode.ps1, the `-ge 26` branch,
+    # calling Install-XcodeAdditionalComponents). That is what makes
+    # scripts/build-metallib.sh viable on a hosted runner at all: Xcode 26
+    # unbundled the Metal toolchain, and it is not otherwise present.
+    runs-on: macos-26
+    timeout-minutes: 120
 
     steps:
       - uses: actions/checkout@v4
 
-      - name: swift version
-        run: swift --version
+      # Cheapest failure first. VERSION feeds Info.plist and the DMG filename;
+      # the tag names the release. If they disagree the job would publish
+      # Ara-0.1.0.dmg under tag v0.2.0 and nobody would notice until a user
+      # reported the wrong `ara --version`.
+      - name: tag and VERSION must agree
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          set -euo pipefail
+          TAG="${GITHUB_REF_NAME}"
+          TAG_VERSION="${TAG#v}"
+          FILE_VERSION="$(tr -d '[:space:]' < VERSION)"
+          if [ -z "$FILE_VERSION" ]; then
+            echo "::error::VERSION is empty; it is the single source of the release number"
+            exit 1
+          fi
+          if [ "$TAG_VERSION" != "$FILE_VERSION" ]; then
+            echo "::error::tag ${TAG} means version ${TAG_VERSION}, but VERSION says ${FILE_VERSION} — commit the VERSION bump or retag"
+            exit 1
+          fi
+          echo "tag ${TAG} and VERSION agree on ${FILE_VERSION}"
 
-      - name: cache SwiftPM
+      # Everything this job produces depends on two runner properties that are
+      # not contractual: an arm64 CPU and a Metal compiler. Both are asserted
+      # here so the job dies before it can publish a bundle that quietly formats
+      # with rules instead of the local model.
+      - name: preflight — arm64, Swift 6.3, Metal compiler
+        run: |
+          set -euo pipefail
+
+          if [ "$(uname -m)" != "arm64" ]; then
+            echo "::error::runner reports $(uname -m); Ara is Apple Silicon only (WhisperKit needs the Neural Engine)"
+            exit 1
+          fi
+
+          # mlx-swift's manifest is swift-tools-version 6.3. An older toolchain
+          # does not fail late with a confusing linker error — it refuses to
+          # read the manifest at all.
+          REQUIRED=6.3
+
+          swift_version() {
+            DEVELOPER_DIR="$1" swift --version 2>/dev/null \
+              | sed -n 's/.*Apple Swift version \([0-9][0-9]*\.[0-9][0-9]*\).*/\1/p' \
+              | head -1
+          }
+          # true when $1 >= $2
+          at_least() {
+            [ "$(printf '%s\n%s\n' "$2" "$1" | sort -V | head -1)" = "$2" ]
+          }
+
+          # The image's own selection is tried first, so CI stays on the
+          # blessed default whenever that default is good enough.
+          CHOSEN=""
+          SEEN=""
+          for dev in "$(xcode-select -p)" /Applications/Xcode*.app/Contents/Developer; do
+            [ -d "$dev" ] || continue
+            # /Applications/Xcode.app is a symlink to the image default, so the
+            # glob re-finds whatever xcode-select already pointed at.
+            real="$(cd "$dev" && pwd -P)"
+            case ":${SEEN}:" in *":${real}:"*) continue ;; esac
+            SEEN="${SEEN}:${real}"
+            v="$(swift_version "$dev")"
+            [ -n "$v" ] || continue
+            echo "  ${dev} → Swift ${v}"
+            if at_least "$v" "$REQUIRED" && [ -z "$CHOSEN" ]; then
+              CHOSEN="$dev"
+            fi
+          done
+
+          if [ -z "$CHOSEN" ]; then
+            echo "::error::no installed Xcode provides Swift ${REQUIRED}+, which mlx-swift's manifest requires; this image cannot build Ara"
+            exit 1
+          fi
+          echo "selected ${CHOSEN}"
+          echo "DEVELOPER_DIR=${CHOSEN}" >> "$GITHUB_ENV"
+          export DEVELOPER_DIR="$CHOSEN"
+
+          # Xcode 26 moved the Metal toolchain out of the Xcode download into a
+          # separately installed component. The runner image pre-installs it for
+          # Xcode 26+, but it has been observed missing on a small fraction of
+          # runs (actions/runner-images#14013), so probe and repair rather than
+          # assume — and fail if the repair does not take, because a missing
+          # metal compiler means no mlx.metallib, and a bundle without one
+          # degrades to rule-based formatting without saying so.
+          if ! xcrun metal --version >/dev/null 2>&1; then
+            echo "Metal toolchain absent — downloading it"
+            xcodebuild -downloadComponent MetalToolchain
+          fi
+          if ! xcrun metal --version >/dev/null 2>&1; then
+            echo "::error::no Metal compiler after -downloadComponent MetalToolchain; refusing to build a DMG whose app would silently fall back to rules-only formatting"
+            exit 1
+          fi
+          xcrun metal --version
+
+      # Dependency *sources* only, deliberately not build products. Caching all
+      # of .build would also cache .build/metallib-derived-data, and
+      # scripts/build-metallib.sh skips its xcodebuild step whenever a metallib
+      # is already sitting there. A restore-keys hit from an older cache would
+      # then pair a stale metallib with a freshly built binary — a kernel
+      # mismatch that shows up as degraded formatting at runtime, not as a
+      # build failure. Release builds are rare; correctness beats the minutes.
+      - name: cache SwiftPM dependency sources
         uses: actions/cache@v4
         with:
           path: |
-            .build
+            .build/checkouts
+            .build/repositories
+            .build/artifacts
             ~/Library/Caches/org.swift.swiftpm
-          key: spm-${{ runner.os }}-${{ hashFiles('Package.resolved') }}
-          restore-keys: spm-${{ runner.os }}-
+          key: spm-src-${{ runner.os }}-${{ hashFiles('Package.resolved') }}
+          restore-keys: spm-src-${{ runner.os }}-
 
       - name: build
         run: swift build -c release --arch arm64
 
-      - name: stage
+      - name: stage the bare CLI
         run: |
-          BIN=.build/arm64-apple-macosx/release/ara
+          set -euo pipefail
+          BIN="$ARA_RELEASE_DIR/ara"
           file "$BIN"
           mkdir -p dist
           cp "$BIN" dist/ara
+          strip -x dist/ara
 
-      - name: strip
-        run: strip -x dist/ara
+      # SwiftPM cannot compile Metal shaders; this shells out to xcodebuild and
+      # drops mlx.metallib into $ARA_RELEASE_DIR, where package-app.sh picks it up.
+      - name: build the Metal kernel library
+        run: scripts/build-metallib.sh
 
-      - name: package
+      - name: package Ara.app
+        run: scripts/package-app.sh dist
+
+      - name: package the DMG
+        run: scripts/package-dmg.sh dist
+
+      # The check whose absence made a bundle-less release possible. It runs
+      # against the mounted image rather than the staging directory, so it
+      # tests the bytes that will actually be uploaded.
+      - name: verify the DMG ships a complete bundle
         run: |
+          set -euo pipefail
+          VERSION="$(tr -d '[:space:]' < VERSION)"
+          DMG="dist/Ara-${VERSION}.dmg"
+          if [ ! -f "$DMG" ]; then
+            echo "::error::no image at ${DMG}"
+            exit 1
+          fi
+
+          MNT="$(mktemp -d)"
+          hdiutil attach "$DMG" -nobrowse -readonly -mountpoint "$MNT" -quiet
+          fail=0
+
+          APP="$MNT/Ara.app"
+          if [ ! -x "$APP/Contents/MacOS/ara" ]; then
+            echo "::error::${DMG} has no executable at Ara.app/Contents/MacOS/ara"
+            fail=1
+          else
+            echo "  ok  Ara.app/Contents/MacOS/ara"
+          fi
+
+          # Non-empty, not merely present: MLX looks for this beside the
+          # executable and a miss is silent — warm-up fails and dictation
+          # falls through to rule-based cleanup still typing text.
+          if [ ! -s "$APP/Contents/MacOS/mlx.metallib" ]; then
+            echo "::error::${DMG} has no Ara.app/Contents/MacOS/mlx.metallib — the app would silently degrade to rules-only formatting"
+            fail=1
+          else
+            echo "  ok  Ara.app/Contents/MacOS/mlx.metallib ($(du -h "$APP/Contents/MacOS/mlx.metallib" | cut -f1))"
+          fi
+
+          # The Info.plist is the whole reason to ship a bundle: LSUIElement,
+          # the bundle id TCC files the mic grant under, and the usage string.
+          if [ ! -f "$APP/Contents/Info.plist" ]; then
+            echo "::error::${DMG} has no Ara.app/Contents/Info.plist"
+            fail=1
+          else
+            PLIST_VERSION="$(plutil -extract CFBundleShortVersionString raw -o - "$APP/Contents/Info.plist" 2>/dev/null || echo '')"
+            if [ "$PLIST_VERSION" != "$VERSION" ]; then
+              echo "::error::Info.plist says CFBundleShortVersionString=${PLIST_VERSION}, VERSION says ${VERSION}"
+              fail=1
+            else
+              echo "  ok  Info.plist CFBundleShortVersionString=${PLIST_VERSION}"
+            fi
+            for key in LSUIElement NSMicrophoneUsageDescription CFBundleIdentifier; do
+              if ! plutil -extract "$key" raw -o - "$APP/Contents/Info.plist" >/dev/null 2>&1; then
+                echo "::error::Info.plist is missing ${key}"
+                fail=1
+              fi
+            done
+          fi
+
+          # An unsigned-as-a-bundle app is not "unsigned", it is invalid, and
+          # Gatekeeper calls it damaged. package-app.sh signs; confirm it stuck
+          # through hdiutil.
+          if ! codesign --verify "$APP" 2>/dev/null; then
+            echo "::error::the app inside ${DMG} does not pass codesign --verify"
+            fail=1
+          else
+            echo "  ok  codesign --verify"
+          fi
+
+          hdiutil detach "$MNT" -quiet
+          exit "$fail"
+
+      - name: checksums
+        run: |
+          set -euo pipefail
+          VERSION="$(tr -d '[:space:]' < VERSION)"
           cd dist
           tar -czf ara-macos-arm64.tar.gz ara
+          # `hash  filename`, which `shasum -a 256 -c` accepts. The installer
+          # reads it with `cut -d' ' -f1`, so it is happy either way.
           shasum -a 256 ara-macos-arm64.tar.gz > ara-macos-arm64.tar.gz.sha256
+          shasum -a 256 "Ara-${VERSION}.dmg" > "Ara-${VERSION}.dmg.sha256"
           ls -lh
+          cat ara-macos-arm64.tar.gz.sha256 "Ara-${VERSION}.dmg.sha256"
 
+      # The DMG is the artefact that matters — it is what install.sh prefers.
+      # The tarball stays because install.sh still falls back to it and a bare
+      # CLI is legitimately useful. fail_on_unmatched_files makes an absent DMG
+      # a failed release rather than a quiet tarball-only one.
       - name: release
         uses: softprops/action-gh-release@v2
         if: startsWith(github.ref, 'refs/tags/')
@@ -57,5 +271,7 @@ jobs:
           files: |
             dist/ara-macos-arm64.tar.gz
             dist/ara-macos-arm64.tar.gz.sha256
+            dist/Ara-*.dmg
+            dist/Ara-*.dmg.sha256
           generate_release_notes: true
           fail_on_unmatched_files: true
