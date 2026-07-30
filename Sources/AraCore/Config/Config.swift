@@ -266,7 +266,32 @@ public struct Config: Codable, Sendable {
         try rewriteOneKey("cleanup", to: intensity.rawValue, at: url)
     }
 
-    /// The shared mechanics of the two persists above: read back as generic
+    /// Sets the `model` key, with the guarantees above — the same rewrite.
+    /// The caller (the Model submenu) owns the honesty about *when* a saved
+    /// pick applies: the transcriber is built around one model at startup, so
+    /// the pick takes effect on the next launch, and a model not yet on disk
+    /// is downloaded by that launch's warm-up.
+    public static func persistModel(_ id: String?, at url: URL? = nil) throws {
+        try rewriteOneKey("model", to: id, at: url)
+    }
+
+    /// Sets the `hotkey` key, with the guarantees above — the same rewrite.
+    /// Takes the enum rather than a string so a menu pick cannot write a
+    /// spelling `StartupResolution.hotkey` would warn about and discard.
+    public static func persistHotkey(_ hotkey: Hotkey, at url: URL? = nil) throws {
+        try rewriteOneKey("hotkey", to: hotkey.rawValue, at: url)
+    }
+
+    /// Sets the `engine` key, with the guarantees above — the same rewrite.
+    /// The enum for `persistHotkey`'s reason: `Engine`'s decoder throws on an
+    /// unknown spelling and `Config.load` then discards the whole file, so a
+    /// free-string parameter here would let a menu bug disable the user's
+    /// entire config.
+    public static func persistEngine(_ engine: Engine, at url: URL? = nil) throws {
+        try rewriteOneKey("engine", to: engine.rawValue, at: url)
+    }
+
+    /// The shared mechanics of the persists above: read back as generic
     /// JSON, change one key, rewrite. `nil` removes the key — and a missing
     /// file stays missing then, because clearing a preference that was never
     /// written needs no file.

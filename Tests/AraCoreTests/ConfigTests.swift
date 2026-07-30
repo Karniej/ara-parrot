@@ -366,6 +366,91 @@ struct ConfigTests {
         #expect(try String(contentsOf: url, encoding: .utf8) == "[1,2,3]")
     }
 
+    // MARK: - persistModel / persistHotkey / persistEngine: the menu's other
+    // one-key rewrites, each pinned to the same two critical properties
+
+    @Test("persisting a model preserves every other key, known and unknown")
+    func persistModelPreservesUnknownKeys() throws {
+        let url = write(#"""
+        {"engine":"rules","timeoutMs":900,"cloud":{"model":"m"},
+         "futureKey":{"nested":[1,2]},"flag":true}
+        """#)
+        try Config.persistModel("whisper-small.en", at: url)
+
+        let saved = try json(at: url)
+        #expect(saved["model"] as? String == "whisper-small.en")
+        #expect(saved["engine"] as? String == "rules")
+        #expect(saved["timeoutMs"] as? Int == 900)
+        #expect((saved["cloud"] as? [String: Any])?["model"] as? String == "m")
+        #expect((saved["futureKey"] as? [String: Any])?["nested"] as? [Int] == [1, 2])
+        #expect(saved["flag"] as? Bool == true)
+
+        // And the rewritten file still loads without a single warning.
+        let warnings = Warnings()
+        let cfg = Config.load(from: url, warn: warnings.sink)
+        #expect(cfg.model == "whisper-small.en")
+        #expect(warnings.lines.isEmpty)
+    }
+
+    @Test("persisting a model into a malformed file throws, bytes untouched")
+    func persistModelMalformedUntouched() throws {
+        let url = write("{ not json")
+        #expect(throws: (any Error).self) {
+            try Config.persistModel("whisper-small.en", at: url)
+        }
+        #expect(try String(contentsOf: url, encoding: .utf8) == "{ not json")
+    }
+
+    @Test("persisting a hotkey preserves every other key, known and unknown")
+    func persistHotkeyPreservesUnknownKeys() throws {
+        let url = write(#"{"engine":"rules","futureKey":{"nested":[1,2]}}"#)
+        try Config.persistHotkey(.rightCommand, at: url)
+
+        let saved = try json(at: url)
+        #expect(saved["hotkey"] as? String == "right-command")
+        #expect(saved["engine"] as? String == "rules")
+        #expect((saved["futureKey"] as? [String: Any])?["nested"] as? [Int] == [1, 2])
+
+        let warnings = Warnings()
+        let cfg = Config.load(from: url, warn: warnings.sink)
+        #expect(cfg.hotkey == "right-command")
+        #expect(warnings.lines.isEmpty)
+    }
+
+    @Test("persisting a hotkey into a malformed file throws, bytes untouched")
+    func persistHotkeyMalformedUntouched() throws {
+        let url = write("{ not json")
+        #expect(throws: (any Error).self) {
+            try Config.persistHotkey(.fn, at: url)
+        }
+        #expect(try String(contentsOf: url, encoding: .utf8) == "{ not json")
+    }
+
+    @Test("persisting an engine preserves every other key, known and unknown")
+    func persistEnginePreservesUnknownKeys() throws {
+        let url = write(#"{"timeoutMs":900,"futureKey":{"nested":[1,2]}}"#)
+        try Config.persistEngine(.cloud, at: url)
+
+        let saved = try json(at: url)
+        #expect(saved["engine"] as? String == "cloud")
+        #expect(saved["timeoutMs"] as? Int == 900)
+        #expect((saved["futureKey"] as? [String: Any])?["nested"] as? [Int] == [1, 2])
+
+        let warnings = Warnings()
+        let cfg = Config.load(from: url, warn: warnings.sink)
+        #expect(cfg.engine == .cloud)
+        #expect(warnings.lines.isEmpty)
+    }
+
+    @Test("persisting an engine into a malformed file throws, bytes untouched")
+    func persistEngineMalformedUntouched() throws {
+        let url = write("{ not json")
+        #expect(throws: (any Error).self) {
+            try Config.persistEngine(.rules, at: url)
+        }
+        #expect(try String(contentsOf: url, encoding: .utf8) == "{ not json")
+    }
+
     @Test("a partial cloud object keeps sibling settings and cloud defaults")
     func partialCloudObject() {
         let cfg = Config.load(from: write(#"""
