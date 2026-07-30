@@ -99,9 +99,14 @@ Concrete implementations:
 
 Adding an engine = one new file conforming to `Transcriber`.
 
-### `TextInjector`
+### `TextInjector` / `PasteInjector`
 
-`CGEventCreateKeyboardEvent` + `CGEventKeyboardSetUnicodeString` — pastes the transcript at the current cursor position. Works in nearly every text field on macOS (some Electron apps and secure fields are flaky; platform constraint).
+Two delivery mechanisms, selected per utterance by `InjectionPolicy` from the `inject` setting (`auto` | `type` | `paste`) and the bundle ID the utterance was spoken into:
+
+- **`TextInjector`** — `CGEventCreateKeyboardEvent` + `CGEventKeyboardSetUnicodeString`, typed at the cursor. Leaves the pasteboard alone; terminals and Electron apps drop synthesized unicode (platform constraint).
+- **`PasteInjector`** — snapshots every representation of every pasteboard item, writes the transcript (marked `org.nspasteboard.TransientType`), synthesizes ⌘V with flags forced to command-only, and restores the snapshot after a settle delay (`pasteRestoreMs`). A generation counter lets overlapping dictations share one restore; items marked `org.nspasteboard.ConcealedType` (password managers) are never restored. Any write/synthesis failure falls back to `TextInjector` — the transcript is never lost. The decision logic runs against a `TranscriptPasteboard` seam and is unit-tested; `SystemPasteboard` + `CommandVSynthesizer` are the decision-free AppKit/CGEvent glue.
+
+Under `auto` (the default), the paste path serves the bundle-ID list in `InjectionPolicy.pastePreferredBundleIDs` (Terminal, iTerm2, VS Code, Cursor, Slack, Discord, kitty, Alacritty, WezTerm); everything else is typed.
 
 ### `RecordingOverlay`
 
@@ -157,7 +162,8 @@ Plain `Codable` struct. Loaded from (in order): CLI flags > `~/.config/parrot/co
 ```toml
 model = "whisper-large-v3-turbo"
 hotkey = "fn"
-inject_mode = "paste"   # or "type-unicode"
+inject = "auto"         # or "type" / "paste"; auto pastes into terminals & Electron apps
+pasteRestoreMs = 300    # settle delay before the pasteboard snapshot is restored
 overlay = true          # show recording pill at bottom of screen
 ```
 
@@ -247,7 +253,10 @@ parrot/
 
     Input/
       HotkeyMonitor.swift       # CGEventTap
-      TextInjector.swift        # CGEvent posting
+      TextInjector.swift        # CGEvent unicode typing
+      PasteInjector.swift       # pasteboard snapshot/⌘V/restore core (pure, tested)
+      SystemPasteboard.swift    # NSPasteboard + ⌘V synthesis glue
+      InjectionPolicy.swift     # per-app type-vs-paste selection
 
     UI/
       RecordingOverlay.swift    # borderless NSWindow + SwiftUI pill
