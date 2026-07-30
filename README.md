@@ -87,8 +87,19 @@ stable ordering for exactly that reason:
 
 ```json
 [
-  {"canonical": "Ara", "variants": ["arra", "aara"]},
-  {"canonical": "Kraków", "variants": ["krakuf"]}
+  {
+    "canonical" : "Ara",
+    "variants" : [
+      "arra",
+      "aara"
+    ]
+  },
+  {
+    "canonical" : "Kraków",
+    "variants" : [
+      "krakuf"
+    ]
+  }
 ]
 ```
 

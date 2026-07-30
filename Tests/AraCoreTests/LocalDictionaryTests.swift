@@ -381,4 +381,75 @@ struct LocalDictionaryTests {
         unsaved.clear()
         #expect(unsaved.applied(to: dict([])) == dict([]))
     }
+
+    // MARK: - save: the menu form's whole decision, AppKit excluded
+
+    /// A directory the daemon cannot write into, restored on the way out —
+    /// how these tests make `write` fail on demand.
+    private func readOnlyDirectory() throws -> (dir: URL, url: URL) {
+        let dir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("ara-dict-ro-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(
+            at: dir, withIntermediateDirectories: true)
+        return (dir, dir.appendingPathComponent("dictionary.json"))
+    }
+
+    private func setWritable(_ writable: Bool, _ dir: URL) throws {
+        try FileManager.default.setAttributes(
+            [.posixPermissions: writable ? 0o755 : 0o555],
+            ofItemAtPath: dir.path)
+    }
+
+    @Test("save merges into the file and lands the backlog with it")
+    func saveWritesMergeAndBacklog() throws {
+        let url = uniqueURL("save")
+        let unsaved = UnsavedCorrections()
+        unsaved.remember(heard: "parat", canonical: "Parrot")
+        #expect(unsaved.save(heard: "arra", canonical: "Ara", to: url) == nil)
+        #expect(LocalDictionary.load(from: url).entries
+                == [entry("Parrot", "parat"), entry("Ara", "arra")])
+        // The backlog rode along with the write and is forgotten: a later
+        // hand deletion from the file must not be resurrected.
+        #expect(unsaved.applied(to: dict([])) == dict([]))
+    }
+
+    /// No churn: proved by making a write impossible — a save that attempted
+    /// one would return its error.
+    @Test("a correction the file already has writes nothing")
+    func saveNoChurn() throws {
+        let (dir, url) = try readOnlyDirectory()
+        try dict([entry("Ara", "arra")]).write(to: url)
+        try setWritable(false, dir)
+        defer { try? setWritable(true, dir) }
+        #expect(UnsavedCorrections()
+            .save(heard: "ARRA", canonical: "ara", to: url) == nil)
+    }
+
+    /// The stale-backlog hole: a correction whose write failed must not
+    /// outvote the user's *newer* answer for the same variant. Sequence:
+    /// a mistaken `arra → Parrot` fails to write and is backlogged; the user
+    /// re-corrects with `arra → Ara`, whose merged result equals the file
+    /// exactly — nothing to write, but the backlog now contradicts what the
+    /// user just asked for, and keeping it would make the stale correction
+    /// win on every later load until quit.
+    @Test("re-correcting a failed save drops the stale backlog")
+    func saveDropsContradictedBacklog() throws {
+        let (dir, url) = try readOnlyDirectory()
+        try dict([entry("Ara", "arra")]).write(to: url)
+        try setWritable(false, dir)
+        defer { try? setWritable(true, dir) }
+
+        let unsaved = UnsavedCorrections()
+        // (1) The mistake: write fails, correction backlogged and applying.
+        #expect(unsaved.save(heard: "arra", canonical: "Parrot", to: url) != nil)
+        #expect(unsaved.applied(to: LocalDictionary.load(from: url)).entries
+                == [entry("Parrot", "arra")])
+        // (2) The user corrects the mistake. Merged state == the file, so
+        // there is nothing to write and no error to report.
+        #expect(unsaved.save(heard: "arra", canonical: "Ara", to: url) == nil)
+        // (3) Every later utterance must see the user's newer answer, not
+        // the stale backlog.
+        #expect(unsaved.applied(to: LocalDictionary.load(from: url)).entries
+                == [entry("Ara", "arra")])
+    }
 }

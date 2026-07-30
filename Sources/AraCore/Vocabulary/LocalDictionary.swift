@@ -324,4 +324,44 @@ public final class UnsavedCorrections: @unchecked Sendable {
                            canonical: correction.canonical)
         }
     }
+
+    /// The whole of the menu form's save, AppKit excluded: merge the
+    /// correction into a fresh load of `url` — so a hand edit made since the
+    /// last utterance is never clobbered — overlaid with this backlog, and
+    /// persist the result.
+    ///
+    /// Returns `nil` when the file now holds the merged state (including the
+    /// no-churn case where it already did, which writes nothing). Returns the
+    /// write error when persistence failed: the correction is then remembered
+    /// here and applies until quit, and the caller owns the one stderr line —
+    /// only it knows what "not saved" should sound like next to its other
+    /// warnings.
+    @discardableResult
+    public func save(heard: String, canonical: String, to url: URL)
+        -> (any Error)?
+    {
+        let onDisk = LocalDictionary.load(from: url)
+        let merged = applied(to: onDisk)
+            .adding(heard: heard, canonical: canonical)
+        guard merged != onDisk else {
+            // Nothing to write: the file alone already equals the desired
+            // full state — which proves the backlog is at best redundant and
+            // at worst contradicts the correction the user just re-made
+            // (a stale failed `arra → Parrot` would otherwise outvote a
+            // newer `arra → Ara` on every load until quit). Either way it
+            // must go.
+            clear()
+            return nil
+        }
+        do {
+            try merged.write(to: url)
+            // The write carried the backlog with it; forgetting it is what
+            // lets a later hand edit of the file win again.
+            clear()
+            return nil
+        } catch {
+            remember(heard: heard, canonical: canonical)
+            return error
+        }
+    }
 }

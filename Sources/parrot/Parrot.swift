@@ -231,22 +231,12 @@ struct Run: ParsableCommand {
                 }
             }
             menuBar.onCorrectionAdded = { heard, canonical in
-                // Merge against a fresh load — the file may have been
-                // hand-edited since the last utterance — plus any earlier
-                // corrections whose write failed.
-                let onDisk = LocalDictionary.load(from: dictionaryURL)
-                let merged = unsavedCorrections.applied(to: onDisk)
-                    .adding(heard: heard, canonical: canonical)
-                // The file already says all of this (the correction exists,
-                // and there is no backlog to land): no write, no churn.
-                guard merged != onDisk else { return }
-                do {
-                    try merged.write(to: dictionaryURL)
-                    // The write carried the backlog with it; forgetting it is
-                    // what lets a later hand edit of the file win again.
-                    unsavedCorrections.clear()
-                } catch {
-                    unsavedCorrections.remember(heard: heard, canonical: canonical)
+                // The merge-and-persist decisions live in
+                // `UnsavedCorrections.save`, under test; what remains here is
+                // the stderr line, following the microphone pattern above.
+                if let error = unsavedCorrections.save(
+                    heard: heard, canonical: canonical, to: dictionaryURL)
+                {
                     FileHandle.standardError.write(Data(
                         "dictionary: correction not saved (\(type(of: error))); it applies until quit\n"
                             .utf8))
