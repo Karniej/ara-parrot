@@ -48,8 +48,15 @@ final class SystemPasteboard: TranscriptPasteboard {
 /// refuses to construct the events, which `PasteInjector` treats as its cue
 /// to fall back to typing.
 enum CommandVSynthesizer {
-    /// Keycode 9 is `v` on the ASCII-capable layout macOS uses to resolve key
-    /// equivalents, so this stays ⌘V on non-QWERTY layouts.
+    /// Keycode 9 is `v` on ANSI QWERTY. The ASCII-capable-layout fallback in
+    /// macOS's key-equivalent matching covers *non-Latin* layouts (Cyrillic,
+    /// Greek, …), which fall back to QWERTY for shortcuts — but NOT rearranged
+    /// Latin layouts like Dvorak or Colemak, where keycode 9 produces a
+    /// different character (`k` on Dvorak) and an app that matches ⌘-equivalents
+    /// by character can read this as a different shortcut entirely (⌘K clears
+    /// Terminal's scrollback). Known limitation; the fix shape — resolving the
+    /// keycode for "v" against the current layout via `UCKeyTranslate` — is
+    /// recorded in docs/KNOWN-ISSUES.md.
     private static let vKeyCode: CGKeyCode = 9
 
     static func post() -> Bool {
