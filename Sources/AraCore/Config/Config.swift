@@ -9,7 +9,7 @@ import Foundation
 /// `apple` was called `local` until the bundled MLX engine arrived, at which
 /// point "local" described two of the three engines and identified neither. The
 /// decoder below still accepts the old spelling.
-public enum Engine: String, Codable, Sendable {
+public enum Engine: String, Codable, Sendable, CaseIterable {
     case mlx, apple, cloud, rules, off
 
     /// The name this engine had in a config file written before the rename, or
