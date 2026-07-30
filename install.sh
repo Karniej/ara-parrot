@@ -26,8 +26,15 @@ set -euo pipefail
 
 REPO="Karniej/ara-parrot"
 BIN_NAME="ara"
-INSTALL_DIR="/usr/local/bin"
-APP_DIR="/Applications"
+# Per-user by default, so a piped installer never needs sudo. Both are
+# standard macOS locations: ~/Applications is shown in Finder's sidebar beside
+# /Applications, and ~/.local/bin is the usual place for user binaries. A
+# `curl | sh` that escalates is asking for a password the reader cannot audit
+# at the moment it is asked; anyone who wants the machine-wide install can say
+# so explicitly:
+#     ARA_APP_DIR=/Applications ARA_BIN_DIR=/usr/local/bin sh install.sh
+APP_DIR="${ARA_APP_DIR:-$HOME/Applications}"
+INSTALL_DIR="${ARA_BIN_DIR:-$HOME/.local/bin}"
 TARBALL="ara-macos-arm64.tar.gz"
 
 red()    { printf "\033[31m%s\033[0m\n" "$*" >&2; }
@@ -128,11 +135,17 @@ verify() {
     fi
 }
 
-# `sudo` only where the destination is not already writable — /Applications is
-# group-writable by admin on a stock Mac, /usr/local/bin often is not.
+# `sudo` only where the destination is not already writable, which with the
+# per-user defaults above never happens. It stays for the explicit
+# ARA_APP_DIR=/Applications case, where the user chose the escalation.
 as_owner() {
     dest="$1"; shift
-    if [ -w "$dest" ]; then "$@"; else sudo "$@"; fi
+    if [ -w "$dest" ]; then
+        "$@"
+    else
+        dim "  ${dest} is not writable — sudo needed for this step"
+        sudo "$@"
+    fi
 }
 
 if [ -n "$DMG_URL" ]; then
@@ -149,6 +162,15 @@ if [ -n "$DMG_URL" ]; then
     if [ ! -x "$MOUNT/Ara.app/Contents/MacOS/${BIN_NAME}" ]; then
         red "the image has no Ara.app/Contents/MacOS/${BIN_NAME}"
         exit 1
+    fi
+
+    # Create it first: ~/Applications does not exist on a stock macOS install,
+    # and a missing directory fails the writability test below, which would
+    # send the default path through sudo — the exact escalation the per-user
+    # defaults exist to avoid.
+    if [ ! -d "$APP_DIR" ]; then
+        dim "→ creating ${APP_DIR}..."
+        as_owner "$(dirname "$APP_DIR")" mkdir -p "$APP_DIR"
     fi
 
     dim "→ installing ${APP_DIR}/Ara.app..."
@@ -175,6 +197,11 @@ if [ -n "$DMG_URL" ]; then
 
     green "✓ Ara ${TAG} installed at ${APP_DIR}/Ara.app"
     dim "  ${INSTALL_DIR}/${BIN_NAME} → ${APP_DIR}/Ara.app/Contents/MacOS/${BIN_NAME}"
+    case ":${PATH}:" in
+        *":${INSTALL_DIR}:"*) ;;
+        *) dim "  ${INSTALL_DIR} is not on your PATH — add it to use \`${BIN_NAME}\` from a terminal:"
+           dim "    echo 'export PATH=\"${INSTALL_DIR}:\$PATH\"' >> ~/.zshrc" ;;
+    esac
 else
     # 3b. bare CLI
     dim "→ downloading ${TARBALL}..."
