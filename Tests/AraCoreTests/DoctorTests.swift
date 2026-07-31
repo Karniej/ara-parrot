@@ -323,3 +323,49 @@ struct DoctorTests {
         }
     }
 }
+
+@Suite("DoctorFailureSummary")
+struct DoctorFailureSummaryTests {
+    /// The bug this exists for: a Finder-launched daemon has no stderr and,
+    /// being LSUIElement, no window either — a failed startup check made the
+    /// app vanish with no explanation anywhere. The summary is what the alert
+    /// says instead, so its wording is pinned here rather than on a screen.
+    @Test("only failures appear, each with its remediation")
+    func summaryCarriesFailuresAndRemedies() {
+        let checks = [
+            Check(name: "microphone", status: .fail("not granted"),
+                  remediation: "run `ara setup`"),
+            Check(name: "fn key mapping", status: .ok, remediation: nil),
+            Check(name: "on-device formatting", status: .warn("off"),
+                  remediation: "turn it on"),
+        ]
+        let summary = Check.failureSummary(checks)
+        #expect(summary?.contains("microphone: not granted") == true)
+        #expect(summary?.contains("run `ara setup`") == true)
+        // A warning is not a reason to refuse to start, so it must not appear
+        // in a dialog that says the app cannot run.
+        #expect(summary?.contains("on-device formatting") == false)
+        #expect(summary?.contains("fn key mapping") == false)
+    }
+
+    @Test("no failures means no alert to show")
+    func allOKSummarisesToNil() {
+        let checks = [
+            Check(name: "microphone", status: .ok, remediation: nil),
+            Check(name: "on-device formatting", status: .warn("off"), remediation: nil),
+        ]
+        #expect(Check.failureSummary(checks) == nil)
+    }
+
+    /// Which Privacy pane the alert opens: microphone first when it is the
+    /// failure, because dictation cannot start at all without it.
+    @Test("a named check can be tested for failure without exposing the fields")
+    func failedByNameFindsTheRightCheck() {
+        let checks = [
+            Check(name: "microphone", status: .fail("not granted"), remediation: nil),
+            Check(name: "accessibility", status: .ok, remediation: nil),
+        ]
+        #expect(Check.failed(checks, nameContains: "microphone"))
+        #expect(!Check.failed(checks, nameContains: "accessibility"))
+    }
+}

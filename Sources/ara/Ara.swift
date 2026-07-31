@@ -72,6 +72,18 @@ struct Run: ParsableCommand {
         if !skipDoctor {
             let checks = DoctorReport.run()
             if !DoctorReport.allOK(checks) {
+                // Launched from Finder there is no stderr to read and, being
+                // `LSUIElement`, no window and no Dock icon either — the app
+                // would exit and the user would see *nothing at all*. That is
+                // exactly what happens on a fresh install: TCC files the
+                // microphone and accessibility grants under the bundle's
+                // identity, so a copy that has never been granted anything
+                // fails these checks on its first launch. (Run the same binary
+                // from a terminal and it inherits the terminal's grants, which
+                // is why this does not reproduce there.)
+                if !StartupFailure.hasReadableTerminal() {
+                    StartupFailure.presentAndExit(checks)
+                }
                 FileHandle.standardError.write(Data("startup checks failed:\n".utf8))
                 DoctorReport.print(checks)
                 FileHandle.standardError.write(Data("\nfix the above or pass --skip-doctor\n".utf8))

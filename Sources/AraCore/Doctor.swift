@@ -13,6 +13,31 @@ public struct Check {
     let name: String
     let status: CheckStatus
     let remediation: String?
+
+    /// Whether a named check is among the failures — the executable's alert
+    /// uses it to pick which Privacy pane to open, without needing the stored
+    /// properties to become public.
+    public static func failed(_ checks: [Check], nameContains needle: String) -> Bool {
+        checks.contains { check in
+            guard case .fail = check.status else { return false }
+            return check.name.contains(needle)
+        }
+    }
+
+    /// The failing checks, worded for a dialog rather than a terminal. Public
+    /// because a Finder-launched daemon has no stderr and must say this in an
+    /// alert instead; pure so the wording is testable without a screen.
+    public static func failureSummary(_ checks: [Check]) -> String? {
+        let failures = checks.compactMap { check -> String? in
+            guard case .fail(let detail) = check.status else { return nil }
+            guard let remediation = check.remediation else {
+                return "\(check.name): \(detail)"
+            }
+            return "\(check.name): \(detail)\n    \(remediation)"
+        }
+        guard !failures.isEmpty else { return nil }
+        return failures.joined(separator: "\n\n")
+    }
 }
 
 public enum DoctorReport {
