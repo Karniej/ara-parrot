@@ -132,14 +132,11 @@ worth writing down.
   current setting would be tidier. No measurable cost; noted so it is a
   decision rather than an oversight.
 
-- **Vocabulary hints are post-ASR only, and the dictionary has no language.**
-  `LocalDictionary` replaces text *after* transcription. The same prior art
-  feeds per-language vocabulary into WhisperKit as `promptTokens`, which biases
-  the decoder itself — a strictly stronger mechanism, and the complement to
-  replacement rather than a substitute. Two gaps follow from multilingual
-  dictation working at all: Ara does no ASR-level biasing, and a dictionary
-  entry has no language field, so a correction meant for English is applied to
-  Polish transcripts too. Both are follow-up work, not this branch.
+- **The dictionary has no language.** `LocalDictionary` now supplies canonical
+  spellings to WhisperKit as `promptTokens` before transcription and still
+  replaces known variants afterwards. But every hint and correction is global:
+  an entry meant for English also biases and applies to Polish transcripts.
+  Per-language entries remain follow-up work.
 
 - **`--dump-wav` writes raw recorded audio to world-readable `/tmp/ara-last.wav`**
   (`Ara.swift`, the release path). Recorded audio is as sensitive as the

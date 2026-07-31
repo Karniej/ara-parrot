@@ -653,12 +653,13 @@ built-in one.
 
 ## 9quater. The custom dictionary: menu, hand edits, and a broken file
 
-The engine is tested end to end — the merge, the whole-word replacement, the
-per-utterance reload, the tolerant load, the write round-trip, and that the
-session the daemon builds consults it upstream of every engine. What no test
-can do is click the menu item, type into the alert, or speak a misheard word;
-that human half is below. `--mode verbatim` keeps the language model out of
-the way so any correction seen is unambiguously the dictionary's.
+The deterministic engine is tested end to end — hint extraction, the merge,
+the whole-word replacement, the per-utterance reload, the tolerant load, the
+write round-trip, and that the session the daemon builds consults it upstream
+of every formatting engine. What no test can do is click the menu item, type
+into the alert, or measure whether a decoder prompt improves real ASR; that
+human half is below. `--mode verbatim` keeps the language model out of the way
+so any correction seen is unambiguously the dictionary's.
 
 - [ ] 👤 **9q-a. A menu correction reaches the next utterance.** With the
       daemon running, open the menu bar item → **Add dictionary correction…**.
@@ -716,6 +717,14 @@ the way so any correction seen is unambiguously the dictionary's.
       only ever written where nothing exists. `ara dictionary` must print
       the path and every entry as `canonical ← variants` (or "no dictionary
       yet" plus the path when you still have the file moved aside).
+- [ ] 👤 **9q-h. Canonicals bias ASR before replacement.** Hand-add an entry
+      with an unusual canonical you can dictate and an empty `variants` array,
+      so deterministic replacement cannot produce it. Dictate it several
+      times with the entry absent, then several times after saving it. The
+      prompted runs should recognise the canonical more reliably. This is a
+      probabilistic model check, not a byte-exact assertion; the structural
+      guarantees are that the edit applies without restart and an empty
+      dictionary keeps baseline decoding.
 
 ## 9quinquies. Voice snippets: the spoken end-to-end path
 

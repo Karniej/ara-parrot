@@ -52,6 +52,7 @@ in `MenuBarController` for the same reason.
         └──────────────────┘                     ▼
                                     ┌─────────────────────┐
                                     │ WhisperKitTranscriber│  CoreML / ANE
+                                    │ + dictionary hints  │  ← per-utterance file read
                                     └──────────┬──────────┘
                                                │ String
         FrontmostApp.bundleID ────────────────▶│  (sampled at release, by value)
@@ -106,9 +107,12 @@ Step by step, with what each stage guarantees:
    utterance, which makes the property structural rather than a matter of
    timing.
 
-4. **Transcribe.** `WhisperKitTranscriber` (an actor) runs CoreML inference on
-   the ANE and sanitizes Whisper's non-speech bracket tokens
-   (`[BLANK_AUDIO]`, `(silence)`, `<|nospeech|>`, `*background noise*`).
+4. **Transcribe.** `WhisperKitTranscriber` (an actor) snapshots the dictionary's
+   canonical spellings, tokenizes them into a bounded decoder prompt, runs
+   CoreML inference on the ANE, and sanitizes Whisper's non-speech bracket
+   tokens (`[BLANK_AUDIO]`, `(silence)`, `<|nospeech|>`, `*background noise*`).
+   Every language-refinement pass for the utterance receives the same prompt;
+   an empty dictionary passes `nil` and keeps WhisperKit's baseline path.
 
 5. **Dictionary.** `DictationSession.process` applies `LocalDictionary` first,
    before any mode or engine decision, so every path — including verbatim and
@@ -149,6 +153,7 @@ those before changing a seam.
 | `FoundationModelsFormatter.Generate` | closure | Apple Intelligence, which is off on the development machine |
 | `CloudFormatter.Transport` | closure | the network. Refusals arrive as a perfectly successful HTTP 200, so the interesting paths need driving without a key |
 | `TranscriptPasteboard` | protocol | `NSPasteboard`. `SystemPasteboard` is decision-free glue; ordering, generation, and the concealed filter run under test |
+| `WhisperKitTranscriber.vocabularyHints` | `@Sendable () -> [String]` | the filesystem-backed dictionary. It is sampled once per transcription so edits reach the next utterance without changing midway through a language-refinement pass |
 | `DictationSession.dictionary` / `.snippets` | `@Sendable () -> …` | the filesystem — and this seam *is* the hot-reload mechanism. Caching the result here would silently turn "edits apply to the next dictation" into "edits apply after a restart", which is why neither is defaulted |
 | `Config.load(warn:)`, `LocalDictionary.load(warn:)`, `Snippets.load(warn:)` | closure | stderr. The silence *was* the defect in each case, so the tests assert on what a user is told, not only on the returned value |
 | `Install.removeLegacyAgent(bootout:)` | closure | launchd |
@@ -479,10 +484,12 @@ back to `TextInjector`. Degraded delivery, never no delivery.
 
 ### Hot reload is a closure, not a watcher
 
-`dictionary.json` and `snippets.json` are read fresh on every utterance. There
-is no file watcher, no cache, and no invalidation to get wrong — the
-per-utterance `load` *is* the mechanism, which is why `DictationSession` takes
-loaders rather than values and why neither parameter is defaulted.
+`dictionary.json` and `snippets.json` are read fresh on every utterance. The
+dictionary source feeds both the transcriber's decoder hints and the session's
+deterministic correction; the hints are snapshotted once for all ASR passes in
+one utterance. There is no file watcher, no cache, and no invalidation to get
+wrong — the per-utterance `load` *is* the mechanism, which is why these paths
+take loaders rather than long-lived values.
 
 The cost of reading per utterance is that a broken file would warn hundreds of
 times a day, so both loaders keep a process-wide `FailureLog` keyed by path and

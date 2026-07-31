@@ -141,8 +141,23 @@ struct Run: ParsableCommand {
                                               setting: config.language).warning {
             FileHandle.standardError.write(Data("config: \(warning)\n".utf8))
         }
+
+        // One hot-reloaded source for both halves of custom vocabulary. The
+        // transcriber uses canonical spellings as decoder hints, then the
+        // session deterministically replaces any variants Whisper still
+        // emits. Failed menu saves remain active in both places until quit.
+        let dictionaryURL = LocalDictionary.defaultURL
+        let snippetsURL = Snippets.defaultURL
+        let unsavedCorrections = UnsavedCorrections()
+        let dictionarySource: @Sendable () -> LocalDictionary = {
+            unsavedCorrections.applied(
+                to: LocalDictionary.load(from: dictionaryURL))
+        }
         let transcriber = WhisperKitTranscriber(model: chosenModel,
-                                                language: config.language)
+                                                language: config.language,
+                                                vocabularyHints: {
+                                                    dictionarySource().vocabularyHints()
+                                                })
         // The formatting model is loaded at startup too — before the hotkey
         // arms, and never on the dictation path: a warm load is ~1s and a cold
         // one ~38s against a 2500ms per-engine deadline, so a lazy first load
@@ -236,16 +251,6 @@ struct Run: ParsableCommand {
                 menuBar: menuBar,
                 readyMessage: WarmupStatus.readyMessage(hotkeyLabel: hotkeyLabel))
         }
-
-        // The dictionary itself is loaded per utterance — that is the entire
-        // hot-reload mechanism — so the menu form has no session to poke: it
-        // merges into the file and the next dictation reads it. The backlog
-        // exists for saves that fail; those corrections overlay every load
-        // until quit, the same "applies until quit" contract as a microphone
-        // pick whose config write failed.
-        let dictionaryURL = LocalDictionary.defaultURL
-        let snippetsURL = Snippets.defaultURL
-        let unsavedCorrections = UnsavedCorrections()
 
         // The session's manual mode override, main-actor state like the menu
         // that sets it: the Mode submenu writes it, and the released-handler
@@ -561,10 +566,7 @@ struct Run: ParsableCommand {
             mlx: mlx,
             apple: Pipeline.appleFormatter(),
             registry: registry,
-            dictionary: {
-                unsavedCorrections.applied(
-                    to: LocalDictionary.load(from: dictionaryURL))
-            },
+            dictionary: dictionarySource,
             onModeResolved: { resolved in
                 Task { @MainActor in menuBar.setMode(resolved.id) }
             })
