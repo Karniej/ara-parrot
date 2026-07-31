@@ -113,7 +113,10 @@ public final class AudioCapture {
     /// The rebuild hop. The configuration-change notification is delivered
     /// synchronously on whatever thread posts it — possibly one the teardown
     /// itself needs — so the handler always bounces through this queue rather
-    /// than re-entering `stateLock`.
+    /// than re-entering `stateLock`. The live observer also retains its engine
+    /// for the full notification callback: an async hop may begin before the
+    /// callback returns, and AVAudioEngine forbids deallocation from inside
+    /// that callback.
     private let rebuildQueue = DispatchQueue(label: "ara.audio-capture.rebuild")
 
     /// Supplies the device to record from; consulted at `start` and again on
@@ -345,16 +348,45 @@ public final class AudioCapture {
 
     // MARK: - The real engine
 
+    /// Owns the notification source independently of the backend being
+    /// retired. `rebuildQueue.async` only changes where teardown runs; it does
+    /// not order the beginning of teardown after the posting callback's return.
+    /// NotificationCenter keeps the executing observer block (and therefore
+    /// this relay) alive until that return, so a fast rebuild cannot release
+    /// the backend's last engine reference while AVFoundation is still
+    /// unwinding the engine's internal notification delivery.
+    final class ConfigurationChangeRelay {
+        private let source: AnyObject
+        private let notify: () -> Void
+
+        init(source: AnyObject, notify: @escaping () -> Void) {
+            self.source = source
+            self.notify = notify
+        }
+
+        func call() {
+            withExtendedLifetime(source, notify)
+        }
+    }
+
     private static func liveBackend(onConfigurationChange: @escaping () -> Void) -> Backend {
         let engine = AVAudioEngine()
+        let relay = ConfigurationChangeRelay(
+            source: engine, notify: onConfigurationChange)
         // Registered per engine (`object: engine`), so a notification can only
         // ever describe this backend's device. Delivery is synchronous on the
         // posting thread (`queue: nil`); the capture's wiring hops queues.
+        //
+        // The explicit relay capture is load-bearing. The rebuild queue may
+        // run before this observer returns and drop every backend closure that
+        // otherwise owns `engine`; the relay owns it until the executing block
+        // returns. Apple's AVAudioEngine contract forbids deallocation from
+        // its internal notification handler.
         let observer = NotificationCenter.default.addObserver(
             forName: .AVAudioEngineConfigurationChange,
             object: engine,
             queue: nil
-        ) { _ in onConfigurationChange() }
+        ) { [relay] _ in relay.call() }
 
         return Backend(
             // `inputFormat(forBus:)`, not `outputFormat(forBus:)`: after

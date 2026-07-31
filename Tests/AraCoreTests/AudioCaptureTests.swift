@@ -59,6 +59,71 @@ struct AudioCaptureTests {
         }
     }
 
+    /// A backend owner whose deallocation is observable. Unlike `Harness`,
+    /// the lifetime regression below deliberately keeps no strong array of
+    /// these: the production backend closures and the notification
+    /// registration/invocation are its only owners.
+    private final class LifetimeEngine {
+        let format: AVAudioFormat
+        let onTearDown: () -> Void
+        let onDeinit: () -> Void
+
+        init(
+            format: AVAudioFormat,
+            onTearDown: @escaping () -> Void = {},
+            onDeinit: @escaping () -> Void = {}
+        ) {
+            self.format = format
+            self.onTearDown = onTearDown
+            self.onDeinit = onDeinit
+        }
+
+        deinit { onDeinit() }
+
+        func backend(isRunning: Bool) -> AudioCapture.Backend {
+            AudioCapture.Backend(
+                inputFormat: { self.format },
+                setInputDevice: { _ in },
+                installTap: { _, _ in },
+                removeTap: {},
+                startEngine: {},
+                stopEngine: {},
+                isEngineRunning: { isRunning },
+                tearDown: { self.onTearDown() })
+        }
+    }
+
+    private final class WeakBox<Value: AnyObject> {
+        weak var value: Value?
+    }
+
+    /// A thread-safe stand-in for NotificationCenter's observer registration.
+    /// `fire` retains the callback for the duration of an invocation even when
+    /// `clear` concurrently removes the registered copy.
+    private final class NotificationSlot {
+        private let lock = NSLock()
+        private var callback: (() -> Void)?
+
+        func install(_ callback: @escaping () -> Void) {
+            lock.lock()
+            self.callback = callback
+            lock.unlock()
+        }
+
+        func clear() {
+            lock.lock()
+            callback = nil
+            lock.unlock()
+        }
+
+        func fire() {
+            lock.lock()
+            let callback = callback
+            lock.unlock()
+            callback?()
+        }
+    }
+
     /// Hands `AudioCapture` a fresh fake engine per (re)build and records how
     /// many were built — the rebuild tests hinge on which engine is live.
     private final class Harness {
@@ -469,6 +534,70 @@ struct AudioCaptureTests {
     }
 
     // MARK: - Stale notifications
+
+    /// AVAudioEngine posts configuration changes from an internal queue and
+    /// explicitly forbids deallocating the engine inside that notification
+    /// callback. Merely hopping to `rebuildQueue` is insufficient: the hop can
+    /// retire the old backend before the posting callback has returned.
+    ///
+    /// AVFoundation's private queue cannot be driven in a unit test, so this
+    /// is the deterministic seam equivalent. It holds a synthetic notification
+    /// callback open while the production rebuild retires the first backend,
+    /// then queues a degraded retry as proof the original handler has fully
+    /// returned. The notifying source must remain alive until the outer
+    /// callback exits, and may be released immediately afterward.
+    @Test("a rebuild cannot deallocate its source inside the notification callback")
+    func notificationSourceOutlivesCallback() throws {
+        let firstReleased = DispatchSemaphore(value: 0)
+        let originalHandlerReturned = DispatchSemaphore(value: 0)
+        let first = WeakBox<LifetimeEngine>()
+        let notification = NotificationSlot()
+        nonisolated(unsafe) var built = 0
+
+        let capture = AudioCapture(makeBackend: { onConfigurationChange in
+            built += 1
+            let index = built
+            let engine = LifetimeEngine(
+                format: index == 1 ? Self.live48kMono : Self.dead,
+                onTearDown: {
+                    // The third backend is the retry queued from the degrade
+                    // transition. Reaching it proves the first configuration-
+                    // change handler has returned, not merely started a fresh
+                    // backend.
+                    if index == 3 { originalHandlerReturned.signal() }
+                    if index == 1 { notification.clear() }
+                },
+                onDeinit: {
+                    if index == 1 { firstReleased.signal() }
+                })
+
+            if index == 1 {
+                first.value = engine
+                let relay = AudioCapture.ConfigurationChangeRelay(
+                    source: engine, notify: onConfigurationChange)
+                notification.install {
+                    relay.call()
+                    #expect(originalHandlerReturned.wait(
+                        timeout: .now() + 1) == .success)
+                    #expect(firstReleased.wait(timeout: .now()) == .timedOut)
+                    #expect(first.value != nil)
+                }
+            }
+            return engine.backend(isRunning: false)
+        })
+        capture.onTransition = { [weak capture] transition in
+            if transition == .degraded { capture?.retryIfDegraded() }
+        }
+
+        try capture.start()
+        #expect(first.value != nil)
+        notification.fire()
+
+        #expect(firstReleased.wait(timeout: .now() + 1) == .success)
+        #expect(first.value == nil)
+        capture.onTransition = nil
+        _ = capture.stop()
+    }
 
     /// A dying engine's notification is *enqueued* before `stop()` removes
     /// the observer; by the time the hop runs, a new utterance may already be
