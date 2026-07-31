@@ -563,10 +563,17 @@ Three settings, in increasing order of cost:
   a marginal call goes to the language your **previous** utterance was in — so
   a session does not flap between two languages on the strength of a short
   "tak, jasne". When the detection disagrees with your last utterance, Ara
-  transcribes a second time in the previous language and keeps whichever the
-  decoder was more confident about. That second pass is the cost: measured on
-  an M-series Mac with `whisper-large-v3-turbo`, six seconds of speech takes
-  ~0.85 s pinned and ~1.8 s when the second pass runs.
+  transcribes a second time in the previous language and compares the two by
+  the decoder's own mean log-probability — a heuristic, and one whose
+  calibration across languages is unverified; see
+  [docs/KNOWN-ISSUES.md](docs/KNOWN-ISSUES.md). What is guaranteed is the
+  floor: a second pass can change which language you get, never turn a
+  transcribed utterance into an empty one. That second pass is the cost:
+  roughly double the transcription phase — single-sample measurements on an
+  M-series Mac with `whisper-large-v3-turbo` put six seconds of speech at
+  ~0.85 s pinned and ~1.8 s when the second pass runs, but run-to-run
+  variance on the same clip was wide enough that these are orders of
+  magnitude, not benchmarks.
 - **Automatic** — `"language": "auto"`, the default, and what an absent key
   means. Whisper detects freely and whatever it says goes. Right if you dictate
   in languages you cannot enumerate; otherwise one of the above is better.

@@ -1,7 +1,43 @@
 # Language detection — implementation report
 
-Branch `feature/language-detection`, five commits off `b99a42b`.
-541 tests green (484 at base, +57), `swift build -c release` green.
+Branch `feature/language-detection`, off `b99a42b`.
+554 tests green (484 at base, +70), `swift build -c release` green.
+
+## Review round 1 — what changed
+
+- **M2, the transcript guarantee.** `refine`'s first branch returned the
+  pinned second pass unconditionally. A wrong-language pass that emits only
+  bracket tokens sanitizes to `""`, so an utterance pass one had transcribed
+  could come back empty. Both branches now go through
+  `WhisperKitTranscriber.replacing(_:with:decision:)`, over the internal
+  `keepsTheWords(_:over:)` predicate — a refinement may change *which
+  language* the words were decoded as, never whether there are words. The
+  reviewer's note that branch two was "protected" by the `-.infinity`
+  confidence floor is only half true: a pass can have segments, score
+  finitely, and still sanitize away to nothing. Both branches needed it.
+  Pinned by `TranscriberPassTests`, including that exact case.
+- **M1, the untestable statics.** `dominantLanguage`, `confidence` and `Pass`
+  are internal; `TranscriberPassTests` covers them from constructed
+  `TranscriptionResult` values — no model, no hardware. The tie in
+  `dominantLanguage` was genuinely nondeterministic (`Dictionary.max(by:)`
+  over unordered counts); it now scans in result order and takes only a
+  strictly greater count, so **ties go to the earliest window** — the one
+  Whisper's own detection ran on. Pinned, including 50 repeated calls
+  returning one answer.
+- **L1.** Rather than caveat the claim, the difference is removed: the
+  `language: … · …` stderr line is suppressed on an English-only model, where
+  it would be a constant. The default model's observable behaviour is again
+  unchanged.
+- **L4.** `refine` no longer calls `selectMonitoredLanguage` with `[:]`; it
+  spells out `previous ?? monitored.first`, with a comment naming the policy
+  function that reduces to it. The function and its tests stay.
+- **L2 / M3 / "reliably".** README's numbers carry the single-sample caveat;
+  the "more confident" sentence is softened to "compares by the decoder's own
+  mean log-probability — a heuristic", pointing at a new KNOWN-ISSUES entry on
+  cross-language calibration. The n=1 claim is stated as n=1.
+- **Recorded, not fixed:** M3 (calibration), L3 (two rapid menu clicks are
+  unordered `Task`s), and the per-utterance `LanguagePlan.resolve` rebuild —
+  all in KNOWN-ISSUES.
 
 ## The two WhisperKit lines, verified
 
@@ -69,8 +105,10 @@ free if WhisperKit ever exposes a real distribution.
   language other than `en` in the registry entry) `LanguagePlan` collapses
   every setting to `language: nil, detectLanguage: false` — byte-identical to
   `DecodingOptions()`'s defaults, which is exactly what the daemon did before
-  this branch. Nobody on the default `whisper-base.en` sees any change, and
-  nothing warns.
+  this branch. Nobody on the default `whisper-base.en` sees any change:
+  identical options, and — after the review — identical stderr too, since the
+  per-utterance `language:` line is suppressed where there is only one
+  possible answer.
 - On a multilingual model `auto` means `detectLanguage: true`. This is the fix.
   A user who downloaded 1.6 GB of multilingual weights did so to speak more
   than one language; defaulting them to the English prefill is the reported
@@ -178,9 +216,20 @@ Both are in `docs/KNOWN-ISSUES.md` under deferred work.
    metadata was wrong and detection was unreachable), but it may not be the
    whole of what the user experienced, and I could not reproduce their symptom.
 2. Single-sample timings on a busy machine.
-3. `LanguagePolicy.selectMonitoredLanguage`'s probability ranking is currently
-   unreachable in production (always passed `[:]`). Kept deliberately, tested,
-   documented — but it is untaken code until WhisperKit changes.
-4. The Language submenu has never been rendered. `MenuBarController` is a
+3. The confidence comparison is uncalibrated across languages (M3, now in
+   KNOWN-ISSUES). The floor — a refinement cannot empty a transcript — is
+   guaranteed and tested; the preference is a heuristic and the docs now say
+   so.
+4. `LanguagePolicy.selectMonitoredLanguage`'s probability ranking is no longer
+   called at all — `refine` spells out the degradation it reduces to. The
+   function is kept and tested against the day WhisperKit exposes a real
+   distribution, but it is now plainly dead code rather than misleadingly live
+   code.
+5. The Language submenu has never been rendered. `MenuBarController` is a
    verbatim transcription of a unit-tested model, as the other submenus are,
    but nothing has drawn it — the daemon was not launched, per instructions.
+6. `refine`'s composition — which branch runs for a given detection — is still
+   only reachable with a loaded model, so it is covered by the pure functions
+   underneath it rather than end to end. Making it testable would mean a seam
+   over `WhisperKit.transcribe`; judged out of scope for a fix branch, but it
+   is the remaining untested surface.

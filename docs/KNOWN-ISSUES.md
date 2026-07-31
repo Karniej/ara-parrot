@@ -59,8 +59,9 @@ worth writing down.
   (`LanguageLatencyBenchmark`), transcribing with `language: "en"` still
   produced correct Polish text — the model overrode the prefill. So the defect
   is stated as "the language is never detected" and not as "your Polish comes
-  out English": the language *metadata* was reliably wrong, the text was not
-  reliably wrong. Whether real dictation — noisier, accented, shorter —
+  out English": the language *metadata* is wrong by construction, whereas the
+  text was not wrong in the one clean sample taken — a single observation,
+  which is all that claim rests on. Whether real dictation — noisier, accented, shorter —
   degrades further is unmeasured, and needs a human with a microphone.
 
 - **The cost, measured.** `whisper-large-v3-turbo`, M-series, 5.95 s of
@@ -81,6 +82,24 @@ worth writing down.
   and is separate from the formatter chain's `timeoutMs` budget; it lengthens
   total latency rather than eating the formatting deadline.
 
+- **The confidence comparison is uncalibrated, and may not mean what it
+  claims.** When a monitored set's second pass runs, the winner is chosen by
+  `WhisperKitTranscriber.confidence` — a duration-weighted mean of the
+  decoder's `avgLogprob` — compared *across two different languages*, with
+  `LanguagePolicy.lastLanguageBias` (0.12) added in the same units. Mean
+  per-token log-probability is not obviously comparable between languages: the
+  same utterance tokenizes into different numbers of tokens in Polish and in
+  English, and a language whose tokenizer is a worse fit produces more, lower-
+  probability tokens for identical audio. So the comparison may carry a
+  systematic bias toward whichever language tokenizes more efficiently, and
+  0.12 is a number inherited from the design this was adapted from rather than
+  one measured here. What holds regardless: the *floor*, that a second pass
+  can never replace a transcribed utterance with an empty one
+  (`WhisperKitTranscriber.keepsTheWords`, unit-tested). What does not: any
+  claim that the more confident pass wins in a meaningful sense. Calibrating
+  it needs bilingual audio with known labels and someone to score it — not
+  something this branch could do, and the README no longer asserts otherwise.
+
 - **`WhisperKit.detectLangauge` is not worth calling.** The design this was
   adapted from (`aivars/parrot`, MIT, © Andrew Jones) calls it to rank the
   monitored languages by probability when the detection lands outside the set.
@@ -96,6 +115,22 @@ worth writing down.
   exposes a real distribution.
 
 ## Deferred work
+
+- **Two rapid Language-submenu clicks can land out of order.** The pick calls
+  an actor method from the main thread (`Task { await transcriber.setLanguage(…) }`),
+  and two unstructured tasks have no ordering guarantee between them, so
+  clicking twice quickly could leave the transcriber on the first pick while
+  the menu and the config file show the second. The Microphone submenu has no
+  such gap — its store is main-actor state and applies synchronously. Bounded:
+  it needs two clicks inside one scheduling window, and the next click (or
+  restart) corrects it. Fix shape: main-actor state the transcriber samples,
+  as the mode override already does, rather than a push into the actor.
+
+- **`LanguagePlan.resolve` runs per utterance.** It is pure and trivial, but
+  only the *setting* can change between utterances — the model cannot — so
+  most of what it recomputes is fixed at startup. Caching it against the
+  current setting would be tidier. No measurable cost; noted so it is a
+  decision rather than an oversight.
 
 - **Vocabulary hints are post-ASR only, and the dictionary has no language.**
   `LocalDictionary` replaces text *after* transcription. The same prior art
