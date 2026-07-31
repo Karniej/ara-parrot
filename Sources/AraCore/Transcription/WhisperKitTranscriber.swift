@@ -87,7 +87,12 @@ public actor WhisperKitTranscriber: Transcriber {
         if let language = chosen.language, monitored.contains(language), !text.isEmpty {
             lastUsedLanguage = language
         }
-        if let language = chosen.language {
+        // Only when there was a language question to answer. An English-only
+        // model has one possible answer, so the line would be a constant on
+        // every utterance — and printing it would make this branch change the
+        // observable behaviour of the default model, which is the one thing
+        // it set out not to do.
+        if let language = chosen.language, !model.isEnglishOnly {
             FileHandle.standardError.write(Data("  language: \(language) · \(decision)\n".utf8))
         }
         return text
@@ -118,25 +123,30 @@ public actor WhisperKitTranscriber: Transcriber {
     /// monitored language at `-.infinity` and take its degradation path
     /// regardless. Measured on this machine the call costs ~500 ms of its own
     /// (it re-runs the mel and the encoder), which is a third of the whole
-    /// utterance's latency spent to learn nothing. The probabilities argument
-    /// stays, empty and documented, so the ranking works the day WhisperKit
-    /// returns a real table.
+    /// utterance's latency spent to learn nothing.
+    ///
+    /// So the first branch below spells out what that degradation path
+    /// reduces to — the previous language if it is still monitored, else the
+    /// first one listed — rather than calling `selectMonitoredLanguage` with
+    /// an empty table and looking like a ranking runs. The policy function
+    /// keeps its ranking and its tests, ready for the day a real table exists.
     ///
     /// Anything that goes wrong returns pass one unchanged. Never throws.
     private func refine(_ audio: [Float], pipeline: WhisperKit, first: Pass,
                         monitored: [String], previous: String?) async -> (Pass, String) {
         do {
             if !monitored.contains(first.language ?? "") {
-                guard let best = LanguagePolicy.selectMonitoredLanguage(
-                    probabilities: [:],
-                    detected: first.language,
-                    lastUsed: previous,
-                    monitored: monitored)
+                // `LanguagePolicy.selectMonitoredLanguage(probabilities: [:],
+                // detected: <unmonitored>, lastUsed: previous, monitored:)`
+                // returns exactly this; see the note above for why it is not
+                // called.
+                guard let best = previous ?? monitored.first
                 else { return (first, "detected") }
                 let pinned = try await pass(audio, pipeline: pipeline,
                                             language: best, detectLanguage: false)
-                return (pinned, first.language.map { "monitored, over \($0)" }
-                    ?? "monitored")
+                return replacing(first, with: pinned,
+                                 decision: first.language.map { "monitored, over \($0)" }
+                                     ?? "monitored")
             }
 
             guard let alternativeLanguage = LanguagePolicy.comparisonLanguage(
@@ -151,7 +161,8 @@ public actor WhisperKitTranscriber: Transcriber {
                 alternative: alternativeLanguage, alternativeScore: alternative.confidence,
                 lastUsed: previous, monitored: monitored)
             if winner == first.language { return (first, "detected") }
-            return (alternative, first.language.map { "kept over \($0)" } ?? "kept")
+            return replacing(first, with: alternative,
+                             decision: first.language.map { "kept over \($0)" } ?? "kept")
         } catch {
             // The transcript from pass one is already in hand; a failed
             // refinement is a worse language guess, not a lost dictation.
@@ -160,6 +171,34 @@ public actor WhisperKitTranscriber: Transcriber {
                     .utf8))
             return (first, "detected")
         }
+    }
+
+    /// Applies a refinement's result, unless doing so would lose the words.
+    ///
+    /// A refinement may only ever change *which language* an utterance was
+    /// decoded as. It must never be the reason the utterance produces nothing:
+    /// a pass pinned to the wrong language can come back as bracket tokens
+    /// alone (`[BLANK_AUDIO]`, `(silence)`), which `sanitize` correctly strips
+    /// to the empty string — and returning that over a first pass that had
+    /// real words would lose a dictation the daemon had already transcribed.
+    /// That is the one guarantee this project does not trade against
+    /// accuracy, so it is enforced here rather than assumed from the
+    /// confidence comparison. (`confidence` returns `-.infinity` for a pass
+    /// with no segments at all, which covers *some* of this — but a pass can
+    /// have segments, and therefore a finite score, and still sanitize away
+    /// to nothing.)
+    private func replacing(_ first: Pass, with candidate: Pass,
+                           decision: String) -> (Pass, String) {
+        Self.keepsTheWords(candidate, over: first)
+            ? (candidate, decision)
+            : (first, "detected — the \(candidate.language ?? "second") pass "
+                + "transcribed nothing")
+    }
+
+    /// Whether `candidate` may replace `first` without losing the utterance:
+    /// either it has words of its own, or `first` had none either.
+    static func keepsTheWords(_ candidate: Pass, over first: Pass) -> Bool {
+        !sanitize(candidate.text).isEmpty || sanitize(first.text).isEmpty
     }
 
     private func pass(_ audio: [Float], pipeline: WhisperKit,
@@ -176,7 +215,12 @@ public actor WhisperKitTranscriber: Transcriber {
     /// sure the decoder was — the last of which is the only basis
     /// `LanguagePolicy.chooseLanguage` has for preferring one pass over
     /// another.
-    private struct Pass {
+    ///
+    /// Internal, not private, for the reason `LanguagePolicy` exists at all:
+    /// the decisions taken over these values are the interesting part, and a
+    /// decision a test cannot construct an input for is a decision nobody has
+    /// checked.
+    struct Pass {
         let text: String
         let language: String?
         let confidence: Float
@@ -184,19 +228,38 @@ public actor WhisperKitTranscriber: Transcriber {
 
     /// The language most of the windows agreed on. WhisperKit reports one per
     /// result and a long dictation can be chunked into several.
-    private static func dominantLanguage(in results: [TranscriptionResult]) -> String? {
+    ///
+    /// **Ties go to the earliest window.** `Dictionary.max(by:)` over the
+    /// counts would answer nondeterministically — the iteration order of a
+    /// `Dictionary` is not stable across runs — so a two-window dictation
+    /// with one window each way could report a different language on
+    /// identical audio. Scanning in result order and taking only a *strictly*
+    /// greater count picks the first-appearing language on a tie, which is
+    /// both deterministic and the better guess: the first window is the one
+    /// Whisper's own detection ran on.
+    static func dominantLanguage(in results: [TranscriptionResult]) -> String? {
         let languages = results.map { $0.language.lowercased() }.filter { !$0.isEmpty }
-        return Dictionary(grouping: languages, by: { $0 })
-            .mapValues(\.count)
-            .max { $0.value < $1.value }?
-            .key
+        var counts: [String: Int] = [:]
+        for language in languages { counts[language, default: 0] += 1 }
+
+        var best: String?
+        var bestCount = 0
+        for language in languages where counts[language, default: 0] > bestCount {
+            best = language
+            bestCount = counts[language, default: 0]
+        }
+        return best
     }
 
-    /// Mean log-probability per second of speech. Duration-weighted so a
-    /// half-second segment cannot outvote a ten-second one, and `-.infinity`
-    /// for no segments at all so an empty pass loses every comparison rather
-    /// than winning one on a default of zero.
-    private static func confidence(_ results: [TranscriptionResult]) -> Float {
+    /// Duration-weighted mean log-probability across a pass's segments — the
+    /// score `LanguagePolicy.chooseLanguage` compares.
+    ///
+    /// Weighted so a half-second segment cannot outvote a ten-second one, and
+    /// `-.infinity` when there are no segments at all so a pass that decoded
+    /// nothing loses every comparison rather than winning one on a default of
+    /// zero. (That is a floor, not the whole guarantee — see
+    /// `keepsTheWords`.)
+    static func confidence(_ results: [TranscriptionResult]) -> Float {
         let segments = results.flatMap(\.segments)
         guard !segments.isEmpty else { return -.infinity }
         var weighted: Float = 0
