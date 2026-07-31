@@ -42,10 +42,17 @@ public actor WhisperKitTranscriber: Transcriber {
     /// `progressCallback`, so a 1.5 GB first run reports nothing for over a
     /// minute. Calling it ourselves and handing the resulting folder straight
     /// back through `modelFolder` is the *same* call with the callback filled
-    /// in: same repo, same variant string, same hub cache, same network
-    /// behaviour on a warm start (the etag check that repairs a truncated
-    /// download still runs). `download: false` on the config then only says
-    /// "the folder is already decided".
+    /// in: same repo, same variant string, same hub cache. `download: false` on
+    /// the config then only says "the folder is already decided".
+    ///
+    /// ## …but only when there is something to download
+    ///
+    /// It used to run on every launch, warm cache or not, because the etag
+    /// check it performs is also the repair for a truncated download. That cost
+    /// 3.7–6.1s of network on the path that gates dictation — see
+    /// `WhisperWarmupPlan`, which now decides between the folder on disk and
+    /// the hub, and keeps the repair by falling back to the hub when a local
+    /// load actually fails.
     ///
     /// The percentage is real but **file-count weighted**, not byte weighted:
     /// `HubApi.snapshot` gives every file in the repo one unit of a `Progress`
@@ -71,21 +78,46 @@ public actor WhisperKitTranscriber: Transcriber {
         // has come back over the network, and calling a warm start's
         // etag check "downloading" for those seconds would be a lie the pill
         // then has to take back.
-        let present = WhisperModelStore.isPresent(model)
-        onPhase(present ? .loading : .downloading(percent: nil))
-        if !present {
+        let source = WhisperWarmupPlan.source(
+            present: WhisperModelStore.isPresent(model),
+            directory: WhisperModelStore.directory(for: model))
+        // The repair, when it is needed: a folder that passed `isPresent` but
+        // did not load is the truncated download the hub's etag check used to
+        // fix pre-emptively on every launch — see `WhisperWarmupPlan`. `attempt`
+        // allows exactly one fallback, so this cannot loop.
+        let id = model.id
+        pipeline = try await WhisperWarmupPlan.attempt(from: source, onRepair: { _ in
+            FileHandle.standardError.write(Data(
+                "\(id) did not load from disk; re-checking the download...\n".utf8))
+        }) { source in
+            try await load(from: source, variant: whisperKitID, onPhase: onPhase)
+        }
+        FileHandle.standardError.write(Data("✓ \(model.id) ready\n".utf8))
+    }
+
+    /// Resolves a `ModelSource` to a folder and builds the pipeline from it.
+    private func load(
+        from source: ModelSource, variant: String,
+        onPhase: @escaping @Sendable (TranscriberWarmup) -> Void
+    ) async throws -> WhisperKit {
+        let folder: URL
+        switch source {
+        case .local(let directory):
+            onPhase(.loading)
+            folder = directory
+        case .hub:
+            onPhase(.downloading(percent: nil))
             FileHandle.standardError.write(Data(
                 ("downloading \(model.id) "
                     + "(\(ModelSize.label(megabytes: model.sizeMB)), one time)...\n").utf8))
+            folder = try await Self.downloadModel(variant: variant, onPhase: onPhase)
+            onPhase(.loading)
         }
-        let folder = try await Self.downloadModel(variant: whisperKitID, onPhase: onPhase)
-        onPhase(.loading)
         FileHandle.standardError.write(Data("loading \(model.id)...\n".utf8))
-        let config = WhisperKitConfig(model: whisperKitID, modelFolder: folder.path,
+        let config = WhisperKitConfig(model: variant, modelFolder: folder.path,
                                       verbose: false, prewarm: true, load: true,
                                       download: false)
-        pipeline = try await WhisperKit(config)
-        FileHandle.standardError.write(Data("✓ \(model.id) ready\n".utf8))
+        return try await WhisperKit(config)
     }
 
     /// The download, with its progress stream reduced to whole percents.
