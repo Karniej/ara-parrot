@@ -926,10 +926,22 @@ struct Models: ParsableCommand {
             let sem = DispatchSemaphore(value: 0)
             var capturedError: Error?
             Task.detached {
-                do { try await t.warmUp() } catch { capturedError = error }
+                do {
+                    // The same percentage the overlay shows during a daemon
+                    // warm-up, on the terminal that asked for the download —
+                    // `download-formatter`'s line, for the other model kind.
+                    try await t.warmUp { phase in
+                        guard case .downloading(let percent?) = phase else { return }
+                        FileHandle.standardError.write(Data(
+                            String(format: "\r  %3d%%", percent).utf8))
+                    }
+                } catch {
+                    capturedError = error
+                }
                 sem.signal()
             }
             sem.wait()
+            FileHandle.standardError.write(Data("\r".utf8))
             if let e = capturedError { throw e }
         }
     }

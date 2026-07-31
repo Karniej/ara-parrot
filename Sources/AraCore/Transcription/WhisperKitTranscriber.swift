@@ -33,15 +33,82 @@ public actor WhisperKitTranscriber: Transcriber {
     /// Loads the model into memory; downloads first if not already on disk.
     /// Call once at startup so the first hotkey press isn't blocked on model
     /// download/load.
-    public func warmUp() async throws {
+    ///
+    /// ## Why the download is performed here rather than by `WhisperKit`
+    ///
+    /// `WhisperKit.init` already does exactly this: with no `modelFolder` and
+    /// `download: true` (the default), `setupModels` calls
+    /// `WhisperKit.download(variant:…)` itself — and passes no
+    /// `progressCallback`, so a 1.5 GB first run reports nothing for over a
+    /// minute. Calling it ourselves and handing the resulting folder straight
+    /// back through `modelFolder` is the *same* call with the callback filled
+    /// in: same repo, same variant string, same hub cache, same network
+    /// behaviour on a warm start (the etag check that repairs a truncated
+    /// download still runs). `download: false` on the config then only says
+    /// "the folder is already decided".
+    ///
+    /// The percentage is real but **file-count weighted**, not byte weighted:
+    /// `HubApi.snapshot` gives every file in the repo one unit of a `Progress`
+    /// regardless of size, so a variant whose bytes live in three weight files
+    /// among twenty advances in lumps. It is the only measure the downloader
+    /// exposes — `getFilenames` returns names, and the per-file handler
+    /// reports a fraction, never a byte count — and it is the same one
+    /// `ara models download-formatter` has always printed.
+    ///
+    /// - Parameter onPhase: what the warm-up is doing, for the overlay. Called
+    ///   from arbitrary threads (the download's callback runs on a
+    ///   `URLSession` thread) and already coalesced to one report per whole
+    ///   percent — the caller's job is only to hop.
+    public func warmUp(
+        onPhase: @escaping @Sendable (TranscriberWarmup) -> Void = { _ in }
+    ) async throws {
         if pipeline != nil { return }
         guard let whisperKitID = model.whisperKitID else {
             throw TranscriberError.missingEngineID
         }
+        // Which of the two waits this is going to be, before either starts:
+        // the download's own first report cannot arrive until the file listing
+        // has come back over the network, and calling a warm start's
+        // etag check "downloading" for those seconds would be a lie the pill
+        // then has to take back.
+        let present = WhisperModelStore.isPresent(model)
+        onPhase(present ? .loading : .downloading(percent: nil))
+        if !present {
+            FileHandle.standardError.write(Data(
+                ("downloading \(model.id) "
+                    + "(\(ModelSize.label(megabytes: model.sizeMB)), one time)...\n").utf8))
+        }
+        let folder = try await Self.downloadModel(variant: whisperKitID, onPhase: onPhase)
+        onPhase(.loading)
         FileHandle.standardError.write(Data("loading \(model.id)...\n".utf8))
-        let config = WhisperKitConfig(model: whisperKitID, verbose: false, prewarm: true, load: true)
+        let config = WhisperKitConfig(model: whisperKitID, modelFolder: folder.path,
+                                      verbose: false, prewarm: true, load: true,
+                                      download: false)
         pipeline = try await WhisperKit(config)
         FileHandle.standardError.write(Data("✓ \(model.id) ready\n".utf8))
+    }
+
+    /// The download, with its progress stream reduced to whole percents.
+    ///
+    /// `static` deliberately: the progress callback is invoked on a foreign
+    /// thread, and building it inside an actor-isolated method would make it
+    /// an actor-isolated closure being called from off the actor. Nothing here
+    /// touches actor state, so nothing needs to be.
+    private static func downloadModel(
+        variant: String, onPhase: @escaping @Sendable (TranscriberWarmup) -> Void
+    ) async throws -> URL {
+        let coalescer = ProgressCoalescer()
+        return try await WhisperKit.download(variant: variant) { progress in
+            guard let percent = coalescer.step(progress.fractionCompleted),
+                  // 100% is not a state worth showing: it means the download
+                  // is over, and `.loading` follows within the millisecond.
+                  // Suppressing it is also what keeps a fully cached start —
+                  // where the only callback is the terminal one — from
+                  // flashing "downloading… 100%" over its "loading…".
+                  percent < 100
+            else { return }
+            onPhase(.downloading(percent: percent))
+        }
     }
 
     /// Applies a new language setting from the Language submenu. Takes effect
@@ -294,4 +361,18 @@ public actor WhisperKitTranscriber: Transcriber {
 enum TranscriberError: Error {
     case missingEngineID
     case notLoaded
+}
+
+/// What `WhisperKitTranscriber.warmUp` is doing, for a caller with a screen.
+///
+/// Two phases and no third, because they are the two waits: a first run
+/// fetches 1.5 GB over the network, and *every* run then hands the weights to
+/// Core ML, which specialises and prewarms them. Nothing after that is worth
+/// reporting — `warmUp` returning is the report.
+public enum TranscriberWarmup: Equatable, Sendable {
+    /// `nil` until the first percentage is known, which is not until the hub
+    /// has answered with the file listing. See `warmUp` for why the percentage
+    /// is file-count weighted rather than byte weighted.
+    case downloading(percent: Int?)
+    case loading
 }
