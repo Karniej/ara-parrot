@@ -365,6 +365,7 @@ effect:
 |---|---|---|
 | **Microphone** | pick an input device, or **System default**; saved to `microphone`. Shows `preferred mic disconnected — using <device>` or `no microphone connected` when either is true | next utterance |
 | **Cleanup** | editing intensity `none`/`light`/`medium`/`high`; saved to `cleanup` | on restart |
+| **Language** | **Automatic**, or tick the languages you dictate in; saved to `language`. Ticking one language pins it — one decoder pass, nothing to misdetect. Ticking two or more monitors that set. On an English-only model every row is dead and the caption says which models are not | next utterance |
 | **Mode** | **Auto (per app)** or a pinned mode; deliberately *never* saved — it is a session override, and the `mode` key stays your startup default | next utterance |
 | **Model** | pick a transcription model, shown with its size; saved to `model`; a model not on disk is downloaded by the next launch's warm-up | on restart |
 | **Model → formatting-model line** | reads `Formatting model: ✓ downloaded`, or offers `Download formatting model… (900 MB, applies on restart)`, which opens an alert naming `ara models download-formatter` with a **Copy command** button. Nothing is ever fetched in-process | on restart |
@@ -379,6 +380,9 @@ effect:
 Every submenu whose pick is not immediate states its timing in a caption
 underneath, so the menu never claims a restart-bound pick changed the running
 session. Microphone and Mode need no caption, because they apply at once.
+Language has one anyway — it is the only submenu that both applies to the next
+utterance *and* persists, and a caption that said "on restart" alongside the
+Model and Engine ones would be a lie in the other direction.
 
 A pick that could not be saved — an unwritable config file, or one whose top
 level is not a JSON object — keeps the old checkmark and warns on stderr. The
@@ -434,6 +438,7 @@ is the normal case and says nothing.
 {"engine": "mlx", "cleanup": "medium", "mode": "default",
  "hotkey": "right-command", "model": "whisper-base.en",
  "inject": "auto", "pasteRestoreMs": 300, "timeoutMs": 2500,
+ "language": ["en", "pl"],
  "microphone": "AppleUSBAudioEngine:Blue:Yeti:123:1"}
 ```
 
@@ -448,10 +453,11 @@ is the normal case and says nothing.
 | `pasteRestoreMs` | int | `300` | how long the target app gets to service the ⌘V before your pasteboard is restored | clamped to 50–5000 with a warning; a non-int discards the whole file |
 | `timeoutMs` | int | `2500` | deadline **per formatter**, not a total budget — under `cloud` a hung cloud then a hung MLX costs two of these before the rules floor runs | clamped up to 50 with a warning; a non-int discards the whole file |
 | `microphone` | Core Audio device UID | absent — follow the system default | pins an input device. The menu writes this; there is no reason to type one by hand | warns, uses the default input; the rest of the file survives |
+| `language` | `"auto"`, one code (`"pl"`), or a list (`["en","pl"]` or `"en,pl"`) | `"auto"` | which language(s) dictation is transcribed in — see [Languages](#languages) | warns, naming the bad code, and detects automatically; the rest of the file survives |
 | `cloud` | object | absent — no cloud formatter is built at all | `provider` (default `"anthropic"`), `model` (default `"claude-opus-5"`), `keychainAccount` (default `"ara-cloud"`). A `provider` other than `anthropic` disables the formatter rather than sending that vendor's key here | a wrongly-typed sub-key discards the whole file |
 
-**"Discards the whole file" is the important asymmetry.** Two keys —
-`cleanup` and `microphone` — are decoded defensively and fail alone. Every
+**"Discards the whole file" is the important asymmetry.** Three keys —
+`cleanup`, `language` and `microphone` — are decoded defensively and fail alone. Every
 other key fails the whole decode, so a single typo like `{"engine": "clod"}`
 means *no* key in your file takes effect, including a perfectly good `cloud`
 section. That is loud, not silent: it prints one line naming the file, the key,
@@ -538,6 +544,51 @@ remains, the pill reads `no microphone`, the menu's state line says the same,
 and everything captured so far is kept — plugging a mic in before you release
 the key resumes the *same* utterance, and releasing transcribes what was
 captured up to the loss.
+
+## Languages
+
+The default model, `whisper-base.en`, only speaks English — that is what the
+`.en` in its name means. Dictating another language needs a multilingual model
+(`ara models list`; `whisper-large-v3-turbo` is the one on offer, 1.6 GB), and
+then the `language` key or the menu bar item → **Language**.
+
+Three settings, in increasing order of cost:
+
+- **One language** — `"language": "pl"`, or tick exactly one in the menu. The
+  decoder is told which language up front: one pass, and a two-word utterance
+  cannot be misheard as another language. Pick this if you dictate in one
+  language. It is faster *and* more accurate than detection.
+- **Several languages** — `"language": ["en", "pl"]`, or tick two or more.
+  Whisper detects, but its answer is confined to the languages you listed, and
+  a marginal call goes to the language your **previous** utterance was in — so
+  a session does not flap between two languages on the strength of a short
+  "tak, jasne". When the detection disagrees with your last utterance, Ara
+  transcribes a second time in the previous language and compares the two by
+  the decoder's own mean log-probability — a heuristic, and one whose
+  calibration across languages is unverified; see
+  [docs/KNOWN-ISSUES.md](docs/KNOWN-ISSUES.md). What is guaranteed is the
+  floor: a second pass can change which language you get, never turn a
+  transcribed utterance into an empty one. That second pass is the cost:
+  roughly double the transcription phase — single-sample measurements on an
+  M-series Mac with `whisper-large-v3-turbo` put six seconds of speech at
+  ~0.85 s pinned and ~1.8 s when the second pass runs, but run-to-run
+  variance on the same clip was wide enough that these are orders of
+  magnitude, not benchmarks.
+- **Automatic** — `"language": "auto"`, the default, and what an absent key
+  means. Whisper detects freely and whatever it says goes. Right if you dictate
+  in languages you cannot enumerate; otherwise one of the above is better.
+
+On an English-only model all of this is inert: there is no language to detect
+and no language token to set, so the setting changes nothing, every row in the
+submenu is disabled, and a non-English `language` gets one `config:` line at
+startup saying it cannot work and which models can.
+
+The menu offers fourteen common languages. Any of Whisper's 99 codes works if
+you write it into the config by hand; an unknown one warns at startup, naming
+the code, and Ara detects automatically instead.
+
+The language a given utterance was transcribed in is logged to stderr —
+`language: pl · detected` — along with how it was decided.
 
 ## Dictionary
 

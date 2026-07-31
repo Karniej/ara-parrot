@@ -11,6 +11,7 @@ public final class MenuBarController {
     private let stateLabel: NSMenuItem
     private let microphoneItem: NSMenuItem
     private let cleanupItem: NSMenuItem
+    private let languageItem: NSMenuItem
     private let modeItem: NSMenuItem
     private let modelItem: NSMenuItem
     private let hotkeyItem: NSMenuItem
@@ -37,6 +38,12 @@ public final class MenuBarController {
     /// caption says so; see `CleanupMenuModel`. Invoked on the main thread
     /// by AppKit.
     public var onCleanupPicked: ((CleanupIntensity) -> Void)?
+
+    /// The user clicked a row in the Language submenu. The row carries the
+    /// whole resulting setting — see `LanguageMenuModel.Item.picked` — so this
+    /// is the new setting, not a toggle to be interpreted. Applies to the next
+    /// utterance *and* persists. Invoked on the main thread by AppKit.
+    public var onLanguagePicked: ((LanguageSetting) -> Void)?
 
     /// The user picked "Edit dictionary…": open the dictionary file in
     /// whatever edits JSON on this machine. The file is the editor and the
@@ -117,6 +124,12 @@ public final class MenuBarController {
         cleanupSubmenu.autoenablesItems = false
         cleanupItem.submenu = cleanupSubmenu
         menu.addItem(cleanupItem)
+
+        languageItem = NSMenuItem(title: "Language", action: nil, keyEquivalent: "")
+        let languageSubmenu = NSMenu()
+        languageSubmenu.autoenablesItems = false
+        languageItem.submenu = languageSubmenu
+        menu.addItem(languageItem)
 
         modeItem = NSMenuItem(title: "Mode", action: nil, keyEquivalent: "")
         let modeSubmenu = NSMenu()
@@ -301,6 +314,40 @@ public final class MenuBarController {
         submenu.addItem(caption)
     }
 
+    /// Rebuilds the Language submenu from a model — the established pattern,
+    /// with the Microphone submenu's status line: the cost line, the rows,
+    /// the checks, what a click means, and the caption all arrive decided by
+    /// `LanguageMenuModel.compute`, where they are unit-tested.
+    public func setLanguageMenu(_ model: LanguageMenuModel) {
+        guard let submenu = languageItem.submenu else { return }
+        submenu.removeAllItems()
+        if let status = model.status {
+            let line = NSMenuItem(title: status, action: nil, keyEquivalent: "")
+            line.isEnabled = false
+            submenu.addItem(line)
+            submenu.addItem(.separator())
+        }
+        for item in model.items {
+            let row = NSMenuItem(
+                title: item.title,
+                action: #selector(languageClicked(_:)),
+                keyEquivalent: "")
+            row.target = self
+            row.isEnabled = item.enabled
+            row.state = item.checked ? .on : .off
+            row.representedObject = item.picked.rawValue
+            submenu.addItem(row)
+            // The Automatic row is a different kind of answer from the
+            // language rows, not another language.
+            if item.code == nil { submenu.addItem(.separator()) }
+        }
+        submenu.addItem(.separator())
+        let caption = NSMenuItem(title: model.caption, action: nil,
+                                 keyEquivalent: "")
+        caption.isEnabled = false
+        submenu.addItem(caption)
+    }
+
     /// Rebuilds the Mode submenu from a model, the established pattern: the
     /// Auto row, titles, the check, and the "applies to the next utterance"
     /// caption all arrive decided by `ModeMenuModel.compute`, where they are
@@ -423,6 +470,13 @@ public final class MenuBarController {
               let intensity = CleanupIntensity(rawValue: raw)
         else { return }
         onCleanupPicked?(intensity)
+    }
+
+    @objc private func languageClicked(_ sender: NSMenuItem) {
+        guard let raw = sender.representedObject as? String,
+              let setting = LanguageSetting(rawValue: raw)
+        else { return }
+        onLanguagePicked?(setting)
     }
 
     @objc private func modeClicked(_ sender: NSMenuItem) {

@@ -104,10 +104,28 @@ public struct Config: Codable, Sendable {
     /// the valid spellings.
     public var cleanup: CleanupIntensity = .medium
 
+    /// Which language, or languages, dictation is transcribed in — see
+    /// `LanguageSetting`. `automatic` when the key is absent, which is
+    /// today's behaviour for an English-only model (there is nothing to
+    /// detect) and the *fix* for a multilingual one: someone who chose a
+    /// 1.6 GB multilingual model chose it to speak more than one language,
+    /// and pinning them silently to English is the bug.
+    ///
+    /// Decoded with the `cleanup` guarantee, not the `engine` one: a typo in
+    /// a language code must not discard the whole file — losing a valid
+    /// `cloud` section over `"pll"` would turn a spelling mistake into an
+    /// engine downgrade. The warning in `load` names the valid shapes.
+    public var language: LanguageSetting = .automatic
+
     /// Set during decoding when `cleanup` was present but not one of its four
     /// spellings; `load` turns it into the warning, exactly as
     /// `microphoneProblem` below.
     var cleanupProblem: String?
+
+    /// Set during decoding when `language` was present but not a shape
+    /// `LanguageSetting` accepts; `load` turns it into the warning. Same
+    /// contract as `cleanupProblem`: remembered, never rethrown.
+    var languageProblem: String?
 
     /// Set during decoding when `microphone` was present but not a string;
     /// `load` turns it into the warning. Deferred rather than printed in
@@ -196,6 +214,11 @@ public struct Config: Codable, Sendable {
             warn("ignoring cleanup in \(target.path): \(problem); valid values are "
                  + "\(CleanupIntensity.validNames) — using medium")
             config.cleanupProblem = nil
+        }
+        if let problem = config.languageProblem {
+            warn("ignoring language in \(target.path): \(problem); valid values are "
+                 + "\(LanguageSetting.validNames) — detecting automatically")
+            config.languageProblem = nil
         }
         if config.timeoutMs < minimumTimeoutMs {
             warn("timeoutMs \(config.timeoutMs) in \(target.path) is below the "
@@ -291,11 +314,35 @@ public struct Config: Codable, Sendable {
         try rewriteOneKey("engine", to: engine.rawValue, at: url)
     }
 
+    /// Sets the `language` key, with the guarantees above — the same rewrite.
+    /// Takes the enum rather than a string so a menu pick cannot write a
+    /// spelling `Config.load` would warn about and ignore.
+    ///
+    /// A single monitored language is written as a plain string (`"pl"`) and
+    /// a set as an array (`["en","pl"]`), which is how a person writes them
+    /// by hand — the one place `rewriteOneKey` writes something other than a
+    /// string, and the reason it takes `Any?`.
+    public static func persistLanguage(_ setting: LanguageSetting,
+                                       at url: URL? = nil) throws {
+        let value: Any
+        switch setting {
+        case .automatic: value = LanguageSetting.automaticName
+        case .monitored(let codes) where codes.count == 1: value = codes[0]
+        case .monitored(let codes): value = codes
+        }
+        try rewriteOneKey("language", to: value, at: url)
+    }
+
     /// The shared mechanics of the persists above: read back as generic
     /// JSON, change one key, rewrite. `nil` removes the key — and a missing
     /// file stays missing then, because clearing a preference that was never
     /// written needs no file.
-    private static func rewriteOneKey(_ key: String, to value: String?,
+    ///
+    /// `Any?` rather than `String?` only because `persistLanguage` writes an
+    /// array; every other caller passes a string. The value must be something
+    /// `JSONSerialization` can encode, which the callers guarantee by taking
+    /// enums rather than free strings.
+    private static func rewriteOneKey(_ key: String, to value: Any?,
                                       at url: URL?) throws {
         let target = url ?? defaultURL
 
@@ -358,7 +405,8 @@ public struct Config: Codable, Sendable {
     }
 
     private enum CodingKeys: String, CodingKey {
-        case engine, timeoutMs, mode, hotkey, model, cloud, microphone, inject, pasteRestoreMs, cleanup
+        case engine, timeoutMs, mode, hotkey, model, cloud, microphone, inject, pasteRestoreMs,
+             cleanup, language
     }
 
     public init(from decoder: Decoder) throws {
@@ -385,6 +433,14 @@ public struct Config: Codable, Sendable {
             // See `cleanupProblem`: defaulted, remembered, never rethrown.
             cleanup = .medium
             cleanupProblem = Config.describe(error)
+        }
+        do {
+            language = try c.decodeIfPresent(LanguageSetting.self, forKey: .language)
+                ?? .automatic
+        } catch {
+            // See `languageProblem`: defaulted, remembered, never rethrown.
+            language = .automatic
+            languageProblem = Config.describe(error)
         }
     }
 }

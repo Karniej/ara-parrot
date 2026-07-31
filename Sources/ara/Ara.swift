@@ -132,7 +132,17 @@ struct Run: ParsableCommand {
             throw ExitCode(1)
         }
 
-        let transcriber = WhisperKitTranscriber(model: chosenModel)
+        // The language plan is resolved once here so the one thing it can
+        // report — a non-English language asked of an English-only model —
+        // is said at startup rather than discovered as English transcripts.
+        // The transcriber re-resolves it per utterance, because the Language
+        // submenu can change the setting live.
+        if let warning = LanguagePlan.resolve(model: chosenModel,
+                                              setting: config.language).warning {
+            FileHandle.standardError.write(Data("config: \(warning)\n".utf8))
+        }
+        let transcriber = WhisperKitTranscriber(model: chosenModel,
+                                                language: config.language)
         // The formatting model is loaded at startup too — before the hotkey
         // arms, and never on the dictation path: a warm load is ~1s and a cold
         // one ~38s against a 2500ms per-engine deadline, so a lazy first load
@@ -318,6 +328,33 @@ struct Run: ParsableCommand {
                         ?? "\(type(of: error))"
                     FileHandle.standardError.write(Data(
                         "config: cleanup choice not saved (\(reason)); the saved setting is unchanged\n"
+                            .utf8))
+                }
+            }
+
+            // The Language submenu — the *other* live pick, and the only one
+            // that both applies live and persists. The transcriber builds its
+            // `DecodingOptions` inside `transcribe`, so `setLanguage` lands
+            // between utterances and the next dictation uses it; the config
+            // write only decides what the next launch starts with. Ordered
+            // like the microphone for the same reason: the live apply cannot
+            // fail, so it happens first and holds until quit even when the
+            // file cannot be written.
+            let repaintLanguageMenu: @MainActor (LanguageSetting) -> Void = { current in
+                menuBar.setLanguageMenu(LanguageMenuModel.compute(
+                    model: chosenModel, current: current))
+            }
+            repaintLanguageMenu(config.language)
+            menuBar.onLanguagePicked = { setting in
+                Task { await transcriber.setLanguage(setting) }
+                repaintLanguageMenu(setting)
+                do {
+                    try Config.persistLanguage(setting)
+                } catch {
+                    let reason = (error as? Config.PersistError)?.description
+                        ?? "\(type(of: error))"
+                    FileHandle.standardError.write(Data(
+                        "config: language choice not saved (\(reason)); it applies until quit\n"
                             .utf8))
                 }
             }
