@@ -49,14 +49,23 @@ struct ModelMenuModelTests {
 
     /// The transcriber is built around one model at startup, and a pick that
     /// names a model not on disk is fetched by the next launch's warm-up —
-    /// both halves belong in the caption.
-    @Test("the caption says a pick applies on restart and may download")
+    /// both halves belong in the caption. So does the third cost, which is the
+    /// one users cannot see coming: macOS compiles each model for the Neural
+    /// Engine, measured at 11 s for `base.en` and 141–187 s for
+    /// `large-v3-turbo`, and a user who quits partway keeps none of it. The
+    /// row is the only place that lands before the decision is made.
+    @Test("the caption names all three costs of a pick")
     func restartCaption() {
         let model = ModelMenuModel.compute(
             models: ModelRegistry.shared, currentID: "whisper-base.en",
             downloaded: { _ in true }, formatterDownloaded: true)
-        #expect(model.caption
-                == "applies on restart — downloads if not on disk")
+        #expect(model.caption.contains("applies on restart"))
+        #expect(model.caption.contains("downloads if not on disk"))
+        #expect(model.caption.contains("Neural Engine"))
+        // The wording the whole codebase agreed on: the compile recurs with
+        // each macOS build, so "one time" would be a promise it cannot keep.
+        #expect(model.caption.contains("once per macOS version"))
+        #expect(!model.caption.contains("one time"))
     }
 
     @Test("a downloaded formatting model is stated, not offered")

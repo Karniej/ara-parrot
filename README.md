@@ -241,19 +241,37 @@ means granting again. Run from `Ara.app` and they attach to the bundle
 identifier `com.silpho.ara` instead. `ara setup` does not download anything;
 models are `ara models download` and `ara models download-formatter`.
 
-**Warm-up.** The menu bar bird appears immediately and its first line reads
-`warming up models…`. The hotkey is **not armed** during this window — holding
-it does nothing, by design.
+**The one-time wait nobody warns you about.** The first time a given
+transcription model runs, macOS compiles it for this Mac's Neural Engine.
+Measured on an M3 Pro: **11 seconds for `whisper-base.en`, and 141–187 seconds
+for `whisper-large-v3-turbo`.** Two things make that worse than it sounds, and
+both are why this section exists:
 
-Two loads run concurrently — Whisper's ANE prewarm and the MLX formatting
-model — so startup costs roughly the larger of the two rather than their sum.
-**Expect about 6–10 seconds on a warm start**, dominated by Whisper. Measured
-on 2026-07-30, M3 Pro, release build: two full startups reached `listening` in
-9.51 s and 5.91 s, with Whisper's phase 4.0–7.7 s and MLX's load-plus-priming
-1.0–5.2 s across five runs. That MLX spread is contention, not noise: the phase
-takes about a second when it runs alone and several seconds when it overlaps
-Whisper's prewarm, which is the trade concurrency buys — a slower MLX phase for
-a faster total. A genuinely first run is download-sized instead.
+- **The compile is all-or-nothing.** Quitting at two minutes into a
+  two-and-a-half-minute compile preserves nothing. Start again and you pay the
+  full cost again. A user who assumes the app has hung — a reasonable
+  assumption — can repeat this indefinitely and never once get a fast launch.
+- **It is cached per macOS version, not forever.** The cache key is the app's
+  signing identity, the model, *and* the macOS build. Every macOS update buys
+  you one more compile.
+
+Ara says so while it happens: a load still running after 20 seconds names
+itself in the pill, the menu, and the terminal, and tells you that quitting
+starts it over. **Let it finish once and every later launch is about a
+second.** If you would rather not spend the three minutes, `whisper-base.en`
+is the default for this reason — it pays 11 seconds and is good enough for
+most English dictation.
+
+**Warm-up, once that compile is cached.** The menu bar bird appears
+immediately and its first line reads `warming up models…`. Dictation is held
+until the *transcription* model is loaded; the formatting model finishes in
+the background and the rules floor covers anything dictated before it lands.
+
+**A warm start is about a second** — measured 0.95–1.04 s for
+`whisper-large-v3-turbo`, down from 7.2–7.6 s before the load path was
+reworked on 2026-07-31. A genuinely first run is download-sized on top of
+that: 145 MB for `base.en`, 1.6 GB for `large-v3-turbo`, shown as a
+percentage in the pill while it fetches.
 
 When `listening on <key> hold` prints, the state line flips to
 `idle · hold <key> to dictate` and the key is live.

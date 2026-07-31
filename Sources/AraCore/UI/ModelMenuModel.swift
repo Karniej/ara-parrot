@@ -64,6 +64,12 @@ public struct ModelMenuModel: Equatable, Sendable {
                     title: "Download formatting model… "
                         + "(\(MLXModel.sizeMB) MB, applies on restart)",
                     offersDownload: true),
-            caption: "applies on restart — downloads if not on disk")
+            // The Neural Engine compile is the cost users do not expect and
+            // cannot see coming: minutes for the large models, once per macOS
+            // version, and lost entirely if they quit partway. Saying it on
+            // the row is the only place it lands *before* the decision.
+            caption: "applies on restart — downloads if not on disk, then "
+                + "macOS prepares it for the Neural Engine once per macOS "
+                + "version (seconds for base, minutes for large)")
     }
 }
