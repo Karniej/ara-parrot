@@ -219,13 +219,18 @@ public final class MenuBarController {
         stateLabel.title = recording ? "● recording" : idleTitle
     }
 
-    /// The daemon is loading models and the hotkey is not armed yet: holding
-    /// the key does nothing, and this line is why. Set before the warm-up
-    /// starts; replaced by `setReady()` when the hotkey loop arms. Nothing
-    /// can race it in between — every other state begins with a hotkey press,
-    /// and `clearNoMicrophone` only ever replaces its own message.
-    public func setWarmingUp() {
-        stateLabel.title = "warming up models…"
+    /// The daemon is loading models and cannot dictate yet: holding the key
+    /// shows status instead of recording, and this line is why. Set before the
+    /// warm-up starts and re-set on every phase change; replaced by
+    /// `setReady()` when the hotkey loop arms. Nothing can race it in between
+    /// — every other state begins with a hotkey press that the warm-up gate
+    /// turns away, and `clearNoMicrophone` only ever replaces its own message.
+    ///
+    /// The message is the same sentence the overlay pill shows
+    /// (`WarmupStatus.message`), so a user who opens the menu during a long
+    /// download and a user who presses the hotkey are told the same thing.
+    public func setWarmingUp(_ message: String) {
+        stateLabel.title = message
     }
 
     /// Warm-up finished and the hotkey loop is armed: show the idle line.

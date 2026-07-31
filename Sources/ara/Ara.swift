@@ -207,14 +207,34 @@ struct Run: ParsableCommand {
         let hotkeyLabel = chosenHotkey.label
         let startingMode = mode ?? config.mode
         // Created before the warm-up starts, so the first thing a user sees is
-        // a menu bar item that says what the daemon is doing. Until the models
-        // are warm the hotkey is not armed and holding it does nothing; the
-        // state line is the explanation.
+        // a menu bar item that says what the daemon is doing.
         let menuBar = MainActor.assumeIsolated {
-            let controller = MenuBarController(modelID: chosenModel.id, hotkeyLabel: hotkeyLabel,
-                                               modeID: startingMode)
-            controller.setWarmingUp()
-            return controller
+            MenuBarController(modelID: chosenModel.id, hotkeyLabel: hotkeyLabel,
+                              modeID: startingMode)
+        }
+
+        // Owns the state line and the overlay for as long as the daemon cannot
+        // dictate. The hotkey arms immediately now — a press during warm-up is
+        // answered with this status rather than with silence — so something has
+        // to hold the answer, and it has to be main-actor state: the warm-up
+        // task hops in to write it, and the press handler (which AppKit already
+        // delivers on the main queue) reads it.
+        //
+        // The first phase is decided from disk rather than waited for. The
+        // download's own first report cannot arrive until the hub has answered
+        // with a file listing, and calling a warm start's etag check
+        // "downloading" for those seconds would be a claim the pill then has to
+        // take back.
+        let warmup = MainActor.assumeIsolated {
+            WarmupState(
+                status: WarmupStatus(
+                    modelID: chosenModel.id,
+                    transcriber: WhisperModelStore.isPresent(chosenModel)
+                        ? .loading : .downloading(percent: nil),
+                    formatter: warmsMLX ? .loading : .notLoading),
+                overlay: overlay,
+                menuBar: menuBar,
+                readyMessage: WarmupStatus.readyMessage(hotkeyLabel: hotkeyLabel))
         }
 
         // The dictionary itself is loaded per utterance — that is the entire
@@ -547,149 +567,182 @@ struct Run: ParsableCommand {
         sigint.resume()
         signal(SIGINT, SIG_IGN)
 
-        // Arms the hotkey and declares the daemon ready. Runs on the main
-        // actor only once the transcriber is warm — never before: dictating
-        // into a cold transcriber is the reason startup used to block, and
-        // that ordering is the part of the old design worth keeping.
-        let armHotkey: @MainActor () -> Void = {
-            do {
-                try monitor.start { event in
-                    switch event {
-                    case .pressed:
+        // The hotkey monitor starts here, before the warm-up rather than after
+        // it. Dictating into a cold transcriber is still impossible — the gate
+        // below turns a press away — but *silence* is not the way to say so:
+        // a first run on the large model spends over a minute downloading, and
+        // a user with their hands on the keyboard never sees the menu bar.
+        //
+        // Recording remains gated on `warmup.isWarming`, which is defined as
+        // "there is still something to say", so the check the press makes and
+        // the sentence the pill shows cannot disagree. `WarmupState.finish()`
+        // is the only thing that opens the gate, and only the warm-up task's
+        // completion calls it.
+        do {
+            try monitor.start { event in
+                switch event {
+                case .pressed:
+                    // The warm-up answer, and nothing else: no capture, no
+                    // recording sound, no menu state change beyond the line
+                    // the warm-up already owns.
+                    if MainActor.assumeIsolated({ warmup.showStatusIfWarming() }) {
+                        return
+                    }
+                    do {
+                        try capture.start()
+                        FileHandle.standardError.write(Data("● recording\n".utf8))
+                        MainActor.assumeIsolated {
+                            overlay?.show(.recording)
+                            menuBar.setRecording(true)
+                        }
+                    } catch {
+                        // A stderr line is invisible for a menu-bar daemon;
+                        // the spec's contract is an on-screen answer: an
+                        // error pill (self-hiding — there is no release-path
+                        // cleanup coming for a recording that never started)
+                        // and a menu state line that stops promising
+                        // dictation. The Microphone submenu already explains
+                        // itself: the store repainted it "no microphone
+                        // connected" when the last device left.
+                        FileHandle.standardError.write(Data("capture failed: \(error)\n".utf8))
+                        MainActor.assumeIsolated {
+                            overlay?.show(.error("no microphone"))
+                            menuBar.setNoMicrophone()
+                        }
+                    }
+                case .released:
+                    // The other half of the gate, and the reason it is a latch
+                    // rather than a second `isWarming` check: the warm-up can
+                    // finish while the key is still held, and a release that
+                    // then fell through would stop a capture that was never
+                    // started. The press that was turned away owns this
+                    // release; it takes the pill down and returns.
+                    if MainActor.assumeIsolated({ warmup.hideStatusIfShowing() }) {
+                        return
+                    }
+                    let samples = capture.stop()
+                    // Sampled here — on the main thread, where the AppKit read
+                    // is legal — and then carried by value into this utterance's
+                    // task. Not read later from a shared slot: formatting starts
+                    // seconds from now, and by then a user who has begun their
+                    // next utterance would have moved the answer on. The manual
+                    // mode override rides the same sample for the same reason:
+                    // a pick made while this utterance formats belongs to the
+                    // next one.
+                    let (frontmostBundleID, manualModeID): (String?, String?)
+                        = MainActor.assumeIsolated {
+                        let id = FrontmostApp.bundleID
+                        overlay?.show(.transcribing)
+                        menuBar.setTranscribing()
+                        return (id, manualMode.id)
+                    }
+                    let seconds = Double(samples.count) / AudioCapture.targetSampleRate
+                    let rms = computeRMS(samples)
+                    FileHandle.standardError.write(Data(
+                        String(format: "○ captured %.2fs · rms %.3f\n", seconds, rms).utf8
+                    ))
+                    if dumpWav, !samples.isEmpty {
+                        let path = "/tmp/ara-last.wav"
                         do {
-                            try capture.start()
-                            FileHandle.standardError.write(Data("● recording\n".utf8))
-                            MainActor.assumeIsolated {
-                                overlay?.show(.recording)
-                                menuBar.setRecording(true)
-                            }
+                            try WAVWriter.write(samples: samples, sampleRate: 16_000, to: path)
+                            FileHandle.standardError.write(Data("  wrote \(path)\n".utf8))
                         } catch {
-                            // A stderr line is invisible for a menu-bar daemon;
-                            // the spec's contract is an on-screen answer: an
-                            // error pill (self-hiding — there is no release-path
-                            // cleanup coming for a recording that never started)
-                            // and a menu state line that stops promising
-                            // dictation. The Microphone submenu already explains
-                            // itself: the store repainted it "no microphone
-                            // connected" when the last device left.
-                            FileHandle.standardError.write(Data("capture failed: \(error)\n".utf8))
-                            MainActor.assumeIsolated {
-                                overlay?.show(.error("no microphone"))
-                                menuBar.setNoMicrophone()
+                            FileHandle.standardError.write(Data("  wav write failed: \(error)\n".utf8))
+                        }
+                    }
+                    guard !samples.isEmpty else {
+                        MainActor.assumeIsolated {
+                            overlay?.hide()
+                            menuBar.setRecording(false)
+                        }
+                        return
+                    }
+                    Task {
+                        let started = Date()
+                        do {
+                            let text = try await transcriber.transcribe(samples)
+                            let transcribed = Date().timeIntervalSince(started)
+                            FileHandle.standardError.write(Data(
+                                (TranscriptLog.raw(seconds: transcribed, text: text,
+                                                   echoTranscript: echoTranscripts) + "\n").utf8
+                            ))
+                            // Never `try?`, and never a throwing call: `process`
+                            // returns a String and cannot fail, so a broken
+                            // formatter can only ever degrade to raw text.
+                            let cleaned = await session.process(
+                                text, override: modeOverride, manual: manualModeID,
+                                frontmostBundleID: frontmostBundleID)
+                            let total = Date().timeIntervalSince(started)
+                            if cleaned.isEmpty, !text.isEmpty {
+                                // An empty result for a non-empty transcript is
+                                // `process`'s report that the request was
+                                // withdrawn. Logged as its own thing: an `↦`
+                                // line with nothing after it would read as "the
+                                // formatter deleted your sentence".
+                                FileHandle.standardError.write(Data(
+                                    String(format: "⨯ %.2fs · cancelled; nothing injected\n",
+                                           total).utf8
+                                ))
+                            } else if !cleaned.isEmpty, cleaned != text {
+                                FileHandle.standardError.write(Data(
+                                    (TranscriptLog.cleaned(seconds: total, text: cleaned,
+                                                           echoTranscript: echoTranscripts) + "\n").utf8
+                                ))
                             }
-                        }
-                    case .released:
-                        let samples = capture.stop()
-                        // Sampled here — on the main thread, where the AppKit read
-                        // is legal — and then carried by value into this utterance's
-                        // task. Not read later from a shared slot: formatting starts
-                        // seconds from now, and by then a user who has begun their
-                        // next utterance would have moved the answer on. The manual
-                        // mode override rides the same sample for the same reason:
-                        // a pick made while this utterance formats belongs to the
-                        // next one.
-                        let (frontmostBundleID, manualModeID): (String?, String?)
-                            = MainActor.assumeIsolated {
-                            let id = FrontmostApp.bundleID
-                            overlay?.show(.transcribing)
-                            menuBar.setTranscribing()
-                            return (id, manualMode.id)
-                        }
-                        let seconds = Double(samples.count) / AudioCapture.targetSampleRate
-                        let rms = computeRMS(samples)
-                        FileHandle.standardError.write(Data(
-                            String(format: "○ captured %.2fs · rms %.3f\n", seconds, rms).utf8
-                        ))
-                        if dumpWav, !samples.isEmpty {
-                            let path = "/tmp/ara-last.wav"
-                            do {
-                                try WAVWriter.write(samples: samples, sampleRate: 16_000, to: path)
-                                FileHandle.standardError.write(Data("  wrote \(path)\n".utf8))
-                            } catch {
-                                FileHandle.standardError.write(Data("  wav write failed: \(error)\n".utf8))
-                            }
-                        }
-                        guard !samples.isEmpty else {
-                            MainActor.assumeIsolated {
+                            await MainActor.run {
+                                // The empty string is `process`'s "nothing to
+                                // type": an empty transcript, or a request that
+                                // was cancelled while it was being formatted.
+                                // Injecting a withdrawn request's text is the
+                                // failure the chain propagates cancellation to
+                                // prevent, so the guard is the point, not
+                                // tidiness — and it guards *both* delivery
+                                // paths (each also refuses "" on its own).
+                                if !cleaned.isEmpty {
+                                    // Method chosen from the same by-value
+                                    // bundle ID mode resolution used: the app
+                                    // the utterance was spoken into, not
+                                    // whatever is frontmost seconds later.
+                                    switch InjectionPolicy.method(
+                                        setting: injectionSetting,
+                                        frontmostBundleID: frontmostBundleID)
+                                    {
+                                    case .type: TextInjector.inject(cleaned)
+                                    case .paste: pasteInjector.inject(cleaned)
+                                    }
+                                }
                                 overlay?.hide()
                                 menuBar.setRecording(false)
                             }
-                            return
-                        }
-                        Task {
-                            let started = Date()
-                            do {
-                                let text = try await transcriber.transcribe(samples)
-                                let transcribed = Date().timeIntervalSince(started)
-                                FileHandle.standardError.write(Data(
-                                    (TranscriptLog.raw(seconds: transcribed, text: text,
-                                                       echoTranscript: echoTranscripts) + "\n").utf8
-                                ))
-                                // Never `try?`, and never a throwing call: `process`
-                                // returns a String and cannot fail, so a broken
-                                // formatter can only ever degrade to raw text.
-                                let cleaned = await session.process(
-                                    text, override: modeOverride, manual: manualModeID,
-                                    frontmostBundleID: frontmostBundleID)
-                                let total = Date().timeIntervalSince(started)
-                                if cleaned.isEmpty, !text.isEmpty {
-                                    // An empty result for a non-empty transcript is
-                                    // `process`'s report that the request was
-                                    // withdrawn. Logged as its own thing: an `↦`
-                                    // line with nothing after it would read as "the
-                                    // formatter deleted your sentence".
-                                    FileHandle.standardError.write(Data(
-                                        String(format: "⨯ %.2fs · cancelled; nothing injected\n",
-                                               total).utf8
-                                    ))
-                                } else if !cleaned.isEmpty, cleaned != text {
-                                    FileHandle.standardError.write(Data(
-                                        (TranscriptLog.cleaned(seconds: total, text: cleaned,
-                                                               echoTranscript: echoTranscripts) + "\n").utf8
-                                    ))
-                                }
-                                await MainActor.run {
-                                    // The empty string is `process`'s "nothing to
-                                    // type": an empty transcript, or a request that
-                                    // was cancelled while it was being formatted.
-                                    // Injecting a withdrawn request's text is the
-                                    // failure the chain propagates cancellation to
-                                    // prevent, so the guard is the point, not
-                                    // tidiness — and it guards *both* delivery
-                                    // paths (each also refuses "" on its own).
-                                    if !cleaned.isEmpty {
-                                        // Method chosen from the same by-value
-                                        // bundle ID mode resolution used: the app
-                                        // the utterance was spoken into, not
-                                        // whatever is frontmost seconds later.
-                                        switch InjectionPolicy.method(
-                                            setting: injectionSetting,
-                                            frontmostBundleID: frontmostBundleID)
-                                        {
-                                        case .type: TextInjector.inject(cleaned)
-                                        case .paste: pasteInjector.inject(cleaned)
-                                        }
-                                    }
-                                    overlay?.hide()
-                                    menuBar.setRecording(false)
-                                }
-                            } catch {
-                                FileHandle.standardError.write(Data("transcription failed: \(error)\n".utf8))
-                                await MainActor.run {
-                                    overlay?.hide()
-                                    menuBar.setRecording(false)
-                                }
+                        } catch {
+                            FileHandle.standardError.write(Data("transcription failed: \(error)\n".utf8))
+                            await MainActor.run {
+                                overlay?.hide()
+                                menuBar.setRecording(false)
                             }
                         }
                     }
                 }
-            } catch {
-                FileHandle.standardError.write(Data("failed to register hotkey tap: \(error)\n".utf8))
-                FileHandle.standardError.write(Data("run `ara setup` to configure permissions.\n".utf8))
-                // Not `ExitCode`: the run loop is already pumping, so there is
-                // no `throws` path left to ride out of `run()` on.
-                Darwin.exit(1)
             }
+        } catch {
+            FileHandle.standardError.write(Data("failed to register hotkey tap: \(error)\n".utf8))
+            FileHandle.standardError.write(Data("run `ara setup` to configure permissions.\n".utf8))
+            // `ExitCode` again, which the old ordering could not use: the tap
+            // is now registered before `app.run()` rather than from inside a
+            // pumping run loop, so there is a `throws` path to ride out on.
+            // The user-visible outcome — two stderr lines and status 1 — is
+            // unchanged, and it now happens in milliseconds rather than after
+            // a model download.
+            throw ExitCode(1)
+        }
+
+        // Opens the warm-up gate: from here a press records. Runs on the main
+        // actor only once the transcriber is warm — never before. Dictating
+        // into a cold transcriber is the reason startup used to block, and
+        // that ordering is the part of the old design worth keeping; only the
+        // *feedback* moved earlier, never the recording.
+        let declareReady: @MainActor () -> Void = {
+            warmup.finish()
             menuBar.setReady()
             FileHandle.standardError.write(Data(
                 "listening on \(chosenHotkey.label) hold · model: \(chosenModel.id) · ^C to quit\n".utf8
@@ -718,7 +771,23 @@ struct Run: ParsableCommand {
         // first, formatter warning second.
         Task.detached {
             async let transcriberResult: Error? = {
-                do { try await transcriber.warmUp(); return nil } catch { return error }
+                do {
+                    // Already coalesced to one report per whole percent by the
+                    // transcriber, so this is one hop per visible change and
+                    // not one per byte. The callback itself arrives on a
+                    // URLSession thread; the hop is the whole body.
+                    try await transcriber.warmUp { phase in
+                        Task { @MainActor in warmup.setTranscriber(phase) }
+                    }
+                    // The transcriber is warm *before* the gate opens, and
+                    // that gap is the point: the formatting model may still be
+                    // loading, and the pill should say so rather than keep
+                    // naming a model that is already in memory.
+                    await MainActor.run { warmup.setTranscriber(nil) }
+                    return nil
+                } catch {
+                    return error
+                }
             }()
             async let mlxResult: Error? = {
                 guard warmsMLX else { return nil }
@@ -731,8 +800,13 @@ struct Run: ParsableCommand {
                     FileHandle.standardError.write(Data(String(
                         format: "✓ %@ ready (%.1fs)\n",
                         MLXModel.id, Date().timeIntervalSince(started)).utf8))
+                    await MainActor.run { warmup.setFormatter(.ready) }
                     return nil
                 } catch {
+                    // Ready in the sense the pill cares about: there is
+                    // nothing left to wait for. The failure is reported below,
+                    // where the precedence between the two is decided.
+                    await MainActor.run { warmup.setFormatter(.ready) }
                     return error
                 }
             }()
@@ -760,7 +834,7 @@ struct Run: ParsableCommand {
                     FileHandle.standardError.write(Data(
                         "  dictation will use rule-based cleanup until then\n".utf8))
                 }
-                armHotkey()
+                declareReady()
             }
         }
 
@@ -784,6 +858,95 @@ struct Run: ParsableCommand {
 @MainActor
 private final class ManualMode {
     var id: String?
+}
+
+/// The warm-up's live state and everything on screen that reflects it.
+///
+/// Main-actor for `ManualMode`'s reason: its writers (the warm-up task, which
+/// hops in) and its reader (the hotkey's press handler, which AppKit already
+/// delivers on the main queue) both belong there. All the *rules* — which
+/// phase gets the line, what the line says, whether a press should record —
+/// live in `WarmupStatus`, where they are unit-tested; this class is the
+/// mutable slot around them plus two AppKit calls.
+///
+/// The gate it implements is deliberately one-way: `isWarming` opens only in
+/// `finish()`, which only the warm-up task's completion calls, and phase
+/// updates are ignored afterwards so an out-of-order hop from a `URLSession`
+/// thread cannot close it again behind a recording.
+@MainActor
+private final class WarmupState {
+    private var status: WarmupStatus
+    private let overlay: RecordingOverlay?
+    private let menuBar: MenuBarController
+    private let readyMessage: String
+    /// Whether the pill is currently showing warm-up status. Set by a press
+    /// the gate turned away and cleared by that press's release — so it is
+    /// also the latch that tells the release handler the press was never a
+    /// recording, which `isWarming` cannot: the warm-up may have finished
+    /// while the key was held.
+    private var showingStatus = false
+    /// One-way, for the reason in the type's doc.
+    private var transcriberSettled = false
+
+    init(status: WarmupStatus, overlay: RecordingOverlay?,
+         menuBar: MenuBarController, readyMessage: String) {
+        self.status = status
+        self.overlay = overlay
+        self.menuBar = menuBar
+        self.readyMessage = readyMessage
+        // The state line's first value. From here the warm-up owns it until
+        // `MenuBarController.setReady()`.
+        if let message = status.message { menuBar.setWarmingUp(message) }
+    }
+
+    /// A hotkey press. Answers `true` when it was consumed as a status
+    /// display — which is exactly when recording is not allowed yet.
+    func showStatusIfWarming() -> Bool {
+        guard let message = status.message else { return false }
+        showingStatus = true
+        overlay?.show(.warmingUp(message))
+        return true
+    }
+
+    /// The matching release. Answers `true` when it belonged to a press the
+    /// gate turned away, and so must not reach the capture.
+    func hideStatusIfShowing() -> Bool {
+        guard showingStatus else { return false }
+        showingStatus = false
+        overlay?.hide()
+        return true
+    }
+
+    /// `nil` means the transcriber is warm — see `WarmupStatus.transcriber`.
+    func setTranscriber(_ phase: TranscriberWarmup?) {
+        guard !transcriberSettled else { return }
+        if phase == nil { transcriberSettled = true }
+        status.transcriber = phase
+        repaint()
+    }
+
+    func setFormatter(_ phase: WarmupStatus.Formatter) {
+        status.formatter = phase
+        repaint()
+    }
+
+    /// The warm-up is over and a press records from here.
+    func finish() {
+        transcriberSettled = true
+        status.transcriber = nil
+        status.formatter = .ready
+        // Only if the user is watching: they are holding the key at the moment
+        // the wait ended, and the pill vanishing under their thumb would read
+        // as a crash while a stale "loading…" would be a lie. Their release
+        // takes it down through the ordinary path.
+        if showingStatus { overlay?.show(.warmingUp(readyMessage)) }
+    }
+
+    private func repaint() {
+        guard let message = status.message else { return }
+        menuBar.setWarmingUp(message)
+        if showingStatus { overlay?.show(.warmingUp(message)) }
+    }
 }
 
 /// Read-only in v1: the file is the editor (see "Edit dictionary…" in the

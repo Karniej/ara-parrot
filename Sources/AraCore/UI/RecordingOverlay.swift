@@ -9,6 +9,17 @@ public final class RecordingOverlay {
         case hidden
         case recording
         case transcribing
+        /// The daemon is not ready to dictate yet, and this is what it is
+        /// doing about it — "downloading whisper-large-v3-turbo… 45%". Shown
+        /// when the hotkey is pressed during warm-up, in place of the
+        /// recording the press cannot start; the sentences come from
+        /// `WarmupStatus`.
+        ///
+        /// Like `.recording` and unlike `.error`, this one is hidden by the
+        /// lifecycle that raised it — the key release — so it does not
+        /// self-hide. A user holding the key through a two-minute download
+        /// should keep seeing the number move.
+        case warmingUp(String)
         /// A short message in place of the waveform — "no microphone". Unlike
         /// the other states, which the daemon's lifecycle hides, this one has
         /// no "release the key" moment guaranteed to follow, so it hides
@@ -38,7 +49,17 @@ public final class RecordingOverlay {
             window.orderFrontRegardless()
             // Defer the state change so SwiftUI lays out in the .hidden style
             // first, then animates to the visible style on the next runloop tick.
-            DispatchQueue.main.async { [model] in
+            //
+            // Token-guarded, because the deferral opens a window in which a
+            // *newer* state can be applied directly (the panel is visible from
+            // `orderFrontRegardless` onwards, so the next `show` takes the
+            // other branch) and then be overwritten by this stale one. Rare
+            // before warm-up status existed — nothing repainted a pill twice
+            // in a runloop turn — and now reachable, since a download's
+            // percentage can tick while the pill is appearing.
+            let token = showToken
+            DispatchQueue.main.async { [weak self, model] in
+                guard let self, self.showToken == token else { return }
                 model.state = state
             }
         } else {
@@ -75,9 +96,13 @@ public final class RecordingOverlay {
         if window != nil { return }
         // Wider than the waveform pill needs: the capsule hugs its content
         // and the rest of the panel is clear and click-through, so the extra
-        // width is invisible — it only gives the error text room to render.
+        // width is invisible — it only gives the text states room to render.
+        // Sized for the longest of them, a warm-up line carrying a model id
+        // and a percentage ("downloading whisper-large-v3-turbo… 45%"); at
+        // 280 that one was clipped by the panel, because `fixedSize` refuses
+        // to wrap rather than shrinking to fit.
         let panel = NSPanel(
-            contentRect: NSRect(x: 0, y: 0, width: 280, height: 44),
+            contentRect: NSRect(x: 0, y: 0, width: 460, height: 44),
             styleMask: [.borderless, .nonactivatingPanel],
             backing: .buffered,
             defer: false
@@ -136,6 +161,11 @@ final class OverlayModel: ObservableObject {
     }
 }
 
+/// The waveform's blue, and by extension the pill's "this is working" colour.
+/// Shared so the warm-up line and the bars it replaces read as the same thing
+/// happening — the error state's red is the only tone that means otherwise.
+private let waveformBlue = Color(red: 181/255.0, green: 209/255.0, blue: 255/255.0)
+
 private struct OverlayPill: View {
     @ObservedObject var model: OverlayModel
 
@@ -165,6 +195,23 @@ private struct OverlayPill: View {
                 .controlSize(.small)
                 .scaleEffect(0.8)
                 .frame(width: 54, height: 22)
+        case .warmingUp(let message):
+            // The error state's shape — same pill, words instead of bars —
+            // in the waveform's own blue, because this is the daemon working
+            // rather than the daemon failing. The spinner sits with it: the
+            // sentence says what is happening, the spinner says it is still
+            // happening, which is the question a two-minute download raises.
+            HStack(spacing: 8) {
+                ProgressView()
+                    .controlSize(.small)
+                    .scaleEffect(0.7)
+                Text(message)
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(waveformBlue)
+                    .lineLimit(1)
+                    .fixedSize()
+            }
+            .frame(height: 22)
         case .error(let message):
             // Same pill, words instead of bars; the desaturated red is the
             // waveform blue's tone shifted to "something is wrong".
@@ -179,7 +226,7 @@ private struct OverlayPill: View {
 
 private struct Waveform: View {
     let levels: [Float]
-    private let color = Color(red: 181/255.0, green: 209/255.0, blue: 255/255.0)
+    private let color = waveformBlue
 
     var body: some View {
         HStack(alignment: .center, spacing: 4) {
