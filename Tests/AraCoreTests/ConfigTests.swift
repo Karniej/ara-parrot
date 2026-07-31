@@ -451,6 +451,150 @@ struct ConfigTests {
         #expect(try String(contentsOf: url, encoding: .utf8) == "{ not json")
     }
 
+    // MARK: - persistLanguage: the one rewrite that writes something other
+    // than a string, with all of the same guarantees
+
+    @Test("persisting a language preserves every other key, known and unknown")
+    func persistLanguagePreservesUnknownKeys() throws {
+        let url = write(#"""
+        {"engine":"rules","timeoutMs":900,"cloud":{"model":"m"},
+         "futureKey":{"nested":[1,2]},"flag":true}
+        """#)
+        try Config.persistLanguage(.monitored(["en", "pl"]), at: url)
+
+        let saved = try json(at: url)
+        #expect(saved["language"] as? [String] == ["en", "pl"])
+        #expect(saved["engine"] as? String == "rules")
+        #expect(saved["timeoutMs"] as? Int == 900)
+        #expect((saved["cloud"] as? [String: Any])?["model"] as? String == "m")
+        #expect((saved["futureKey"] as? [String: Any])?["nested"] as? [Int] == [1, 2])
+        #expect(saved["flag"] as? Bool == true)
+
+        let warnings = Warnings()
+        let cfg = Config.load(from: url, warn: warnings.sink)
+        #expect(cfg.language == .monitored(["en", "pl"]))
+        #expect(cfg.engine == .rules)
+        #expect(warnings.lines.isEmpty)
+    }
+
+    /// One language stays a plain string so a hand-written `"language": "pl"`
+    /// survives a menu click looking the way its author wrote it.
+    @Test("one language is written as a string, several as an array, auto as auto")
+    func persistLanguageShapes() throws {
+        let single = write("{}")
+        try Config.persistLanguage(.monitored(["pl"]), at: single)
+        #expect(try json(at: single)["language"] as? String == "pl")
+
+        let set = write("{}")
+        try Config.persistLanguage(.monitored(["en", "pl"]), at: set)
+        #expect(try json(at: set)["language"] as? [String] == ["en", "pl"])
+
+        let auto = write(#"{"language":["en","pl"]}"#)
+        try Config.persistLanguage(.automatic, at: auto)
+        #expect(try json(at: auto)["language"] as? String == "auto")
+        #expect(Config.load(from: auto).language == .automatic)
+    }
+
+    @Test("persisting a language into a malformed file throws, bytes untouched")
+    func persistLanguageMalformedUntouched() throws {
+        let url = write("{ not json")
+        #expect(throws: (any Error).self) {
+            try Config.persistLanguage(.monitored(["pl"]), at: url)
+        }
+        #expect(try String(contentsOf: url, encoding: .utf8) == "{ not json")
+    }
+
+    @Test("persisting a language into a non-object top level throws, untouched")
+    func persistLanguageNonObjectUntouched() throws {
+        let url = write("[1,2,3]")
+        #expect(throws: (any Error).self) {
+            try Config.persistLanguage(.automatic, at: url)
+        }
+        #expect(try String(contentsOf: url, encoding: .utf8) == "[1,2,3]")
+    }
+
+    // MARK: - language
+
+    @Test("language decodes both spellings a person would write")
+    func languageDecodes() {
+        #expect(Config.load(from: write(#"{"language":"auto"}"#)).language == .automatic)
+        #expect(Config.load(from: write(#"{"language":"pl"}"#)).language == .monitored(["pl"]))
+        #expect(Config.load(from: write(#"{"language":"en,pl"}"#)).language
+                == .monitored(["en", "pl"]))
+        #expect(Config.load(from: write(#"{"language":["en","pl"]}"#)).language
+                == .monitored(["en", "pl"]))
+    }
+
+    /// The default that fixes the reported bug. `automatic` costs an
+    /// English-only model nothing — `LanguagePlan` collapses it to today's
+    /// `DecodingOptions` — and gives a multilingual model the detection its
+    /// owner chose 1.6 GB of weights for.
+    @Test("language defaults to automatic when absent, silently")
+    func languageAbsentIsAutomatic() {
+        let warnings = Warnings()
+        let cfg = Config.load(from: write("{}"), warn: warnings.sink)
+        #expect(cfg.language == .automatic)
+        #expect(Config().language == .automatic)
+        #expect(warnings.lines.isEmpty)
+    }
+
+    @Test("a null language is automatic and silent")
+    func languageNull() {
+        let warnings = Warnings()
+        let cfg = Config.load(from: write(#"{"language":null}"#), warn: warnings.sink)
+        #expect(cfg.language == .automatic)
+        #expect(warnings.lines.isEmpty)
+    }
+
+    /// The `cleanup` guarantee, extended to `language`: a mistyped language
+    /// code must never discard the file. Losing a `cloud` section over
+    /// `"pll"` would turn a spelling mistake into an engine downgrade.
+    @Test("an unknown language code warns, keeps every sibling, and detects")
+    func languageInvalidKeepsSiblings() {
+        let warnings = Warnings()
+        let url = write(#"{"engine":"rules","timeoutMs":900,"language":"pll"}"#)
+        let cfg = Config.load(from: url, warn: warnings.sink)
+        #expect(cfg.engine == .rules)      // not the default — the file survived
+        #expect(cfg.timeoutMs == 900)
+        #expect(cfg.language == .automatic)
+        #expect(warnings.lines.count == 1)
+        #expect(warnings.joined.contains(url.path))
+        #expect(warnings.joined.contains("language"))
+        // The warning names the offending code and teaches the valid shapes.
+        #expect(warnings.joined.contains("pll"))
+        #expect(warnings.joined.contains("auto"))
+    }
+
+    @Test("one bad code in a list is enough to warn, and the file survives")
+    func languageBadCodeInList() {
+        let warnings = Warnings()
+        let cfg = Config.load(from: write(#"{"language":["en","pll"],"cloud":{"model":"m"}}"#),
+                              warn: warnings.sink)
+        #expect(cfg.language == .automatic)
+        #expect(cfg.cloud?.model == "m")
+        #expect(warnings.joined.contains("pll"))
+    }
+
+    @Test("an empty language list warns rather than silently meaning auto")
+    func languageEmptyList() {
+        let warnings = Warnings()
+        let cfg = Config.load(from: write(#"{"language":[]}"#), warn: warnings.sink)
+        #expect(cfg.language == .automatic)
+        #expect(warnings.lines.count == 1)
+        #expect(warnings.joined.contains("language"))
+    }
+
+    @Test("a wrongly typed language behaves as unset, siblings intact")
+    func languageWrongTypeKeepsSiblings() {
+        let warnings = Warnings()
+        let cfg = Config.load(from: write(#"{"language":42,"cloud":{"model":"m"}}"#),
+                              warn: warnings.sink)
+        #expect(cfg.language == .automatic)
+        #expect(cfg.cloud?.model == "m")
+        #expect(warnings.lines.count == 1)
+        #expect(warnings.joined.contains("language"))
+    }
+
     @Test("a partial cloud object keeps sibling settings and cloud defaults")
     func partialCloudObject() {
         let cfg = Config.load(from: write(#"""
