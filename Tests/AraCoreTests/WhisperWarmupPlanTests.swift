@@ -63,7 +63,7 @@ struct WhisperWarmupPlanTests {
         var attempts: [ModelSource] = []
         var repairs = 0
         let result = try await WhisperWarmupPlan.attempt(
-            from: .local(folder), onRepair: { _ in repairs += 1 }
+            from: .local(folder), onRepair: { _, _ in repairs += 1 }
         ) { source in
             attempts.append(source)
             return "loaded"
@@ -73,14 +73,23 @@ struct WhisperWarmupPlanTests {
         #expect(repairs == 0)
     }
 
-    /// The repair, end to end: the second attempt happens, and it happens
-    /// against the hub.
-    @Test("a local load that fails is retried against the hub")
+    /// The repair, end to end: the second attempt happens, it happens against
+    /// the hub, and the fault that caused it is handed over rather than
+    /// dropped. `attempt` throws the *hub's* error when both fail, so this
+    /// callback is the only place the first one can still be reported — and
+    /// "why is this suddenly downloading 1.6 GB?" is a question a user is
+    /// entitled to an answer to.
+    @Test("a local load that fails is retried against the hub, with its reason")
     func localFailureRetriesAgainstTheHub() async throws {
         var attempts: [ModelSource] = []
         var repaired: [ModelSource] = []
+        var reasons: [Boom] = []
         let result = try await WhisperWarmupPlan.attempt(
-            from: .local(folder), onRepair: { repaired.append($0) }
+            from: .local(folder),
+            onRepair: { source, error in
+                repaired.append(source)
+                if let boom = error as? Boom { reasons.append(boom) }
+            }
         ) { source in
             attempts.append(source)
             if case .local = source { throw Boom(which: "local") }
@@ -89,6 +98,28 @@ struct WhisperWarmupPlanTests {
         #expect(result == "repaired")
         #expect(attempts == [.local(folder), .hub])
         #expect(repaired == [.hub])
+        #expect(reasons == [Boom(which: "local")])
+    }
+
+    /// Cancellation is the daemon shutting down or the warm-up being
+    /// superseded. Treating it as a corrupt download and answering it with a
+    /// hub round trip spends a user's network on work nobody is waiting for —
+    /// and since the hub call is cancellable too, it mostly just reaches the
+    /// same error again, slower.
+    @Test("a cancelled load is not repaired")
+    func cancellationIsNotARepair() async {
+        var attempts: [ModelSource] = []
+        var repairs = 0
+        await #expect(throws: CancellationError.self) {
+            _ = try await WhisperWarmupPlan.attempt(
+                from: .local(folder), onRepair: { _, _ in repairs += 1 }
+            ) { source in
+                attempts.append(source)
+                throw CancellationError()
+            } as String
+        }
+        #expect(attempts == [.local(folder)])
+        #expect(repairs == 0)
     }
 
     /// Once, not until it works. Two failures end in an error rather than a
@@ -135,13 +166,20 @@ struct WhisperWarmupPlanTests {
     /// all-or-nothing — a compile killed at 75 of its 145 seconds leaves ~900
     /// MB of intermediate on disk and the next launch starts from zero
     /// (measured) — so "quitting starts it over" is the load-bearing clause,
-    /// and "once" is what makes waiting worth it.
-    @Test("the notice says it is one time and that quitting undoes it")
+    /// and the bounded recurrence is what makes waiting worth it.
+    ///
+    /// **"once per macOS version", never "one time".** The cache path is
+    /// `…/com.apple.e5rt.e5bundlecache/<OS build>/…`, so a system update costs
+    /// the compile again. A user promised a one-off who then waits three
+    /// minutes after an update has been given a reason to disbelieve
+    /// everything else the daemon tells them.
+    @Test("the notice bounds the recurrence honestly and says quitting undoes it")
     func noticeExplainsTheWait() {
         let notice = WhisperWarmupPlan.specialisationNotice(model: "whisper-large-v3-turbo")
         #expect(notice.contains("whisper-large-v3-turbo"))
         #expect(notice.contains("Neural Engine"))
-        #expect(notice.lowercased().contains("one time"))
+        #expect(notice.contains("once per macOS version"))
+        #expect(!notice.lowercased().contains("one time"))
         #expect(notice.lowercased().contains("starts it over"))
         #expect(notice.hasSuffix("\n"))
     }

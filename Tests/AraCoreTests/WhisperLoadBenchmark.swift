@@ -36,7 +36,7 @@ struct WhisperLoadBenchmark {
         print("  \(Self.ms(d)) ms  \(label)")
     }
 
-    /// A second of quiet speech-shaped noise: enough to make the first
+    /// Three seconds of quiet speech-shaped noise: enough to make the first
     /// transcription do a real encoder + decoder pass without depending on an
     /// audio fixture being in the repository.
     static func audio(seconds: Double = 3) -> [Float] {
@@ -49,9 +49,26 @@ struct WhisperLoadBenchmark {
         return out
     }
 
+    /// The Neural Engine bundle cache **for this process**, which is the only
+    /// one that says anything about this run.
+    ///
+    /// It is emphatically *not*
+    /// `~/Library/Caches/com.apple.e5rt.e5bundlecache`. That path is macOS 15's
+    /// and reads 0 bytes on macOS 26 however much compiling happens — it is the
+    /// measurement that sent this investigation the wrong way for an afternoon.
+    /// On macOS 26 the cache is per client, under the calling process's own
+    /// caches directory, keyed by OS build:
+    ///
+    ///     ~/Library/Caches/<client>/com.apple.e5rt.e5bundlecache/<build>/…
+    ///
+    /// `.cachesDirectory` resolves to exactly the `<client>` whose compiles
+    /// this run is paying for, so growth here is this run's specialisation and
+    /// nobody else's.
     static func cacheSize() -> (bytes: Int, files: Int) {
-        let root = FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent("Library/Caches/com.apple.e5rt.e5bundlecache")
+        guard let caches = FileManager.default.urls(
+            for: .cachesDirectory, in: .userDomainMask).first
+        else { return (0, 0) }
+        let root = caches.appendingPathComponent("com.apple.e5rt.e5bundlecache")
         guard let e = FileManager.default.enumerator(
             at: root, includingPropertiesForKeys: [.fileSizeKey, .isRegularFileKey])
         else { return (0, 0) }
@@ -81,7 +98,7 @@ struct WhisperLoadBenchmark {
         print("  e5bundlecache before: \(before.bytes) bytes in \(before.files) files")
 
         for round in 1...2 {
-            print("--- round \(round) --- [identity probe A]")
+            print("--- round \(round) ---")
             let t0 = ContinuousClock.now
             let folder = try await WhisperKit.download(variant: variant)
             let download = ContinuousClock.now - t0
@@ -223,4 +240,3 @@ struct WhisperLoadBenchmark {
     }
 }
 
-// identity probe: forces a new ad-hoc cdhash

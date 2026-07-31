@@ -70,7 +70,12 @@ public struct WarmupStatus: Equatable, Sendable {
             // of "loading…" is indistinguishable from a hang, and the user's
             // response to a hang is to quit — which throws the compile away
             // and buys them the same three minutes again next launch.
-            return "preparing \(modelID) for the Neural Engine — one time, a few minutes…"
+            //
+            // "once per macOS version" rather than "one time" because the ANE
+            // cache path is keyed on the OS build; see
+            // `WhisperWarmupPlan.specialisationNotice`.
+            return "preparing \(modelID) for the Neural Engine — "
+                + "once per macOS version, a few minutes…"
         case nil:
             switch formatter {
             case .loading: return "preparing the formatting model…"

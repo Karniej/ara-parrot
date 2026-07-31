@@ -39,11 +39,15 @@ struct WarmupStatusTests {
     /// 2–3 minutes on whisper-large-v3-turbo and is thrown away entirely if
     /// the daemon is quit before it finishes. "loading…" for three minutes is
     /// what makes a user quit, so the line stops saying it.
+    ///
+    /// "once per macOS version" and not "one time": the ANE cache is keyed on
+    /// the OS build, so a system update costs the compile again, and a promise
+    /// the next update breaks is worse than no promise.
     @Test("a long load says what it is really doing")
     func preparingNeuralEngine() {
         #expect(Self.status(transcriber: .preparingNeuralEngine).message
                 == "preparing whisper-large-v3-turbo for the Neural Engine — "
-                + "one time, a few minutes…")
+                + "once per macOS version, a few minutes…")
     }
 
     /// It is still the load that gates dictation; only the wording changed.
@@ -181,7 +185,53 @@ struct TranscriberWarmupOrderTests {
     @Test("the download gives way to the load")
     func downloadToLoad() {
         #expect(TranscriberWarmup.advances(from: .downloading(percent: 99), to: .loading))
+    }
+
+    /// A percentage arriving after `.loading` is a hop left over from a
+    /// download that has already finished. Showing it would park the pill on a
+    /// stale number until the load returns.
+    @Test("a stale percentage cannot reopen the download")
+    func stalePercentIsIgnored() {
         #expect(!TranscriberWarmup.advances(from: .loading, to: .downloading(percent: 99)))
+        #expect(!TranscriberWarmup.advances(from: .preparingNeuralEngine,
+                                            to: .downloading(percent: 99)))
+    }
+
+    /// The repair, which is the case that must not be mistaken for one.
+    ///
+    /// `WhisperWarmupPlan.attempt` falls back to the hub when a model that
+    /// passed `isPresent` fails to load — truncated `weight.bin`, most likely —
+    /// and by then the pill has been on `.loading` since before the first
+    /// attempt. The hub branch opens with `.downloading(percent: nil)`, which
+    /// is emitted once and never carries a number, so it is the one report that
+    /// means "we went back for the download" rather than "the download you
+    /// already saw". Rejecting it runs a 1.6 GB re-download under the word
+    /// "loading…", with no progress and no watchdog.
+    @Test("the repair's opening frame reopens the download")
+    func repairReopensTheDownload() {
+        #expect(TranscriberWarmup.advances(from: .loading, to: .downloading(percent: nil)))
+        #expect(TranscriberWarmup.advances(from: .preparingNeuralEngine,
+                                           to: .downloading(percent: nil)))
+    }
+
+    /// End to end, the sequence a repair actually emits: the pill starts on
+    /// `.loading` (the model looked present), the local load throws, the hub
+    /// branch opens indeterminate, percentages climb, and the load resumes.
+    /// Every step has to be shown or the download is invisible.
+    @Test("a full repair sequence is shown at every step")
+    func repairSequenceIsVisible() {
+        var current: TranscriberWarmup? = .loading
+        let reports: [TranscriberWarmup?] = [
+            .downloading(percent: nil), .downloading(percent: 7),
+            .downloading(percent: 63), .downloading(percent: 100),
+            .loading, nil,
+        ]
+        var shown: [TranscriberWarmup?] = []
+        for report in reports where TranscriberWarmup.advances(from: current, to: report) {
+            current = report
+            shown.append(report)
+        }
+        #expect(shown == reports)
     }
 
     /// The one this rule exists for. `.preparingNeuralEngine` is raised by a
@@ -193,5 +243,19 @@ struct TranscriberWarmupOrderTests {
         #expect(!TranscriberWarmup.advances(from: .preparingNeuralEngine, to: .loading))
         #expect(!TranscriberWarmup.advances(from: .preparingNeuralEngine,
                                             to: .preparingNeuralEngine))
+    }
+
+    /// …but a repair that starts *after* the notice went up is a real download,
+    /// and the notice must give way to it — otherwise the pill claims the
+    /// Neural Engine is being prepared for the length of a 1.6 GB fetch. The
+    /// second attempt raises its own notice if it needs one.
+    @Test("the Neural Engine notice gives way to a repair")
+    func preparingGivesWayToRepair() {
+        var current: TranscriberWarmup? = .preparingNeuralEngine
+        for report: TranscriberWarmup in [.downloading(percent: nil), .downloading(percent: 40)] {
+            #expect(TranscriberWarmup.advances(from: current, to: report))
+            current = report
+        }
+        #expect(TranscriberWarmup.advances(from: current, to: .loading))
     }
 }

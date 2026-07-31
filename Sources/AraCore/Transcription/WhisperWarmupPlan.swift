@@ -74,10 +74,21 @@ public enum WhisperWarmupPlan {
     /// sentence has exactly one job: stop the user pressing ^C. It says the
     /// wait is finite, that it does not recur, and that quitting throws it
     /// away.
+    ///
+    /// ## "once per macOS version", not "one time"
+    ///
+    /// The cache path carries the OS build — `…/e5bundlecache/25F80/…` — so a
+    /// macOS update costs the compile again. Promising a one-off would be a
+    /// claim the next system update breaks, and a user who was told "one time"
+    /// and then waits three minutes again has been given a reason to distrust
+    /// every other thing the daemon says. (The key's other two components,
+    /// the signing identity and the model, do not need saying: users do not
+    /// rebuild ara, and switching models is a choice they made.)
     public static func specialisationNotice(model: String) -> String {
         "still preparing \(model) for the Neural Engine. macOS compiles each "
-            + "model for this machine one time — a few minutes for the large "
-            + "models — and quitting before it finishes starts it over.\n"
+            + "model for this machine once per macOS version — a few minutes "
+            + "for the large models — and quitting before it finishes starts "
+            + "it over.\n"
     }
 
     /// - Parameters:
@@ -118,17 +129,29 @@ public enum WhisperWarmupPlan {
     /// caller. By then the hub has been asked for the files and could not
     /// supply them, and "the download failed" is the sentence a user can act on
     /// — "the model on disk would not load" only describes the state the repair
-    /// was already trying to fix.
+    /// was already trying to fix. The first error is not simply dropped: it is
+    /// handed to `onRepair`, which is the only place it can still be reported,
+    /// and it is the answer to "why is this downloading again?".
+    ///
+    /// ## Cancellation is not a fault to repair
+    ///
+    /// A `CancellationError` means the daemon is shutting down or the warm-up
+    /// was superseded. Answering it with a hub round trip would spend a user's
+    /// network on work nobody is waiting for, and — because the hub call is
+    /// itself cancellable — would usually just throw the same error a second
+    /// time, slower. It goes straight back to the caller.
     public static func attempt<T>(
         from source: ModelSource,
-        onRepair: (ModelSource) -> Void = { _ in },
+        onRepair: (ModelSource, any Error) -> Void = { _, _ in },
         _ load: (ModelSource) async throws -> T
     ) async throws -> T {
         do {
             return try await load(source)
+        } catch is CancellationError {
+            throw CancellationError()
         } catch {
             guard let fallback = recovery(after: source) else { throw error }
-            onRepair(fallback)
+            onRepair(fallback, error)
             return try await load(fallback)
         }
     }

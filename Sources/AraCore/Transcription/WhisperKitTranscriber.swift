@@ -86,9 +86,14 @@ public actor WhisperKitTranscriber: Transcriber {
         // fix pre-emptively on every launch — see `WhisperWarmupPlan`. `attempt`
         // allows exactly one fallback, so this cannot loop.
         let id = model.id
-        pipeline = try await WhisperWarmupPlan.attempt(from: source, onRepair: { _ in
+        pipeline = try await WhisperWarmupPlan.attempt(from: source, onRepair: { _, error in
+            // The fault is named, not just the reaction to it. This is the only
+            // place the first error can still be reported — the caller gets the
+            // hub's — and it is the answer to the question a user watching an
+            // unexpected 1.6 GB download actually has.
             FileHandle.standardError.write(Data(
-                "\(id) did not load from disk; re-checking the download...\n".utf8))
+                ("\(id) did not load from disk (\(type(of: error))); "
+                    + "re-checking the download...\n").utf8))
         }) { source in
             try await load(from: source, variant: whisperKitID, onPhase: onPhase)
         }
@@ -464,15 +469,45 @@ public enum TranscriberWarmup: Equatable, Sendable {
     /// (code-signing identity × model × macOS build) — and it is all or
     /// nothing, so a user who quits into the third minute buys nothing and
     /// starts over. Calling that "loading…" is what makes them quit.
+    ///
+    /// The user-visible strings say "once per macOS version" rather than
+    /// naming all three components of that key; see
+    /// `WhisperWarmupPlan.specialisationNotice` for why that is the claim that
+    /// survives contact with a system update.
     case preparingNeuralEngine
 
     /// Whether `incoming` may replace `current` on the way to warm.
     ///
-    /// Each report reaches the main actor on its own `Task` and those arrive
-    /// unordered, so the daemon cannot simply assign what it is handed. Three
-    /// rules, all of them about not taking a claim back: warm is terminal, a
-    /// percentage does not walk backwards, and the Neural Engine notice
-    /// outranks the `.loading` still in flight behind it.
+    /// Each report reaches the main actor on its own `Task`
+    /// (`Task { @MainActor in warmup.setTranscriber(phase) }`) and those arrive
+    /// unordered, so the daemon cannot simply assign what it is handed.
+    ///
+    /// ## The one that is not a straggler
+    ///
+    /// A `.downloading` arriving after `.loading` has two possible meanings and
+    /// they want opposite treatment. It can be a hop left over from a download
+    /// that has already finished — accept it and the pill shows a stale
+    /// percentage until the load returns. Or it can be
+    /// `WhisperWarmupPlan.attempt`'s **repair**: a model that passed `isPresent`
+    /// but failed to load falls back to the hub, and the pill has been sitting
+    /// on `.loading` since before the first attempt. Reject that one and an
+    /// entire 1.6 GB re-download runs under the word "loading…", with no
+    /// progress and no watchdog — the watchdog only starts once the download is
+    /// over. Minutes of unexplained "loading…" is the exact failure this branch
+    /// exists to remove.
+    ///
+    /// They are distinguishable. `.downloading(percent: nil)` is emitted once,
+    /// synchronously, at the top of the hub branch and never again — the
+    /// coalescer only ever emits whole percents — so it is the repair's
+    /// signature, and it alone may reopen the download. Its percentages then
+    /// flow through the `.downloading` → `.downloading` rule as usual. A
+    /// stale hop, which always carries a number, still cannot walk the pill
+    /// backwards.
+    ///
+    /// (If the repair's own opening frame is itself delayed behind one of its
+    /// percentages, that percentage is dropped and the next one is shown: one
+    /// percent of lag, self-healing, against a rule that cannot mistake a
+    /// straggler for a repair.)
     public static func advances(from current: TranscriberWarmup?,
                                 to incoming: TranscriberWarmup?) -> Bool {
         // Warm is the end. Reopening it would put the gate back down behind a
@@ -485,6 +520,11 @@ public enum TranscriberWarmup: Equatable, Sendable {
             guard let now else { return true }
             return next > now
         case (.downloading, _): return true
+        // The repair, from either of the two phases a failed local load can
+        // have been in when it threw.
+        case (.loading, .downloading(nil)),
+             (.preparingNeuralEngine, .downloading(nil)):
+            return true
         case (.loading, .downloading): return false
         case (.loading, .loading): return false
         case (.loading, .preparingNeuralEngine): return true
