@@ -46,6 +46,40 @@ public enum ModelSource: Equatable, Sendable {
 /// pre-emptively" to "the launch it is actually needed", which is the same
 /// guarantee at a hundredth of the cost.
 public enum WhisperWarmupPlan {
+    /// How long a load may run before it is reported as something other than a
+    /// load.
+    ///
+    /// On a warm cache the only thing that takes longer than a few seconds is
+    /// Core ML compiling the model for the Neural Engine. Measured on an M3
+    /// Pro, per client identity:
+    ///
+    /// | load                                 | seconds |
+    /// |--------------------------------------|---------|
+    /// | base.en, already specialised         | 0.5     |
+    /// | large-v3-turbo, already specialised  | 1.0     |
+    /// | base.en, first specialisation        | 11.3    |
+    /// | large-v3-turbo, first specialisation | 141–187 |
+    ///
+    /// Twenty seconds clears every load that finishes on its own and catches
+    /// the one that does not.
+    public static let specialisationThreshold: Duration = .seconds(20)
+
+    /// What to write to stderr once the threshold passes.
+    ///
+    /// The specialisation is all or nothing: a compile killed 75 seconds into
+    /// its 145 leaves ~900 MB of intermediate behind and the next launch
+    /// starts from zero — measured, and visible as the abandoned
+    /// `…​.tmp.<pid>.bundle` directories under
+    /// `~/Library/Caches/<client>/com.apple.e5rt.e5bundlecache/`. So the
+    /// sentence has exactly one job: stop the user pressing ^C. It says the
+    /// wait is finite, that it does not recur, and that quitting throws it
+    /// away.
+    public static func specialisationNotice(model: String) -> String {
+        "still preparing \(model) for the Neural Engine. macOS compiles each "
+            + "model for this machine one time — a few minutes for the large "
+            + "models — and quitting before it finishes starts it over.\n"
+    }
+
     /// - Parameters:
     ///   - present: `WhisperModelStore.isPresent(model)`.
     ///   - directory: `WhisperModelStore.directory(for: model)` — `nil` for a

@@ -143,7 +143,31 @@ public actor WhisperKitTranscriber: Transcriber {
         let config = WhisperKitConfig(model: variant, modelFolder: folder.path,
                                       verbose: false, prewarm: false, load: true,
                                       download: false)
+        let notice = Self.specialisationWatchdog(model: model.id, onPhase: onPhase)
+        defer { notice.cancel() }
         return try await WhisperKit(config)
+    }
+
+    /// Says what a load that has stopped looking like a load is doing.
+    ///
+    /// Unstructured on purpose: `WhisperKit.init` is one long `await` with no
+    /// progress of its own to hook, so the only way to report anything from
+    /// inside it is a task racing alongside. Cancelled by the `defer` at the
+    /// call site, so a load that returns in a second says nothing at all.
+    ///
+    /// Nothing here touches actor state, which is why it is `static`: it is
+    /// called from an actor-isolated method but must keep running while that
+    /// method is suspended inside Core ML.
+    private static func specialisationWatchdog(
+        model: String, onPhase: @escaping @Sendable (TranscriberWarmup) -> Void
+    ) -> Task<Void, Never> {
+        Task {
+            try? await Task.sleep(for: WhisperWarmupPlan.specialisationThreshold)
+            guard !Task.isCancelled else { return }
+            FileHandle.standardError.write(Data(
+                WhisperWarmupPlan.specialisationNotice(model: model).utf8))
+            onPhase(.preparingNeuralEngine)
+        }
     }
 
     /// The download, with its progress stream reduced to whole percents.
@@ -433,4 +457,38 @@ public enum TranscriberWarmup: Equatable, Sendable {
     /// is file-count weighted rather than byte weighted.
     case downloading(percent: Int?)
     case loading
+    /// The load has not returned in `WhisperWarmupPlan.specialisationThreshold`,
+    /// which on a warm cache leaves one explanation: Core ML is compiling the
+    /// model for the Neural Engine. Measured on an M3 Pro that is 141–187s for
+    /// `whisper-large-v3-turbo` and 11.3s for `whisper-base.en`, once per
+    /// (code-signing identity × model × macOS build) — and it is all or
+    /// nothing, so a user who quits into the third minute buys nothing and
+    /// starts over. Calling that "loading…" is what makes them quit.
+    case preparingNeuralEngine
+
+    /// Whether `incoming` may replace `current` on the way to warm.
+    ///
+    /// Each report reaches the main actor on its own `Task` and those arrive
+    /// unordered, so the daemon cannot simply assign what it is handed. Three
+    /// rules, all of them about not taking a claim back: warm is terminal, a
+    /// percentage does not walk backwards, and the Neural Engine notice
+    /// outranks the `.loading` still in flight behind it.
+    public static func advances(from current: TranscriberWarmup?,
+                                to incoming: TranscriberWarmup?) -> Bool {
+        // Warm is the end. Reopening it would put the gate back down behind a
+        // recording that has already started.
+        guard let current else { return false }
+        guard let incoming else { return true }
+        switch (current, incoming) {
+        case (.downloading(let now), .downloading(let next)):
+            guard let next else { return false }
+            guard let now else { return true }
+            return next > now
+        case (.downloading, _): return true
+        case (.loading, .downloading): return false
+        case (.loading, .loading): return false
+        case (.loading, .preparingNeuralEngine): return true
+        case (.preparingNeuralEngine, _): return false
+        }
+    }
 }

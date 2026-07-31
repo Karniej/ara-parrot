@@ -34,6 +34,25 @@ struct WarmupStatusTests {
                 == "loading whisper-large-v3-turbo…")
     }
 
+    /// A load that has not returned in twenty seconds is not a load any more:
+    /// it is Core ML compiling the model for the Neural Engine, which costs
+    /// 2–3 minutes on whisper-large-v3-turbo and is thrown away entirely if
+    /// the daemon is quit before it finishes. "loading…" for three minutes is
+    /// what makes a user quit, so the line stops saying it.
+    @Test("a long load says what it is really doing")
+    func preparingNeuralEngine() {
+        #expect(Self.status(transcriber: .preparingNeuralEngine).message
+                == "preparing whisper-large-v3-turbo for the Neural Engine — "
+                + "one time, a few minutes…")
+    }
+
+    /// It is still the load that gates dictation; only the wording changed.
+    @Test("preparing the Neural Engine still holds dictation back")
+    func preparingBlocks() {
+        #expect(Self.status(transcriber: .preparingNeuralEngine).blocksDictation)
+        #expect(Self.status(transcriber: .preparingNeuralEngine).isWarming)
+    }
+
     /// The transcriber is the one that gates dictation, so while it is in
     /// flight it owns the line — the formatting model loads inside its shadow
     /// and has nothing to add.
@@ -118,5 +137,61 @@ struct WarmupGateTests {
                                   transcriber: nil, formatter: .ready)
         #expect(!status.blocksDictation)
         #expect(status.message == nil)
+    }
+}
+
+/// Which warm-up reports are allowed to replace which.
+///
+/// Every report reaches the main actor on its own `Task` and those arrive
+/// unordered, so the daemon cannot simply assign what it is handed: a 45% that
+/// lands after a 46% reads as a stall, and a `.loading` that lands after
+/// `.preparingNeuralEngine` takes back the only sentence explaining why the
+/// user is about to wait three minutes.
+@Suite("Warm-up phase order")
+struct TranscriberWarmupOrderTests {
+    @Test("warm is terminal — nothing reopens it")
+    func warmIsTerminal() {
+        #expect(!TranscriberWarmup.advances(from: nil, to: .loading))
+        #expect(!TranscriberWarmup.advances(from: nil, to: .downloading(percent: 10)))
+        #expect(!TranscriberWarmup.advances(from: nil, to: nil))
+    }
+
+    @Test("becoming warm always advances")
+    func becomingWarmAdvances() {
+        #expect(TranscriberWarmup.advances(from: .loading, to: nil))
+        #expect(TranscriberWarmup.advances(from: .preparingNeuralEngine, to: nil))
+        #expect(TranscriberWarmup.advances(from: .downloading(percent: 3), to: nil))
+    }
+
+    /// The percentage filter, which the daemon used to spell out inline.
+    @Test("a percentage never walks backwards")
+    func percentIsMonotonic() {
+        #expect(TranscriberWarmup.advances(from: .downloading(percent: 45),
+                                           to: .downloading(percent: 46)))
+        #expect(!TranscriberWarmup.advances(from: .downloading(percent: 46),
+                                            to: .downloading(percent: 45)))
+        #expect(!TranscriberWarmup.advances(from: .downloading(percent: 46),
+                                            to: .downloading(percent: 46)))
+        // The indeterminate report is the download's first frame, so it may
+        // open one but never replace a number with "no idea".
+        #expect(!TranscriberWarmup.advances(from: .downloading(percent: 46),
+                                            to: .downloading(percent: nil)))
+    }
+
+    @Test("the download gives way to the load")
+    func downloadToLoad() {
+        #expect(TranscriberWarmup.advances(from: .downloading(percent: 99), to: .loading))
+        #expect(!TranscriberWarmup.advances(from: .loading, to: .downloading(percent: 99)))
+    }
+
+    /// The one this rule exists for. `.preparingNeuralEngine` is raised by a
+    /// watchdog while the load is still inside `WhisperKit.init`; any
+    /// `.loading` still in flight behind it must not undo it.
+    @Test("the Neural Engine notice is not taken back")
+    func preparingIsNotUndone() {
+        #expect(TranscriberWarmup.advances(from: .loading, to: .preparingNeuralEngine))
+        #expect(!TranscriberWarmup.advances(from: .preparingNeuralEngine, to: .loading))
+        #expect(!TranscriberWarmup.advances(from: .preparingNeuralEngine,
+                                            to: .preparingNeuralEngine))
     }
 }

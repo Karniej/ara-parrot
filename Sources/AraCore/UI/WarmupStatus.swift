@@ -65,6 +65,12 @@ public struct WarmupStatus: Equatable, Sendable {
             return "downloading \(modelID)…"
         case .loading:
             return "loading \(modelID)…"
+        case .preparingNeuralEngine:
+            // Naming the wait and its shape is the whole point: three minutes
+            // of "loading…" is indistinguishable from a hang, and the user's
+            // response to a hang is to quit — which throws the compile away
+            // and buys them the same three minutes again next launch.
+            return "preparing \(modelID) for the Neural Engine — one time, a few minutes…"
         case nil:
             switch formatter {
             case .loading: return "preparing the formatting model…"

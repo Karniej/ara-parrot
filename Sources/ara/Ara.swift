@@ -924,18 +924,14 @@ private final class WarmupState {
     /// `nil` means the transcriber is warm — see `WarmupStatus.transcriber`.
     ///
     /// Each report reaches the main actor on its own `Task`, and those arrive
-    /// unordered — which is why `transcriberSettled` exists at all. The same
-    /// reordering can land 45% after 46%, so the percentage is filtered here
-    /// as well as coalesced at the source: a number that walks backwards on
-    /// screen reads as a stall or a bug, and the coalescer's monotonicity
-    /// only ever applied to what it emitted, not to what arrived.
+    /// unordered, so which reports may replace which is a rule rather than an
+    /// assignment — `TranscriberWarmup.advances(from:to:)`, where it is
+    /// unit-tested. `transcriberSettled` stays here because it is the gate's
+    /// latch rather than a phase comparison: `finish()` closes it too.
     func setTranscriber(_ phase: TranscriberWarmup?) {
-        guard !transcriberSettled else { return }
-        if case .downloading(let incoming?) = phase,
-           case .downloading(let current?) = status.transcriber,
-           incoming < current {
-            return
-        }
+        guard !transcriberSettled,
+              TranscriberWarmup.advances(from: status.transcriber, to: phase)
+        else { return }
         if phase == nil { transcriberSettled = true }
         status.transcriber = phase
         repaint()

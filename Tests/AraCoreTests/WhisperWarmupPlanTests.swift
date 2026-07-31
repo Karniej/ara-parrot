@@ -109,6 +109,43 @@ struct WhisperWarmupPlanTests {
         #expect(attempts == [.local(folder), .hub])
     }
 
+    // MARK: - the wait nobody explained
+
+    /// Twenty seconds, and the reason it is that number rather than five or
+    /// sixty. Measured on an M3 Pro, warm cache, per client identity:
+    ///
+    /// | load                                     | seconds |
+    /// |------------------------------------------|---------|
+    /// | large-v3-turbo, already specialised      | 1.0     |
+    /// | base.en, already specialised             | 0.5     |
+    /// | base.en, first specialisation            | 11.3    |
+    /// | large-v3-turbo, first specialisation     | 141–187 |
+    ///
+    /// So the threshold has to clear base.en's first compile — which finishes
+    /// on its own before anyone reaches for the quit key — and sit far below
+    /// the large model's, which does not.
+    @Test("the notice waits out every load that is going to finish by itself")
+    func thresholdClearsTheShortLoads() {
+        #expect(WhisperWarmupPlan.specialisationThreshold > .seconds(11.3))
+        #expect(WhisperWarmupPlan.specialisationThreshold < .seconds(60))
+    }
+
+    /// The sentence a user reads in the terminal at the twenty-second mark.
+    /// It has one job: stop them pressing ^C. Core ML's specialisation is
+    /// all-or-nothing — a compile killed at 75 of its 145 seconds leaves ~900
+    /// MB of intermediate on disk and the next launch starts from zero
+    /// (measured) — so "quitting starts it over" is the load-bearing clause,
+    /// and "once" is what makes waiting worth it.
+    @Test("the notice says it is one time and that quitting undoes it")
+    func noticeExplainsTheWait() {
+        let notice = WhisperWarmupPlan.specialisationNotice(model: "whisper-large-v3-turbo")
+        #expect(notice.contains("whisper-large-v3-turbo"))
+        #expect(notice.contains("Neural Engine"))
+        #expect(notice.lowercased().contains("one time"))
+        #expect(notice.lowercased().contains("starts it over"))
+        #expect(notice.hasSuffix("\n"))
+    }
+
     /// A download that fails is not retried: it already re-checked every etag
     /// and re-fetched whatever did not match.
     @Test("a hub load that fails is not retried")
