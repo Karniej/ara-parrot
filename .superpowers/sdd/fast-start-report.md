@@ -195,6 +195,7 @@ cannot be shortened, and the `.cpuAndGPU` escape costs more than it saves
 | `6a153bb` | `perf:` load a cached model from disk instead of re-checking it with the hub |
 | `c4b7895` | `perf:` stop loading every Core ML model twice at startup |
 | `45ce87c` | `feat:` say when a load is really the Neural Engine compile, and that it is once |
+| `da2f03b` | `fix:` show the repair's download instead of hiding it behind "loading…" |
 
 **`WhisperWarmupPlan`** (new, unit-tested): decides `.local` vs `.hub`, and
 retries a failed local load against the hub exactly once — so the truncated-
@@ -227,9 +228,65 @@ and quitting before it finishes starts it over.
 
 …and silent on the warm path, which is unchanged.
 
-**Verification**: `swift test` — 614 tests in 56 suites, all passing (592 at
-base, +9 from `WhisperWarmupPlan`, +9 new, +4 inert benchmark cases).
-`swift build -c release` — clean.
+**Verification**: `swift test` — 619 tests in 56 suites, all passing (592 at
+base, +11 from `WhisperWarmupPlan`, +12 for the phase rules and the notice, +4
+inert benchmark cases). `swift build -c release` — clean.
+
+### 4.1 Fixed in review
+
+**The repair path was invisible.** `advances(from:to:)` rejected every
+`.downloading` that followed `.loading`, on the reasoning that such a report can
+only be a stale out-of-order hop. It can also be
+`WhisperWarmupPlan.attempt`'s repair — a model that passed `isPresent` but
+failed to load, falling back to the hub — and in that case the pill has been on
+`.loading` since before the first attempt. The result was an entire 1.6 GB
+re-download shown as "loading whisper-large-v3-turbo…", with no progress and no
+watchdog (the watchdog only arms once the download is over). That is the same
+multi-minute unexplained wait this branch exists to remove, reintroduced on the
+path this branch created — and a regression against `master`, which filtered
+only backwards percentages.
+
+The two cases are distinguishable, so the rule now distinguishes them rather
+than picking a side: `.downloading(percent: nil)` is emitted once, synchronously,
+at the top of the hub branch, and the coalescer only ever emits whole percents —
+so the indeterminate frame is the repair's signature and it alone may reopen the
+download. Its percentages then flow through the existing `.downloading` rule. A
+stale hop, which always carries a number, still cannot walk the pill backwards.
+Same fix for `.preparingNeuralEngine → .downloading`, which otherwise claimed the
+Neural Engine was being prepared for the length of a re-download.
+
+Four tests pin it, including the full repair sequence end to end.
+
+**"one time" was a promise the next system update breaks.** The cache path is
+`…/com.apple.e5rt.e5bundlecache/25F80/…` — the key includes the OS build, which
+`TranscriberWarmup`'s own doc said and the user-visible strings did not. Every
+macOS update costs another 141–187 s. All user-visible strings and docs now say
+**"once per macOS version"**, and a test asserts the phrase "one time" does not
+appear. The two other components of the key do not need saying: users do not
+rebuild `ara`, and switching models is a choice they made.
+
+The exact strings, since they are being quoted:
+
+> **pill / menu line** — `preparing whisper-large-v3-turbo for the Neural Engine — once per macOS version, a few minutes…`
+>
+> **stderr** — `still preparing whisper-large-v3-turbo for the Neural Engine. macOS compiles each model for this machine once per macOS version — a few minutes for the large models — and quitting before it finishes starts it over.`
+
+**`attempt` answered cancellation with a hub round trip.** A `CancellationError`
+means the daemon is shutting down or the warm-up was superseded; spending a
+user's network on a repair nobody is waiting for is wrong, and since the hub call
+is itself cancellable it mostly reaches the same error again, slower. Rethrown
+now, with a test.
+
+**The repair's cause was discarded.** `attempt` throws the *hub's* error when
+both attempts fail, so `onRepair` is the only place the first fault can still be
+reported — and it is the answer to "why is this suddenly downloading 1.6 GB?".
+`onRepair` now takes the error and the transcriber names its type in the line.
+
+**The benchmark re-planted the misconception.** `cacheSize()` still measured
+`~/Library/Caches/com.apple.e5rt.e5bundlecache` — the macOS 15 path this report
+proves reads 0 on macOS 26 — so every future run would print `0 → 0` and teach
+the next reader exactly the wrong thing. It now resolves the calling process's
+own caches directory, which is the per-client path that actually grows.
 
 ---
 
@@ -239,17 +296,32 @@ base, +9 from `WhisperWarmupPlan`, +9 new, +4 inert benchmark cases).
    The 2.5 minutes now lands inside `loadModels()` instead of `prewarmModels()`.
    No user-visible difference, but a future reader comparing profiles will see
    the time move.
-2. **The 20 s threshold is a heuristic, not a detection.** A machine slower than
-   an M3 Pro could have `base.en` cross it and show the notice for a wait that is
-   about to end anyway. The failure is a slightly over-dramatic line, not a
-   wrong one.
+2. **The 20 s threshold is a heuristic, not a detection, and `whisper-small.en`
+   was never measured.** It is not on this machine, and fetching 488 MB onto a
+   97%-full volume to time it was not worth it. Interpolating by encoder
+   parameter count between the two points that *were* measured — `base.en`
+   (~20 M, 11.3 s) and `large-v3-turbo` (~635 M, 141 s) — puts `small.en`
+   (~88 M) at roughly **25 s**, i.e. just over the line. It would therefore show
+   the notice for a wait of about half a minute. That is survivable: the
+   sentence hedges with "a few minutes *for the large models*", so it is
+   over-dramatic rather than false, and raising the threshold to clear it would
+   delay the notice in the case that actually matters. Worth a real measurement
+   if anyone downloads that model. A machine slower than an M3 Pro moves every
+   number in the same direction.
 3. **`isPresent` still cannot see a truncated `weight.bin`.** Skipping the hub
    means a partial download is caught by the load failing rather than by an etag
    comparison. The fallback covers it, but the first symptom is now a Core ML
    error in the logs rather than a silent re-fetch.
-4. **2.3 GB of orphaned `.tmp.` bundles are still on this machine** (§2.3) on a
+4. **The repair path is unit-tested, not exercised.** The phase rule and the
+   full report sequence are pinned by tests, but no run in this investigation
+   actually corrupted a `.mlmodelc` to watch a real fallback download render.
+   Doing so means deliberately damaging the user's 1.5 GB model cache and
+   re-fetching it on a 97%-full volume, which is why it was not done. The two
+   pieces either side of the rule — `attempt`'s retry and `load`'s hub branch —
+   are each covered; it is their composition on screen that is inferred.
+5. **2.3 GB of orphaned `.tmp.` bundles are still on this machine** (§2.3) on a
    97%-full volume. Not deleted — that is the user's cache, and the command is in
    this report.
-5. **The next `ara` launch will still cost ~2.5 minutes**, because that compile
+6. **The next `ara` launch will still cost ~2.5 minutes**, because that compile
    has genuinely never completed. It should be the last one, provided it is not
    interrupted — which is precisely what the new notice is for.
