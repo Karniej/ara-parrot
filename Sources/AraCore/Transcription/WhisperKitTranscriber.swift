@@ -96,6 +96,32 @@ public actor WhisperKitTranscriber: Transcriber {
     }
 
     /// Resolves a `ModelSource` to a folder and builds the pipeline from it.
+    ///
+    /// ## `prewarm` is deliberately off
+    ///
+    /// It used to be `true`, which is not a cheap flag: `WhisperKit.init` runs
+    /// `loadModels(prewarmMode: true)` and then `loadModels()`, and prewarm
+    /// mode throws its result away (`model = prewarmMode ? nil : loadedModel`
+    /// in `WhisperMLModel.loadModel`). Every compiled model is therefore
+    /// `MLModel.load`ed **twice**, back to back, for a specialisation the
+    /// second load would perform anyway. Measured warm on an M3 Pro:
+    ///
+    /// | variant                | prewarm pass | load pass | first utterance |
+    /// |------------------------|--------------|-----------|-----------------|
+    /// | large-v3-turbo, prewarm| 1.2–1.5s     | 1.3–1.9s  | 0.56–0.95s      |
+    /// | large-v3-turbo, without| —            | 0.95–1.5s | 0.54–0.69s      |
+    /// | base.en, prewarm       | 0.19s        | 0.48s     | 0.10s           |
+    /// | base.en, without       | —            | 0.47s     | 0.10s           |
+    ///
+    /// So it charged 1.2–1.5s of startup and bought nothing measurable back
+    /// on the first utterance. Startup is the wait the user is standing in
+    /// front of. `nil`/`false` is also WhisperKit's own default.
+    ///
+    /// It does **not** avoid the one-time Core ML specialisation for the
+    /// Neural Engine — that happens inside `MLModel.load` whichever pass
+    /// reaches it first, and costs whole minutes on the large model. See
+    /// `specialisationNotice` and the report in
+    /// `.superpowers/sdd/fast-start-report.md`.
     private func load(
         from source: ModelSource, variant: String,
         onPhase: @escaping @Sendable (TranscriberWarmup) -> Void
@@ -115,7 +141,7 @@ public actor WhisperKitTranscriber: Transcriber {
         }
         FileHandle.standardError.write(Data("loading \(model.id)...\n".utf8))
         let config = WhisperKitConfig(model: variant, modelFolder: folder.path,
-                                      verbose: false, prewarm: true, load: true,
+                                      verbose: false, prewarm: false, load: true,
                                       download: false)
         return try await WhisperKit(config)
     }
