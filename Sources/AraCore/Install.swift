@@ -270,6 +270,23 @@ public struct Install: ParsableCommand {
         }
     }
 
+    /// Failures a user can act on, worded for the menu's alert rather than for
+    /// a terminal. `LocalizedError` so `"\(error)"` at a UI call site renders
+    /// the sentence instead of the case name.
+    public enum InstallError: LocalizedError, Equatable {
+        case binaryNotFound
+
+        public var errorDescription: String? {
+            switch self {
+            case .binaryNotFound:
+                return "Ara could not work out where its own binary lives, so "
+                    + "the login item would have nothing to launch. Install "
+                    + "Ara.app to Applications, or put the binary at "
+                    + "/usr/local/bin/ara, and try again."
+            }
+        }
+    }
+
     private static func resolveBinaryPath() throws -> String {
         let resolved = launchAgentBinary(
             runningExecutable: Bundle.main.executableURL?.resolvingSymlinksInPath().path,
@@ -277,11 +294,10 @@ public struct Install: ParsableCommand {
             isExecutable: { FileManager.default.isExecutableFile(atPath: $0) }
         )
         guard let resolved else {
-            FileHandle.standardError.write(Data(
-                ("couldn't locate the ara binary. install Ara.app to /Applications, "
-                    + "or the binary to /usr/local/bin/ara, first.\n").utf8
-            ))
-            throw ExitCode(1)
+            // `ExitCode` is right for the CLI and useless in a dialog: the menu
+            // renders whatever is thrown, and "ExitCode(rawValue: 1)" tells a
+            // user nothing about what to do. Throw something that reads.
+            throw InstallError.binaryNotFound
         }
         if resolved != canonicalInstall, !isInsideAppBundle(resolved) {
             FileHandle.standardError.write(Data(
@@ -307,10 +323,19 @@ public struct Install: ParsableCommand {
     /// upgrading from the CLI-only era it is also an older build. Whichever
     /// copy the user launched is the one "Start at Login" must bring back.
     ///
-    /// Outside a bundle the old order stands: prefer the canonical install
-    /// over the running `.build/release/ara`, because a dev binary's path
-    /// stops existing the moment the checkout moves and launchd would go on
-    /// pointing at it forever.
+    /// Outside a bundle the canonical install comes next, because a dev
+    /// binary's path stops existing the moment the checkout moves and launchd
+    /// would go on pointing at it forever.
+    ///
+    /// **But a known path always beats no path.** The running executable was
+    /// once only consulted when it sat inside a bundle, which made the bundle
+    /// check decide *eligibility* rather than *precedence* — so running
+    /// `.build/release/ara`, or `ara` off a `~/.local/bin` symlink, fell all
+    /// the way through to `nil` and "Start at Login" failed outright. That is
+    /// the everyday case for anyone who has not installed to `/usr/local/bin`,
+    /// including every developer working on Ara. `Bundle.main.executableURL`
+    /// knows exactly where the process came from; a fragile path that works
+    /// today beats a dialog that never works.
     static func launchAgentBinary(
         runningExecutable: String?,
         argv0: String,
@@ -322,6 +347,9 @@ public struct Install: ParsableCommand {
         }
         if isExecutable(canonicalInstall) {
             return canonicalInstall
+        }
+        if let runningExecutable, isExecutable(runningExecutable) {
+            return runningExecutable
         }
         // `argv[0]` is whatever the caller handed exec — `./ara`, or a bare
         // `ara` resolved off PATH. A relative path in the plist resolves

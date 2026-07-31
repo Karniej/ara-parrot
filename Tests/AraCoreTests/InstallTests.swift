@@ -298,3 +298,57 @@ struct InstallStartNoticeTests {
         #expect(notice.contains("could not be started"))
     }
 }
+
+@Suite("InstallBinaryFallback")
+struct InstallBinaryFallbackTests {
+    /// The bug this pins: the bundle check decided *eligibility* rather than
+    /// *precedence*, so a running binary outside a bundle was discarded even
+    /// though its path was known. With no /usr/local/bin/ara and a bare
+    /// `argv[0]` — the everyday case for anyone running off a PATH symlink or
+    /// a checkout — every branch fell through and Start at Login failed with
+    /// "ExitCode(rawValue: 1)".
+    @Test("a running binary outside a bundle is used when nothing better exists")
+    func runningBinaryOutsideABundleIsUsed() {
+        let running = "/Users/x/Documents/Github/parrot/.build/release/ara"
+        let resolved = Install.launchAgentBinary(
+            runningExecutable: running,
+            argv0: "ara",
+            isExecutable: { $0 == running })
+        #expect(resolved == running)
+    }
+
+    /// Precedence is unchanged where a better answer exists: the canonical
+    /// install still beats a dev binary, because a checkout can move and
+    /// launchd would point at the old path forever.
+    @Test("the canonical install still wins over a running dev binary")
+    func canonicalStillWins() {
+        let running = "/Users/x/checkout/.build/release/ara"
+        let resolved = Install.launchAgentBinary(
+            runningExecutable: running,
+            argv0: "ara",
+            isExecutable: { $0 == running || $0 == Install.canonicalInstall })
+        #expect(resolved == Install.canonicalInstall)
+    }
+
+    /// And the bundle still outranks everything: it carries the Info.plist
+    /// that TCC files the microphone and accessibility grants under.
+    @Test("a bundle still outranks the canonical install")
+    func bundleStillOutranksCanonical() {
+        let bundled = "/Applications/Ara.app/Contents/MacOS/ara"
+        let resolved = Install.launchAgentBinary(
+            runningExecutable: bundled,
+            argv0: "ara",
+            isExecutable: { _ in true })
+        #expect(resolved == bundled)
+    }
+
+    /// Nothing to point at is still a failure — but one that says so.
+    @Test("with nothing executable anywhere the error reads like a sentence")
+    func nothingFoundGivesAReadableError() {
+        #expect(Install.launchAgentBinary(runningExecutable: nil, argv0: "ara",
+                                          isExecutable: { _ in false }) == nil)
+        let message = Install.InstallError.binaryNotFound.localizedDescription
+        #expect(message.contains("/usr/local/bin/ara"))
+        #expect(!message.contains("ExitCode"))
+    }
+}

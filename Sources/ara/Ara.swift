@@ -406,11 +406,17 @@ struct Run: ParsableCommand {
                         try Install.uninstallAgent()
                     }
                 } catch {
+                    // `localizedDescription` so an `InstallError` renders its
+                    // sentence; a foreign error still degrades to something,
+                    // and the type name goes to stderr where a developer can
+                    // find it rather than into the user's dialog.
+                    FileHandle.standardError.write(Data(
+                        "start at login failed: \(type(of: error))\n".utf8))
                     menuBar.showNotice(
                         title: enable
                             ? "Could not enable Start at Login"
                             : "Could not disable Start at Login",
-                        message: "\(error)")
+                        message: error.localizedDescription)
                 }
                 menuBar.setStartAtLogin(Install.isInstalled())
             }
