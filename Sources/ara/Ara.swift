@@ -902,7 +902,11 @@ private final class WarmupState {
     /// A hotkey press. Answers `true` when it was consumed as a status
     /// display — which is exactly when recording is not allowed yet.
     func showStatusIfWarming() -> Bool {
-        guard let message = status.message else { return false }
+        // `blocksDictation`, not `message`: the formatting model may still be
+        // loading and still have a line to show, but it does not gate speech.
+        guard status.blocksDictation, let message = status.message else {
+            return false
+        }
         showingStatus = true
         overlay?.show(.warmingUp(message))
         return true
@@ -918,8 +922,20 @@ private final class WarmupState {
     }
 
     /// `nil` means the transcriber is warm — see `WarmupStatus.transcriber`.
+    ///
+    /// Each report reaches the main actor on its own `Task`, and those arrive
+    /// unordered — which is why `transcriberSettled` exists at all. The same
+    /// reordering can land 45% after 46%, so the percentage is filtered here
+    /// as well as coalesced at the source: a number that walks backwards on
+    /// screen reads as a stall or a bug, and the coalescer's monotonicity
+    /// only ever applied to what it emitted, not to what arrived.
     func setTranscriber(_ phase: TranscriberWarmup?) {
         guard !transcriberSettled else { return }
+        if case .downloading(let incoming?) = phase,
+           case .downloading(let current?) = status.transcriber,
+           incoming < current {
+            return
+        }
         if phase == nil { transcriberSettled = true }
         status.transcriber = phase
         repaint()

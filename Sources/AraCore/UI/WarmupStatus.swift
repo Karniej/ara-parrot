@@ -42,6 +42,16 @@ public struct WarmupStatus: Equatable, Sendable {
         self.formatter = formatter
     }
 
+    /// Whether dictation must still be held back.
+    ///
+    /// **The transcriber alone decides this.** The formatting model is polish:
+    /// `MLXFormatter.format` throws `.unavailable` until it is loaded and
+    /// `FormatterChain` falls through to the rules floor, which is the same
+    /// degradation a user without the model gets permanently. Holding the
+    /// hotkey shut through a second model's load buys nothing and costs the
+    /// user the seconds they are standing there waiting to speak.
+    public var blocksDictation: Bool { transcriber != nil }
+
     /// The pill's line, or `nil` when there is nothing left to wait for.
     ///
     /// The transcriber outranks the formatter because it is the one that gates

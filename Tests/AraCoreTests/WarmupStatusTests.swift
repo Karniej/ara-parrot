@@ -86,3 +86,37 @@ struct WarmupStatusTests {
                 == "ready — hold fn to dictate")
     }
 }
+
+@Suite("WarmupGate")
+struct WarmupGateTests {
+    /// The change this pins: dictation waited on *both* models, but only the
+    /// transcriber can actually produce text. The formatting model is polish —
+    /// `MLXFormatter.format` throws `.unavailable` until it loads and the chain
+    /// falls through to the rules floor — so holding the hotkey shut through
+    /// its load bought nothing and cost the user seconds of standing there.
+    @Test("a loading formatter does not hold dictation back")
+    func formatterDoesNotGateDictation() {
+        let status = WarmupStatus(modelID: "whisper-base.en",
+                                  transcriber: nil, formatter: .loading)
+        #expect(!status.blocksDictation)
+        // It still has something to say — the pill and menu line stay honest.
+        #expect(status.message == "preparing the formatting model…")
+    }
+
+    @Test("a loading transcriber does hold dictation back")
+    func transcriberGatesDictation() {
+        for phase: TranscriberWarmup in [.loading, .downloading(percent: nil), .downloading(percent: 40)] {
+            let status = WarmupStatus(modelID: "whisper-large-v3-turbo",
+                                      transcriber: phase, formatter: .ready)
+            #expect(status.blocksDictation, "\(phase) should gate dictation")
+        }
+    }
+
+    @Test("nothing loading gates nothing and says nothing")
+    func readyGatesNothing() {
+        let status = WarmupStatus(modelID: "whisper-base.en",
+                                  transcriber: nil, formatter: .ready)
+        #expect(!status.blocksDictation)
+        #expect(status.message == nil)
+    }
+}
