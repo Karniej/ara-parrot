@@ -4,6 +4,7 @@ import WhisperKit
 public actor WhisperKitTranscriber: Transcriber {
     let modelID: String
     private let model: TranscriptionModel
+    private let vocabularyHints: @Sendable () -> [String]
     private var pipeline: WhisperKit?
 
     /// Which language(s) to transcribe in. Mutable because it genuinely
@@ -24,10 +25,13 @@ public actor WhisperKitTranscriber: Transcriber {
     /// re-establish.
     private var lastUsedLanguage: String?
 
-    public init(model: TranscriptionModel, language: LanguageSetting = .automatic) {
+    public init(model: TranscriptionModel,
+                language: LanguageSetting = .automatic,
+                vocabularyHints: @escaping @Sendable () -> [String] = { [] }) {
         self.modelID = model.id
         self.model = model
         self.language = language
+        self.vocabularyHints = vocabularyHints
     }
 
     /// Loads the model into memory; downloads first if not already on disk.
@@ -131,12 +135,19 @@ public actor WhisperKitTranscriber: Transcriber {
         let plan = LanguagePlan.resolve(model: model, setting: language)
         let monitored = language.monitoredCodes ?? []
         let previous = lastUsedLanguage.flatMap { monitored.contains($0) ? $0 : nil }
+        // Snapshot once per utterance: a hand edit applies on the next call,
+        // while all language-refinement passes for this call see the same
+        // prompt. `nil` keeps WhisperKit's baseline prefill path when the
+        // dictionary is empty.
+        let promptTokens = Self.promptTokens(
+            for: vocabularyHints(), tokenizer: pipeline.tokenizer)
 
         // Pass one. For every setting except a multi-language monitored set on
         // a multilingual model this is also the last one.
         let first = try await pass(audio, pipeline: pipeline,
                                    language: plan.language,
-                                   detectLanguage: plan.detectLanguage)
+                                   detectLanguage: plan.detectLanguage,
+                                   promptTokens: promptTokens)
         var chosen = first
         var decision = plan.detectLanguage ? "detected" : "fixed"
 
@@ -147,7 +158,8 @@ public actor WhisperKitTranscriber: Transcriber {
             // throwing where it used to return words.
             (chosen, decision) = await refine(
                 audio, pipeline: pipeline, first: first,
-                monitored: monitored, previous: previous)
+                monitored: monitored, previous: previous,
+                promptTokens: promptTokens)
         }
 
         let text = Self.sanitize(chosen.text)
@@ -200,7 +212,8 @@ public actor WhisperKitTranscriber: Transcriber {
     ///
     /// Anything that goes wrong returns pass one unchanged. Never throws.
     private func refine(_ audio: [Float], pipeline: WhisperKit, first: Pass,
-                        monitored: [String], previous: String?) async -> (Pass, String) {
+                        monitored: [String], previous: String?,
+                        promptTokens: [Int]?) async -> (Pass, String) {
         do {
             if !monitored.contains(first.language ?? "") {
                 // `LanguagePolicy.selectMonitoredLanguage(probabilities: [:],
@@ -210,7 +223,8 @@ public actor WhisperKitTranscriber: Transcriber {
                 guard let best = previous ?? monitored.first
                 else { return (first, "detected") }
                 let pinned = try await pass(audio, pipeline: pipeline,
-                                            language: best, detectLanguage: false)
+                                            language: best, detectLanguage: false,
+                                            promptTokens: promptTokens)
                 return replacing(first, with: pinned,
                                  decision: first.language.map { "monitored, over \($0)" }
                                      ?? "monitored")
@@ -222,7 +236,8 @@ public actor WhisperKitTranscriber: Transcriber {
 
             let alternative = try await pass(audio, pipeline: pipeline,
                                              language: alternativeLanguage,
-                                             detectLanguage: false)
+                                             detectLanguage: false,
+                                             promptTokens: promptTokens)
             let winner = LanguagePolicy.chooseLanguage(
                 detected: first.language, detectedScore: first.confidence,
                 alternative: alternativeLanguage, alternativeScore: alternative.confidence,
@@ -269,13 +284,28 @@ public actor WhisperKitTranscriber: Transcriber {
     }
 
     private func pass(_ audio: [Float], pipeline: WhisperKit,
-                      language: String?, detectLanguage: Bool) async throws -> Pass {
-        let options = DecodingOptions(language: language, detectLanguage: detectLanguage)
+                      language: String?, detectLanguage: Bool,
+                      promptTokens: [Int]?) async throws -> Pass {
+        let options = DecodingOptions(language: language,
+                                      detectLanguage: detectLanguage,
+                                      promptTokens: promptTokens)
         let results: [TranscriptionResult] = try await pipeline.transcribe(
             audioArray: audio, decodeOptions: options)
         return Pass(text: results.map(\.text).joined(separator: " "),
                     language: language ?? Self.dominantLanguage(in: results),
                     confidence: Self.confidence(results))
+    }
+
+    /// Whisper consumes only the tail of a decoder prompt. Apply its current
+    /// 111-token bound explicitly so the behavior is stable across WhisperKit
+    /// versions and a large dictionary cannot create an unbounded prompt.
+    /// This prompt shape is adapted from `aivars/parrot` (MIT).
+    private static func promptTokens(
+        for vocabularyHints: [String], tokenizer: WhisperTokenizer?
+    ) -> [Int]? {
+        guard !vocabularyHints.isEmpty, let tokenizer else { return nil }
+        let prompt = vocabularyHints.joined(separator: ", ") + "."
+        return Array(tokenizer.encode(text: prompt).suffix(111))
     }
 
     /// One decoding pass's result: what was said, in what language, and how

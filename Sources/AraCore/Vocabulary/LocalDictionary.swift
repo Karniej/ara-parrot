@@ -129,6 +129,34 @@ public struct LocalDictionary: Sendable, Equatable {
         FileHandle.standardError.write(Data("dictionary: \(message)\n".utf8))
     }
 
+    // MARK: - Decoder hints
+
+    /// Canonical spellings suitable for Whisper's decoder prompt.
+    ///
+    /// The dictionary still performs the deterministic replacement after
+    /// transcription. These hints complement that floor by giving the ASR a
+    /// chance to produce the intended spelling in the first place. File order
+    /// is preserved, blank and case-duplicate canonicals are ignored, and the
+    /// count is bounded before tokenization so a large hand-edited dictionary
+    /// cannot grow the decoder prompt without limit.
+    public func vocabularyHints(maximumCount: Int = 64) -> [String] {
+        guard maximumCount > 0 else { return [] }
+
+        var seen = Set<String>()
+        var hints: [String] = []
+        for entry in entries {
+            let canonical = entry.canonical
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !canonical.isEmpty,
+                  seen.insert(canonical.lowercased()).inserted
+            else { continue }
+
+            hints.append(canonical)
+            if hints.count == maximumCount { break }
+        }
+        return hints
+    }
+
     // MARK: - Applying
 
     /// Rewrites every misheard variant in `text` to its canonical form and

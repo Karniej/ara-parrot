@@ -33,6 +33,30 @@ struct LocalDictionaryTests {
         var joined: String { lines.joined(separator: "\n") }
     }
 
+    // MARK: - decoder hints
+
+    @Test("decoder hints use canonical spellings in file order")
+    func vocabularyHints() {
+        let d = dict([
+            entry("Ara", "arra"),
+            entry("Kraków", "krakuf"),
+        ])
+        #expect(d.vocabularyHints() == ["Ara", "Kraków"])
+    }
+
+    @Test("decoder hints trim blanks, deduplicate, and respect their bound")
+    func boundedVocabularyHints() {
+        let d = dict([
+            entry("  Ara  ", "arra"),
+            entry("ara", "aara"),
+            entry("\n\t", "blank"),
+            entry("WhisperKit", "whisper kit"),
+            entry("Kraków", "krakuf"),
+        ])
+        #expect(d.vocabularyHints(maximumCount: 2) == ["Ara", "WhisperKit"])
+        #expect(d.vocabularyHints(maximumCount: 0).isEmpty)
+    }
+
     // MARK: - apply: the replacement engine
 
     @Test("replaces a misheard variant with its canonical form")

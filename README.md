@@ -323,9 +323,10 @@ than a real line break, and enumerations only become lists at `high` — are
 recorded in [docs/KNOWN-ISSUES.md](docs/KNOWN-ISSUES.md).
 
 **Custom dictionary.** Words Whisper reliably mishears — your name, your
-product, your city — rewritten deterministically before any model sees the
-text. `~/.config/ara/dictionary.json`, or the **Add dictionary correction…**
-menu form. Applies to the next utterance, no restart. See
+product, your city — supplied to Whisper as decoder hints, then rewritten
+deterministically if it still emits a known variant. Uses
+`~/.config/ara/dictionary.json`, or the **Add dictionary correction…** menu
+form. Applies to the next utterance, no restart. See
 [Dictionary](#dictionary).
 
 **Voice snippets.** Dictate a trigger phrase, get a block of text typed
@@ -593,10 +594,11 @@ The language a given utterance was transcribed in is logged to stderr —
 ## Dictionary
 
 Whisper will mishear the same words every time — your name, your product, your
-city. The dictionary fixes those deterministically, before any formatting
+city. The dictionary gives its canonical spellings to Whisper as decoder
+hints, then fixes known variants deterministically before any formatting
 engine runs: menu bar item → **Add dictionary correction…**, type what
-dictation heard and what it should have typed, done. The very next utterance is
-corrected — no restart, nothing to reload.
+dictation heard and what it should have typed, done. The very next utterance
+uses the hint and correction — no restart, nothing to reload.
 
 Corrections live at `~/.config/ara/dictionary.json`, next to the config, and
 the file is meant to be hand-edited too — it is written pretty-printed with
@@ -633,6 +635,13 @@ The file is read fresh on every utterance, so a hand edit applies to the next
 dictation the same way a menu addition does. And like the config, a broken file
 never stops dictation: one `dictionary:` line on stderr — once, not once per
 utterance — and corrections sit out until the file parses again.
+
+The decoder prompt contains canonical spellings only, deduplicated in file
+order and bounded to 64 entries / the final 111 tokens. An empty dictionary
+keeps WhisperKit's baseline decoding path. A non-empty one disables
+WhisperKit's prefill cache, so custom vocabulary trades some transcription
+latency for better recognition of those terms; deterministic replacement
+remains the fallback.
 
 **Edit dictionary…**, right below the correction form in the menu, opens the
 file in whatever edits JSON on your Mac — writing it first with a one-entry
