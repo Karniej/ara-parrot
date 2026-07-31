@@ -383,6 +383,7 @@ struct Run: ParsableCommand {
                 menuBar.setModelMenu(ModelMenuModel.compute(
                     models: ModelRegistry.shared,
                     currentID: current,
+                    downloaded: WhisperModelStore.isPresent,
                     formatterDownloaded: MLXModel.isPresent))
             }
             repaintModelMenu(chosenModel.id)
@@ -848,14 +849,16 @@ struct Models: ParsableCommand {
 
     struct List: ParsableCommand {
         func run() throws {
-            for m in ModelRegistry.shared {
-                let star = m.recommended ? "★" : " "
-                let id = m.id.padding(toLength: 26, withPad: " ", startingAt: 0)
-                let langs = "[\(m.languages.joined(separator: ","))]"
-                    .padding(toLength: 9, withPad: " ", startingAt: 0)
-                let size = String(format: "%5d MB", m.sizeMB)
-                print("\(star) \(id) \(size)  \(langs)  \(m.displayName)")
+            // Rows, including the on-disk column, come from `ModelListing` —
+            // the pick made here decides whether the next launch spends a
+            // minute and a half downloading, so the column that says so is
+            // unit-tested rather than assembled in a print loop.
+            for line in ModelListing.lines(models: ModelRegistry.shared,
+                                           isPresent: WhisperModelStore.isPresent) {
+                print(line)
             }
+            print("★ recommended · a model not on disk is downloaded by the "
+                + "next launch's warm-up")
         }
     }
 

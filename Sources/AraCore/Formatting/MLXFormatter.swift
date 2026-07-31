@@ -385,15 +385,13 @@ public enum MLXModel {
     /// because an interrupted download leaves the directory behind: "the folder
     /// exists" would send `warmUp` into a load that fails with a
     /// tokenizer-shaped error instead of the one sentence that tells the user
-    /// to run the download again.
+    /// to run the download again. That rule now lives in
+    /// `LocalModelDirectory`, shared with the transcription weights, which have
+    /// the same failure mode and the same tell.
     public static var isPresent: Bool {
-        let fm = FileManager.default
-        let dir = directory
-        guard fm.fileExists(atPath: dir.appendingPathComponent("config.json").path) else {
-            return false
+        LocalModelDirectory.isPresent(directory) { entries in
+            entries.contains { $0.hasSuffix(".safetensors") }
         }
-        guard let entries = try? fm.contentsOfDirectory(atPath: dir.path) else { return false }
-        return entries.contains { $0.hasSuffix(".safetensors") }
     }
 
     /// Fetches the model. Called only from the CLI — never from `format`, and

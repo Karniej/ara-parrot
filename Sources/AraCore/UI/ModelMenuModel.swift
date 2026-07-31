@@ -38,14 +38,24 @@ public struct ModelMenuModel: Equatable, Sendable {
     /// The check sits on `currentID` — the model the running transcriber was
     /// built with, which `StartupResolution.model` resolved from flag, config
     /// and the recommended default.
+    ///
+    /// - Parameter downloaded: whether a model's weights are already on disk.
+    ///   The size alone was not enough: a first run on a model that is not
+    ///   here downloads it, and on the large model that is 1.6 GB and well
+    ///   over a minute of a daemon that cannot dictate yet. This is the only
+    ///   place a user meets that cost *before* paying it, so the row says
+    ///   which of the two a pick means.
     public static func compute(models: [TranscriptionModel],
                                currentID: String,
+                               downloaded: (TranscriptionModel) -> Bool,
                                formatterDownloaded: Bool) -> ModelMenuModel {
         ModelMenuModel(
             items: models.map { model in
-                Item(title: "\(model.id) · \(model.sizeMB) MB",
-                     id: model.id,
-                     checked: model.id == currentID)
+                let availability = ModelSize.availability(
+                    megabytes: model.sizeMB, downloaded: downloaded(model))
+                return Item(title: "\(model.id) · \(availability)",
+                            id: model.id,
+                            checked: model.id == currentID)
             },
             formatter: formatterDownloaded
                 ? FormatterItem(title: "Formatting model: ✓ downloaded",
