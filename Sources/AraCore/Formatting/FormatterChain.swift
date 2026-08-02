@@ -22,6 +22,14 @@ import Foundation
 /// value should be chosen against the slowest single engine, then multiplied to
 /// sanity-check the worst case.
 ///
+/// It is also **a base, not the whole budget**: generation time grows with the
+/// length of what was dictated, so a fixed value silently withholds cleanup from
+/// exactly the long, considered sentences that most need it. Each attempt gets
+/// `FormatterDeadline.budget(base:characters:)` — the configured value plus a
+/// measured per-character allowance, under a hard ceiling so a hung engine still
+/// cannot hold the cursor indefinitely. Raising `timeoutMs` raises the whole
+/// curve; the ceiling bounds it.
+///
 /// Cancellation is not a formatting failure. If the calling task is cancelled
 /// mid-format, `CancellationError` propagates rather than being absorbed into a
 /// fallback: the caller asked for the work to stop, and handing back a string
@@ -175,7 +183,7 @@ public struct FormatterChain: Formatter {
     private func terminalFallback(_ text: String, mode: Mode) async throws -> String {
         let rules = self.rules
         do {
-            return try await Self.withDeadline(timeout) {
+            return try await Self.withDeadline(deadline(for: text)) {
                 try await rules.format(text, mode: mode)
             }
         } catch {
@@ -186,9 +194,15 @@ public struct FormatterChain: Formatter {
         }
     }
 
+    /// This attempt's budget: the configured base plus the measured allowance
+    /// for how much there is to rewrite. See `FormatterDeadline`.
+    private func deadline(for text: String) -> Duration {
+        FormatterDeadline.budget(base: timeout, characters: text.count)
+    }
+
     private func attempt(_ formatter: any Formatter, text: String,
                          mode: Mode) async throws -> String {
-        let out = try await Self.withDeadline(timeout) {
+        let out = try await Self.withDeadline(deadline(for: text)) {
             try await formatter.format(text, mode: mode)
         }
         guard OutputGuard.isPlausible(input: text, output: out) else {

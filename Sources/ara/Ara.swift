@@ -651,8 +651,14 @@ struct Run: ParsableCommand {
                         }
                     }
                     guard !samples.isEmpty else {
+                        // Hiding the pill here was the silent failure: the user
+                        // held the key, spoke, and got back nothing at all —
+                        // indistinguishable from the daemon ignoring them. An
+                        // utterance that produces no text says so.
+                        FileHandle.standardError.write(Data(
+                            "  nothing to transcribe: \(EmptyDictation.noAudio.reason)\n".utf8))
                         MainActor.assumeIsolated {
-                            overlay?.hide()
+                            overlay?.show(.error(EmptyDictation.noAudio.message))
                             menuBar.setRecording(false)
                         }
                         return
@@ -666,6 +672,27 @@ struct Run: ParsableCommand {
                                 (TranscriptLog.raw(seconds: transcribed, text: text,
                                                    echoTranscript: echoTranscripts) + "\n").utf8
                             ))
+                            // Audio came in and no words came out. Whisper is
+                            // unreliable below about a second, and `sanitize`
+                            // strips the bracket tokens it emits in place of
+                            // words — so a short or clipped utterance lands here
+                            // with a healthy rms and an empty string. `diagnose`
+                            // returns nil for any non-blank transcript, so this
+                            // branch cannot swallow a real result.
+                            if let empty = EmptyDictation.diagnose(
+                                sampleCount: samples.count, seconds: seconds, rms: rms,
+                                leadingSilence: EmptyDictation.leadingSilence(
+                                    samples, sampleRate: AudioCapture.targetSampleRate),
+                                transcript: text)
+                            {
+                                FileHandle.standardError.write(Data(
+                                    "  nothing to transcribe: \(empty.reason)\n".utf8))
+                                await MainActor.run {
+                                    overlay?.show(.error(empty.message))
+                                    menuBar.setRecording(false)
+                                }
+                                return
+                            }
                             // Never `try?`, and never a throwing call: `process`
                             // returns a String and cannot fail, so a broken
                             // formatter can only ever degrade to raw text.
