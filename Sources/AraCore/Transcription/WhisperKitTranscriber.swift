@@ -2,8 +2,21 @@ import Foundation
 import WhisperKit
 
 public actor WhisperKitTranscriber: Transcriber {
-    let modelID: String
-    private let model: TranscriptionModel
+    /// Which model the *running* transcriber is actually using — not what
+    /// `config.json` says. The Model submenu can change the saved value while
+    /// this one is still serving utterances from the old pipeline, and the menu
+    /// header reports this one.
+    ///
+    /// Lock-guarded rather than actor-isolated because `Transcriber` requires a
+    /// synchronous read, and because the caller that most wants it is the menu
+    /// on the main actor — which must not `await` a transcriber that is busy
+    /// inside a several-minute model load to redraw a label.
+    private let modelIDLock = NSLock()
+    nonisolated(unsafe) private var _modelID: String
+    public nonisolated var modelID: String {
+        modelIDLock.withLock { _modelID }
+    }
+    private var model: TranscriptionModel
     private var pipeline: WhisperKit?
 
     /// Which language(s) to transcribe in. Mutable because it genuinely
@@ -25,7 +38,7 @@ public actor WhisperKitTranscriber: Transcriber {
     private var lastUsedLanguage: String?
 
     public init(model: TranscriptionModel, language: LanguageSetting = .automatic) {
-        self.modelID = model.id
+        self._modelID = model.id
         self.model = model
         self.language = language
     }
@@ -70,6 +83,16 @@ public actor WhisperKitTranscriber: Transcriber {
         onPhase: @escaping @Sendable (TranscriberWarmup) -> Void = { _ in }
     ) async throws {
         if pipeline != nil { return }
+        pipeline = try await Self.buildPipeline(model: model, onPhase: onPhase)
+    }
+
+    /// Builds a loaded pipeline for `model`, downloading and repairing as
+    /// needed. Everything `warmUp` used to do inline, hoisted to `static` so a
+    /// live switch can run it off the actor — see `load`.
+    public static func buildPipeline(
+        model: TranscriptionModel,
+        onPhase: @escaping @Sendable (TranscriberWarmup) -> Void = { _ in }
+    ) async throws -> WhisperKit {
         guard let whisperKitID = model.whisperKitID else {
             throw TranscriberError.missingEngineID
         }
@@ -86,7 +109,7 @@ public actor WhisperKitTranscriber: Transcriber {
         // fix pre-emptively on every launch — see `WhisperWarmupPlan`. `attempt`
         // allows exactly one fallback, so this cannot loop.
         let id = model.id
-        pipeline = try await WhisperWarmupPlan.attempt(from: source, onRepair: { _, error in
+        let built = try await WhisperWarmupPlan.attempt(from: source, onRepair: { _, error in
             // The fault is named, not just the reaction to it. This is the only
             // place the first error can still be reported — the caller gets the
             // hub's — and it is the answer to the question a user watching an
@@ -95,9 +118,29 @@ public actor WhisperKitTranscriber: Transcriber {
                 ("\(id) did not load from disk (\(type(of: error))); "
                     + "re-checking the download...\n").utf8))
         }) { source in
-            try await load(from: source, variant: whisperKitID, onPhase: onPhase)
+            try await load(model: model, from: source,
+                           variant: whisperKitID, onPhase: onPhase)
         }
         FileHandle.standardError.write(Data("✓ \(model.id) ready\n".utf8))
+        return built
+    }
+
+    /// Adopts an already-loaded pipeline as the running one.
+    ///
+    /// Split from `buildPipeline` because that is the part that takes minutes
+    /// and this is the part that must not: actor isolation serialises this
+    /// against `transcribe`, so the swap lands cleanly between two utterances
+    /// and never inside one. The old pipeline is released here, which is also
+    /// what keeps two Whisper models from staying resident after a switch.
+    ///
+    /// `lastUsedLanguage` is dropped: it is a prior about how *this* model
+    /// hears the user, and carrying an English-only model's history into a
+    /// multilingual one is exactly the stale bias `setLanguage` clears.
+    public func adopt(_ pipeline: WhisperKit, model: TranscriptionModel) {
+        self.pipeline = pipeline
+        self.model = model
+        modelIDLock.withLock { _modelID = model.id }
+        self.lastUsedLanguage = nil
     }
 
     /// Resolves a `ModelSource` to a folder and builds the pipeline from it.
@@ -127,7 +170,13 @@ public actor WhisperKitTranscriber: Transcriber {
     /// reaches it first, and costs whole minutes on the large model. See
     /// `specialisationNotice` and the report in
     /// `.superpowers/sdd/fast-start-report.md`.
-    private func load(
+    /// `static` for the same reason `downloadModel` is, and for one more: a
+    /// live model switch builds its pipeline through `buildPipeline` *without*
+    /// holding actor isolation, so utterances keep being served by the old
+    /// pipeline throughout a load that can take minutes. An isolated loader
+    /// would queue every `transcribe` behind the Neural Engine compile.
+    private static func load(
+        model: TranscriptionModel,
         from source: ModelSource, variant: String,
         onPhase: @escaping @Sendable (TranscriberWarmup) -> Void
     ) async throws -> WhisperKit {

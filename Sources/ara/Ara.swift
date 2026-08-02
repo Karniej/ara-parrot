@@ -253,6 +253,7 @@ struct Run: ParsableCommand {
         // by value, into that utterance. Deliberately not persisted: it is a
         // session override, and `config.mode` stays the startup default.
         let manualMode = MainActor.assumeIsolated { ManualMode() }
+        let running = MainActor.assumeIsolated { RunningModel(model: chosenModel, language: config.language) }
 
         // The submenu's contents are computed by `MicrophoneMenuModel.compute`
         // (unit-tested); this closure only ferries store state to the shell.
@@ -360,14 +361,16 @@ struct Run: ParsableCommand {
             // like the microphone for the same reason: the live apply cannot
             // fail, so it happens first and holds until quit even when the
             // file cannot be written.
-            let repaintLanguageMenu: @MainActor (LanguageSetting) -> Void = { current in
+            let repaintLanguageMenu: @MainActor () -> Void = {
                 menuBar.setLanguageMenu(LanguageMenuModel.compute(
-                    model: chosenModel, current: current))
+                    model: running.model, current: running.language,
+                    switching: running.switching))
             }
-            repaintLanguageMenu(config.language)
+            repaintLanguageMenu()
             menuBar.onLanguagePicked = { setting in
                 Task { await transcriber.setLanguage(setting) }
-                repaintLanguageMenu(setting)
+                running.language = setting
+                repaintLanguageMenu()
                 do {
                     try Config.persistLanguage(setting)
                 } catch {
@@ -418,6 +421,16 @@ struct Run: ParsableCommand {
                         "config: model choice not saved (\(reason)); the saved setting is unchanged\n"
                             .utf8))
                 }
+                // …and then actually switch to it, rather than leaving the user
+                // to discover that a caption in this submenu was the only thing
+                // that knew a restart was required. The load runs off the actor
+                // (`buildPipeline` is static), so the old model keeps serving
+                // dictation for however long the new one takes — including a
+                // first-time Neural Engine compile of several minutes.
+                guard let target = ModelRegistry.find(id) else { return }
+                beginModelSwitch(to: target, running: running,
+                                 transcriber: transcriber, menuBar: menuBar,
+                                 repaintLanguageMenu: repaintLanguageMenu)
             }
 
             menuBar.setHotkeyMenu(HotkeyMenuModel.compute(current: chosenHotkey))
@@ -876,6 +889,63 @@ struct Run: ParsableCommand {
     }
 }
 
+/// Starts a live model switch: loads `target` in the background and adopts it
+/// when it is ready, leaving the current model serving dictation throughout.
+///
+/// A free function rather than another closure in `run()` because the body is
+/// long enough that folding it into the main-actor block there defeats Swift's
+/// multi-statement closure inference — and because the switch is a unit of
+/// behaviour worth naming.
+///
+/// The load is not cancellable: `WhisperKit.init` spends its time inside Core
+/// ML, which does not observe cancellation. So a superseding pick is handled by
+/// *declining the result* — the generation check before `adopt` — rather than
+/// by stopping the work, which cannot be done.
+@MainActor
+private func beginModelSwitch(
+    to target: TranscriptionModel, running: RunningModel,
+    transcriber: WhisperKitTranscriber, menuBar: MenuBarController,
+    repaintLanguageMenu: @escaping @MainActor () -> Void
+) {
+    guard target.id != running.model.id else { return }
+    running.generation += 1
+    let generation = running.generation
+    running.switching = .loading(target: target.id)
+    menuBar.setModelLabel(running: running.model.id, switching: running.switching)
+    repaintLanguageMenu()
+    FileHandle.standardError.write(Data(
+        ("switching to \(target.id) (\(running.model.id) stays live until it "
+            + "is ready)...\n").utf8))
+
+    Task {
+        do {
+            let pipeline = try await WhisperKitTranscriber.buildPipeline(model: target)
+            guard running.generation == generation else {
+                FileHandle.standardError.write(Data(
+                    ("\(target.id) loaded, but a newer choice supersedes it; "
+                        + "discarding\n").utf8))
+                return
+            }
+            await transcriber.adopt(pipeline, model: target)
+            running.model = target
+            running.switching = .settled
+            menuBar.setModelLabel(running: target.id, switching: .settled)
+            repaintLanguageMenu()
+            FileHandle.standardError.write(Data(
+                "✓ now transcribing with \(target.id)\n".utf8))
+        } catch {
+            FileHandle.standardError.write(Data(
+                ("switch to \(target.id) failed (\(type(of: error))); still "
+                    + "using \(running.model.id)\n").utf8))
+            guard running.generation == generation else { return }
+            running.switching = .failed(target: target.id)
+            menuBar.setModelLabel(running: running.model.id,
+                                  switching: running.switching)
+            repaintLanguageMenu()
+        }
+    }
+}
+
 /// The Mode submenu's session override: `nil` is Auto (the resolver's
 /// frontmost-app rule decides), a mode id pins every following utterance
 /// until changed or quit. Main-actor because both its writer (the menu) and
@@ -885,6 +955,34 @@ struct Run: ParsableCommand {
 @MainActor
 private final class ManualMode {
     var id: String?
+}
+
+/// What the daemon is *actually* transcribing with, as opposed to what
+/// `config.json` says it should be.
+///
+/// The two diverge the moment someone picks a model: the config write is
+/// immediate and the load that makes it true takes seconds to minutes. Every
+/// menu that describes transcription — the `model:` line, the Language rows —
+/// has to read from here, or it describes a model that is not running.
+///
+/// Main-actor for `ManualMode`'s reason: written by the switch task hopping in,
+/// read by menu repaints AppKit already delivers there.
+@MainActor
+private final class RunningModel {
+    var model: TranscriptionModel
+    var language: LanguageSetting
+    var switching: ModelSwitch = .settled
+    /// Bumped per pick, so a load that finishes after a *newer* pick started is
+    /// discarded rather than adopted. Same token discipline as the overlay's
+    /// `showToken` and the capture's generations, and for the same reason:
+    /// there is no cancelling a Core ML compile already in flight, only
+    /// declining its result.
+    var generation = 0
+
+    init(model: TranscriptionModel, language: LanguageSetting) {
+        self.model = model
+        self.language = language
+    }
 }
 
 /// The warm-up's live state and everything on screen that reflects it.

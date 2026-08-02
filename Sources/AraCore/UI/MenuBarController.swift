@@ -215,6 +215,12 @@ public final class MenuBarController {
         configureButton(recording: false)
     }
 
+    /// Repaints the `model:` line. Called when a live model switch starts,
+    /// lands, or fails — see `ModelSwitch`.
+    public func setModelLabel(running: String, switching: ModelSwitch) {
+        modelLabel.title = ModelLabel.text(running: running, switching: switching)
+    }
+
     public func setRecording(_ recording: Bool) {
         stateLabel.title = recording ? "● recording" : idleTitle
     }

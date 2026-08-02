@@ -40,8 +40,13 @@ public struct LanguageMenuModel: Equatable, Sendable {
     /// next dictation uses it.
     public let caption: String
 
+    /// - Parameter switching: what the Model submenu is doing, if anything.
+    ///   The caption's job when the running model is English-only is to say
+    ///   what would unlock these rows — so when a multilingual model is already
+    ///   loading, telling the user to pick one is worse than saying nothing.
     public static func compute(model: TranscriptionModel,
-                               current: LanguageSetting) -> LanguageMenuModel {
+                               current: LanguageSetting,
+                               switching: ModelSwitch = .settled) -> LanguageMenuModel {
         // An English-only model has nothing to choose: no language token, no
         // detection, no second pass. Showing a live picker over it would be a
         // lie, so the rows are visible (so the user can see what the setting
@@ -69,10 +74,28 @@ public struct LanguageMenuModel: Equatable, Sendable {
         return LanguageMenuModel(
             status: status(model: model, current: current),
             items: items,
-            caption: usable
-                ? "applies to the next utterance"
-                : "\(model.id) is English-only — pick a multilingual model to "
-                    + "dictate another language")
+            caption: caption(model: model, usable: usable, switching: switching))
+    }
+
+    /// The line under the rows.
+    ///
+    /// The English-only wording is conditional on there being nothing in
+    /// flight, because "pick a multilingual model" is exactly the instruction a
+    /// user who *just did that* does not need. While one loads, the caption
+    /// says what is happening and that these rows are waiting on it.
+    private static func caption(model: TranscriptionModel, usable: Bool,
+                                switching: ModelSwitch) -> String {
+        if usable { return "applies to the next utterance" }
+        switch switching {
+        case .loading(let target):
+            return "loading \(target) — these unlock when it is ready"
+        case .failed(let target):
+            return "\(target) failed to load — still running \(model.id), "
+                + "which is English-only"
+        case .settled:
+            return "\(model.id) is English-only — pick a multilingual model to "
+                + "dictate another language"
+        }
     }
 
     /// What clicking a language row produces.
