@@ -1,11 +1,17 @@
 import Foundation
 
-public enum FormatterError: Error, Sendable {
+public enum FormatterError: Error, Sendable, Equatable {
     case unavailable
     case timedOut
     case implausibleOutput
     case refused
     case transportFailure(String)
+    /// A previous request is still occupying the engine.
+    ///
+    /// Distinct from `timedOut` because it is the *cause* of the timeouts that
+    /// would otherwise follow, and a log that cannot tell them apart sends you
+    /// looking at the deadline instead of at the queue behind it.
+    case busy
 }
 
 /// Rewrites a raw transcript into cleaner prose. Implementations must be

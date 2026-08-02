@@ -135,12 +135,20 @@ struct MLXFormatterTests {
         let cores = ProcessInfo.processInfo.activeProcessorCount
         let occupancy = PeakOccupancy()
         let mode = mode
-        let formatter = try await loaded(generate: { _, _ in
-            occupancy.enter()
-            usleep(150_000)
-            occupancy.leave()
-            return "hello there, friend"
-        })
+        // One formatter per concurrent call, because a single one now admits
+        // exactly one generation at a time — see the `busy` claim in `format`.
+        // The routing this asserts on is unaffected: `inferenceQueue` is
+        // static, so every instance lands on the same queue, and the call site
+        // under test is the same production `format`.
+        var formatters: [MLXFormatter] = []
+        for _ in 0..<(cores + 4) {
+            formatters.append(try await loaded(generate: { _, _ in
+                occupancy.enter()
+                usleep(150_000)
+                occupancy.leave()
+                return "hello there, friend"
+            }))
+        }
 
         // `cores + 4`, not `cores * 2`: enough that peak occupancy can only
         // exceed the pool width off the pool, but a smaller and shorter burst
@@ -149,7 +157,7 @@ struct MLXFormatterTests {
         // `FoundationModelsAvailabilityTests` are measured on the same machine
         // at the same time.
         await withTaskGroup(of: Void.self) { group in
-            for _ in 0..<(cores + 4) {
+            for formatter in formatters {
                 group.addTask {
                     _ = try? await formatter.format("hello there friend", mode: mode)
                 }
@@ -375,5 +383,79 @@ private final class Captured: @unchecked Sendable {
     }
     var value: (instructions: String, prompt: String)? {
         lock.lock(); defer { lock.unlock() }; return stored
+    }
+}
+
+/// The pile-up the `busy` claim exists to prevent.
+///
+/// The field report that produced it: formatting timed out on transcripts of
+/// 208, 6 and 3 characters in succession, then recovered on its own. No
+/// deadline explains a 3-character timeout — what explains it is that the
+/// chain's deadline abandons the *wait* while the generation keeps holding the
+/// GPU, so each abandoned utterance made the next one slower.
+@Suite("MLXFormatterConcurrency")
+struct MLXFormatterConcurrencyTests {
+    let mode = Mode(id: "default", name: "Default", prompt: "clean it up",
+                    appBundleIDs: [], usesLLM: true)
+
+    @Test("a second utterance is refused while the first still holds the engine")
+    func refusesWhileBusy() async throws {
+        let released = DispatchSemaphore(value: 0)
+        let entered = DispatchSemaphore(value: 0)
+        let formatter = MLXFormatter(isModelPresent: { true }, load: {
+            { _, _ in
+                entered.signal()
+                // Stands in for a generation the chain has already abandoned:
+                // still running, still holding the engine.
+                released.wait()
+                return "first"
+            }
+        })
+        try await formatter.warmUp()
+
+        let first = Task { try await formatter.format("first", mode: self.mode) }
+        entered.wait()
+
+        await #expect(throws: FormatterError.busy) {
+            try await formatter.format("second", mode: self.mode)
+        }
+
+        released.signal()
+        #expect(try await first.value == "first")
+    }
+
+    /// The claim must be released by the work finishing, not by the caller
+    /// giving up — otherwise one overrun would disable cleanup until restart.
+    @Test("the engine is usable again once the previous generation returns")
+    func recoversAfterTheGenerationFinishes() async throws {
+        let formatter = MLXFormatter(isModelPresent: { true },
+                                     load: { { _, _ in "done" } })
+        try await formatter.warmUp()
+        #expect(try await formatter.format("one", mode: mode) == "done")
+        #expect(try await formatter.format("two", mode: mode) == "done")
+        #expect(try await formatter.format("three", mode: mode) == "done")
+    }
+
+    /// A refusal must be distinguishable from "no model", because the two call
+    /// for opposite responses: one is transient, the other needs a download.
+    @Test("busy is not reported as unavailable")
+    func busyIsNotUnavailable() async throws {
+        let released = DispatchSemaphore(value: 0)
+        let entered = DispatchSemaphore(value: 0)
+        let formatter = MLXFormatter(isModelPresent: { true }, load: {
+            { _, _ in entered.signal(); released.wait(); return "x" }
+        })
+        try await formatter.warmUp()
+        let first = Task { try await formatter.format("a", mode: self.mode) }
+        entered.wait()
+        do {
+            _ = try await formatter.format("b", mode: mode)
+            Issue.record("expected a refusal")
+        } catch let error as FormatterError {
+            #expect(error != .unavailable)
+            #expect(error == .busy)
+        }
+        released.signal()
+        _ = try await first.value
     }
 }

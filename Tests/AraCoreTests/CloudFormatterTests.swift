@@ -117,7 +117,7 @@ private final class LoopbackHTTPServer: @unchecked Sendable {
 /// carries a detail string no test should have to spell out — so cases are
 /// compared by tag.
 private enum ErrorKind {
-    case unavailable, timedOut, implausibleOutput, refused, transportFailure
+    case unavailable, timedOut, implausibleOutput, refused, transportFailure, busy
 }
 
 /// Records the requests a formatter actually issued, so a test can assert on
@@ -164,6 +164,7 @@ struct CloudFormatterTests {
             case .implausibleOutput: return .implausibleOutput
             case .refused: return .refused
             case .transportFailure: return .transportFailure
+            case .busy: return .busy
             }
         } catch {
             Issue.record("expected a FormatterError, got \(error)")

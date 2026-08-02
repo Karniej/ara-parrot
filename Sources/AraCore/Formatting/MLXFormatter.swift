@@ -68,6 +68,10 @@ public final class MLXFormatter: Formatter, @unchecked Sendable {
     private let lock = NSLock()
     private var generate: Generate?
 
+    /// Whether a generation is occupying the engine right now. See `format`
+    /// for why this exists and what happens without it.
+    private var isGenerating = false
+
     public convenience init() {
         self.init(isModelPresent: { MLXModel.isPresent }, load: Self.loadBundledModel)
     }
@@ -114,9 +118,33 @@ public final class MLXFormatter: Formatter, @unchecked Sendable {
         // Read, never load. The chain gives each engine the same deadline, and
         // an engine that spends it discovering it has no model has cost the
         // user their whole formatting budget for nothing.
-        guard let generate = lock.withLock({ self.generate }) else {
-            throw FormatterError.unavailable
+        // One generation at a time, and the reason is the cascade it prevents.
+        //
+        // The chain's deadline abandons the *wait*, never the work: a decode
+        // step is matrix multiplication with no suspension point, so a
+        // generation that overruns keeps holding the GPU after the chain has
+        // given up on it. Without this claim the next utterance starts a second
+        // generation alongside the first, contends with it, overruns for that
+        // reason, and leaves a third running — a self-sustaining pile-up in
+        // which every utterance times out on transcripts of three characters.
+        // Observed in the field exactly that way, recovering only once the
+        // backlog drained.
+        //
+        // Refusing immediately is strictly better than joining the queue: the
+        // chain falls through to the rules floor in microseconds instead of
+        // spending the whole budget waiting to make the contention worse. One
+        // utterance loses its AI cleanup; the ones after it do not.
+        guard let generate = lock.withLock({ () -> Generate? in
+            guard let generate = self.generate, !self.isGenerating else { return nil }
+            self.isGenerating = true
+            return generate
+        }) else {
+            throw isLoaded ? FormatterError.busy : FormatterError.unavailable
         }
+        // Cleared when the work *actually* finishes, which is the point: an
+        // abandoned generation holds the claim for as long as it holds the GPU,
+        // not until the caller stopped waiting for it.
+        defer { lock.withLock { self.isGenerating = false } }
 
         let raw: String
         do {

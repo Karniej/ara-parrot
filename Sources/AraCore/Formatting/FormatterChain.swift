@@ -287,6 +287,7 @@ public struct FormatterChain: Formatter {
         case .implausibleOutput: return "output failed the plausibility guard"
         case .refused: return "model refused the rewrite"
         case .transportFailure(let detail): return "transport failure: \(detail)"
+        case .busy: return "still busy with the previous utterance"
         }
     }
 
