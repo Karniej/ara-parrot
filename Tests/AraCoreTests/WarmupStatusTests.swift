@@ -19,19 +19,19 @@ struct WarmupStatusTests {
     @Test("a download with no percentage yet names the phase and the model")
     func downloadingIndeterminate() {
         #expect(Self.status(transcriber: .downloading(percent: nil)).message
-                == "downloading whisper-large-v3-turbo…")
+                == "Downloading the speech model…")
     }
 
     @Test("a download with a percentage says it")
     func downloadingWithPercent() {
         #expect(Self.status(transcriber: .downloading(percent: 45)).message
-                == "downloading whisper-large-v3-turbo… 45%")
+                == "Downloading the speech model… 45%")
     }
 
     @Test("loading names the phase and the model")
     func loading() {
         #expect(Self.status(transcriber: .loading).message
-                == "loading whisper-large-v3-turbo…")
+                == "Loading the speech model…")
     }
 
     /// A load that has not returned in twenty seconds is not a load any more:
@@ -45,9 +45,29 @@ struct WarmupStatusTests {
     /// the next update breaks is worse than no promise.
     @Test("a long load says what it is really doing")
     func preparingNeuralEngine() {
-        #expect(Self.status(transcriber: .preparingNeuralEngine).message
-                == "preparing whisper-large-v3-turbo for the Neural Engine — "
-                + "once per macOS version, a few minutes…")
+        let status = Self.status(transcriber: .preparingNeuralEngine)
+        #expect(status.message == "Preparing the Neural Engine")
+        // The headline alone would be a worse lie than the old long line: it
+        // names the wait without bounding it. The detail is what keeps a user
+        // from reading three minutes as a hang and quitting.
+        #expect(status.detail == "one-time for this macOS version · a few minutes")
+    }
+
+    /// The split itself: a headline short enough to render, and the
+    /// particulars one size down rather than truncated off the end.
+    @Test("loading states put the model id in the detail, not the headline")
+    func detailCarriesTheModel() {
+        for phase: TranscriberWarmup in [.loading, .downloading(percent: nil),
+                                         .downloading(percent: 45)] {
+            let status = Self.status(transcriber: phase)
+            #expect(status.detail == "whisper-large-v3-turbo")
+            #expect(!(status.message ?? "").contains("whisper-large-v3-turbo"))
+        }
+    }
+
+    @Test("a formatter-only wait has nothing to add below the headline")
+    func formatterHasNoDetail() {
+        #expect(Self.status(transcriber: nil, formatter: .loading).detail == nil)
     }
 
     /// It is still the load that gates dictation; only the wording changed.
@@ -63,13 +83,13 @@ struct WarmupStatusTests {
     @Test("the transcriber's phase outranks the formatter's")
     func transcriberWins() {
         #expect(Self.status(transcriber: .loading, formatter: .loading).message
-                == "loading whisper-large-v3-turbo…")
+                == "Loading the speech model…")
     }
 
     @Test("once the transcriber is warm the formatter gets the line")
     func formatterAfterTranscriber() {
         #expect(Self.status(transcriber: nil, formatter: .loading).message
-                == "preparing the formatting model…")
+                == "Preparing the cleanup model…")
     }
 
     /// Nothing left to wait for is spelled `nil`, not an empty string: the
@@ -123,7 +143,7 @@ struct WarmupGateTests {
                                   transcriber: nil, formatter: .loading)
         #expect(!status.blocksDictation)
         // It still has something to say — the pill and menu line stay honest.
-        #expect(status.message == "preparing the formatting model…")
+        #expect(status.message == "Preparing the cleanup model…")
     }
 
     @Test("a loading transcriber does hold dictation back")

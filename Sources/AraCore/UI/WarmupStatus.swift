@@ -52,35 +52,57 @@ public struct WarmupStatus: Equatable, Sendable {
     /// user the seconds they are standing there waiting to speak.
     public var blocksDictation: Bool { transcriber != nil }
 
-    /// The pill's line, or `nil` when there is nothing left to wait for.
+    /// The pill's headline, or `nil` when there is nothing left to wait for.
     ///
     /// The transcriber outranks the formatter because it is the one that gates
     /// dictation; the formatting model loads inside its shadow (measured ~1.0 s
     /// against ~4.0 s warm) and has nothing to add while it is in flight.
+    ///
+    /// **Short on purpose.** This used to carry the whole explanation on one
+    /// line — model id, cache scope and expected duration — which rendered as a
+    /// pill wider than the sentence it was trying to deliver, truncated with an
+    /// ellipsis. What a waiting user needs first is *what is happening*; the
+    /// particulars belong in `detail`, one size down.
     public var message: String? {
         switch transcriber {
         case .downloading(let percent?):
-            return "downloading \(modelID)… \(percent)%"
+            // The percentage rides the headline: it is the one part that
+            // changes, and burying a moving number in the second line makes the
+            // pill look stuck.
+            return "Downloading the speech model… \(percent)%"
         case .downloading(nil):
-            return "downloading \(modelID)…"
+            return "Downloading the speech model…"
         case .loading:
-            return "loading \(modelID)…"
+            return "Loading the speech model…"
         case .preparingNeuralEngine:
-            // Naming the wait and its shape is the whole point: three minutes
-            // of "loading…" is indistinguishable from a hang, and the user's
-            // response to a hang is to quit — which throws the compile away
-            // and buys them the same three minutes again next launch.
-            //
-            // "once per macOS version" rather than "one time" because the ANE
-            // cache path is keyed on the OS build; see
-            // `WhisperWarmupPlan.specialisationNotice`.
-            return "preparing \(modelID) for the Neural Engine — "
-                + "once per macOS version, a few minutes…"
+            return "Preparing the Neural Engine"
         case nil:
             switch formatter {
-            case .loading: return "preparing the formatting model…"
+            case .loading: return "Preparing the cleanup model…"
             case .notLoading, .ready: return nil
             }
+        }
+    }
+
+    /// The quieter second line: which model, or why this particular wait is as
+    /// long as it is. `nil` when the headline says everything.
+    ///
+    /// The Neural Engine case is the reason this property exists. Three minutes
+    /// of "loading…" is indistinguishable from a hang, and a user's response to
+    /// a hang is to quit — which throws the compile away and buys them the same
+    /// three minutes again on the next launch. Naming the wait *and its shape*
+    /// is what keeps them waiting.
+    ///
+    /// "this macOS version" rather than "one time" because the cache path is
+    /// keyed on the OS build — see `WhisperWarmupPlan.specialisationNotice`.
+    public var detail: String? {
+        switch transcriber {
+        case .downloading, .loading:
+            return modelID
+        case .preparingNeuralEngine:
+            return "one-time for this macOS version · a few minutes"
+        case nil:
+            return nil
         }
     }
 

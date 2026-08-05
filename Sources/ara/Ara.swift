@@ -1033,7 +1033,7 @@ private final class WarmupState {
             return false
         }
         showingStatus = true
-        overlay?.show(.warmingUp(message))
+        overlay?.show(.warmingUp(title: message, detail: status.detail))
         return true
     }
 
@@ -1076,13 +1076,13 @@ private final class WarmupState {
         // the wait ended, and the pill vanishing under their thumb would read
         // as a crash while a stale "loading…" would be a lie. Their release
         // takes it down through the ordinary path.
-        if showingStatus { overlay?.show(.warmingUp(readyMessage)) }
+        if showingStatus { overlay?.show(.warmingUp(title: readyMessage, detail: nil)) }
     }
 
     private func repaint() {
         guard let message = status.message else { return }
         menuBar.setWarmingUp(message)
-        if showingStatus { overlay?.show(.warmingUp(message)) }
+        if showingStatus { overlay?.show(.warmingUp(title: message, detail: status.detail)) }
     }
 }
 

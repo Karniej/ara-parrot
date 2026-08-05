@@ -19,7 +19,7 @@ public final class RecordingOverlay {
         /// lifecycle that raised it — the key release — so it does not
         /// self-hide. A user holding the key through a two-minute download
         /// should keep seeing the number move.
-        case warmingUp(String)
+        case warmingUp(title: String, detail: String?)
         /// A short message in place of the waveform — "no microphone". Unlike
         /// the other states, which the daemon's lifecycle hides, this one has
         /// no "release the key" moment guaranteed to follow, so it hides
@@ -102,7 +102,7 @@ public final class RecordingOverlay {
         // 280 that one was clipped by the panel, because `fixedSize` refuses
         // to wrap rather than shrinking to fit.
         let panel = NSPanel(
-            contentRect: NSRect(x: 0, y: 0, width: 460, height: 44),
+            contentRect: NSRect(x: 0, y: 0, width: 520, height: 84),
             styleMask: [.borderless, .nonactivatingPanel],
             backing: .buffered,
             defer: false
@@ -161,21 +161,37 @@ final class OverlayModel: ObservableObject {
     }
 }
 
-/// The waveform's blue, and by extension the pill's "this is working" colour.
-/// Shared so the warm-up line and the bars it replaces read as the same thing
-/// happening — the error state's red is the only tone that means otherwise.
-private let waveformBlue = Color(red: 181/255.0, green: 209/255.0, blue: 255/255.0)
+/// Ara's one accent — a warm amber, used by the waveform and by every "this is
+/// working" line, so the pill never shows two competing hues. The error state's
+/// red is the single tone allowed to mean something else.
+///
+/// Deliberately not blue: a cool blue on near-black is the default every
+/// AI-adjacent menu-bar app arrives at, and amber ties the overlay to the
+/// recording glyph in the menu bar, which is already warm.
+private let accent = Color(red: 255/255.0, green: 190/255.0, blue: 118/255.0)
+private let errorTone = Color(red: 255/255.0, green: 163/255.0, blue: 150/255.0)
+/// Near-black rather than the old charcoal, with a hairline edge so the pill
+/// still has a shape against a dark wallpaper.
+private let pillFill = Color(red: 10/255.0, green: 10/255.0, blue: 11/255.0)
 
 private struct OverlayPill: View {
     @ObservedObject var model: OverlayModel
 
     var body: some View {
         content
-            .padding(.horizontal, 14)
-            .padding(.vertical, 9)
+            .padding(.horizontal, 16)
+            .padding(.vertical, 11)
             .background(
-                Capsule()
-                    .fill(Color(red: 16/255, green: 18/255, blue: 18/255))
+                // A continuous rounded rectangle, not a capsule: a capsule
+                // around two lines of text bows out at the ends and wastes the
+                // width the second line needs. At the one-line height this is
+                // within two points of a capsule anyway.
+                RoundedRectangle(cornerRadius: 18, style: .continuous)
+                    .fill(pillFill)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 18, style: .continuous)
+                            .strokeBorder(Color.white.opacity(0.09), lineWidth: 1)
+                    )
             )
             .scaleEffect(model.state == .hidden ? 0 : 1)
             .animation(
@@ -194,39 +210,52 @@ private struct OverlayPill: View {
             ProgressView()
                 .controlSize(.small)
                 .scaleEffect(0.8)
+                .tint(accent)
                 .frame(width: 54, height: 22)
-        case .warmingUp(let message):
-            // The error state's shape — same pill, words instead of bars —
-            // in the waveform's own blue, because this is the daemon working
-            // rather than the daemon failing. The spinner sits with it: the
-            // sentence says what is happening, the spinner says it is still
-            // happening, which is the question a two-minute download raises.
-            HStack(spacing: 8) {
+        case .warmingUp(let title, let detail):
+            // Two lines, because one was the whole problem: the Neural Engine
+            // wait needs to say what it is *and* that it is finite, and a
+            // single line long enough to carry both was truncated by the pill
+            // that had to hold it. The headline answers "what is happening",
+            // the quieter line answers "how long, and will it happen again".
+            //
+            // The spinner answers the third question a multi-minute wait
+            // raises — "is this still going?" — which no wording can.
+            HStack(spacing: 11) {
                 ProgressView()
                     .controlSize(.small)
-                    .scaleEffect(0.7)
-                Text(message)
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundStyle(waveformBlue)
-                    .lineLimit(1)
-                    .fixedSize()
+                    .scaleEffect(0.72)
+                    .tint(accent)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(title)
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(accent)
+                    if let detail {
+                        Text(detail)
+                            .font(.system(size: 11.5, weight: .regular))
+                            .foregroundStyle(Color.white.opacity(0.5))
+                    }
+                }
+                // Bounded so a long model id wraps instead of stretching the
+                // pill off the edge of a small screen; `fixedSize` then lets it
+                // take the second line it needs rather than truncating.
+                .frame(maxWidth: 330, alignment: .leading)
+                .fixedSize(horizontal: false, vertical: true)
             }
-            .frame(height: 22)
         case .error(let message):
-            // Same pill, words instead of bars; the desaturated red is the
-            // waveform blue's tone shifted to "something is wrong".
             Text(message)
-                .font(.system(size: 12, weight: .medium))
-                .foregroundStyle(Color(red: 255/255.0, green: 173/255.0, blue: 173/255.0))
-                .fixedSize()
-                .frame(height: 22)
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(errorTone)
+                .frame(maxWidth: 330, alignment: .leading)
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(minHeight: 22)
         }
     }
 }
 
 private struct Waveform: View {
     let levels: [Float]
-    private let color = waveformBlue
+    private let color = accent
 
     var body: some View {
         HStack(alignment: .center, spacing: 4) {
