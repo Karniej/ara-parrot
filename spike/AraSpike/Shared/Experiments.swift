@@ -22,8 +22,12 @@ enum Experiments {
         Int(os_proc_available_memory() / 1_048_576)
     }
 
+    /// Bumped every push, printed in every header, so a pasted report names
+    /// the build that produced it instead of leaving it to archaeology.
+    static let spikeBuild = 5
+
     static func header(context: String, fullAccess: Bool?) -> [String] {
-        var lines = ["═══ Ara spike · \(context) ═══",
+        var lines = ["═══ Ara spike · \(context) · build \(spikeBuild) ═══",
                      "mem available: \(availableMemoryMB()) MB"]
         if let fullAccess {
             lines.append("full access: \(fullAccess)")

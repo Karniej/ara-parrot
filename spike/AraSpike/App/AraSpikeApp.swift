@@ -14,6 +14,7 @@ struct SpikeView: View {
     @State private var lines: [String] =
         Experiments.header(context: "CONTAINER APP (control)", fullAccess: nil)
     @State private var running = false
+    @State private var relayRecording = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -42,11 +43,27 @@ struct SpikeView: View {
             // Notes and run the keyboard's tests — its test 4 reads the
             // heartbeat this writes and reports whether recording survived
             // backgrounding.
+            if relayRecording {
+                Label("RECORDING — now switch to Notes and tap “4 only” in the keyboard",
+                      systemImage: "record.circle")
+                    .font(.callout.bold())
+                    .foregroundStyle(.black)
+                    .frame(maxWidth: .infinity)
+                    .padding(10)
+                    .background(Color(red: 1, green: 0.45, blue: 0.35),
+                                in: RoundedRectangle(cornerRadius: 10))
+            }
             HStack {
                 Button("▶ Start test 4 (background recording)") {
-                    RelayProbe.startBackgroundRecording { line in lines.append(line) }
+                    RelayProbe.startBackgroundRecording { line in
+                        lines.append(line)
+                        if line.hasPrefix("recording") { relayRecording = true }
+                    }
                 }
-                Button("Stop") { RelayProbe.stop() }
+                Button("Stop") {
+                    RelayProbe.stop()
+                    relayRecording = false
+                }
             }
             .buttonStyle(.borderedProminent)
             .tint(Color(red: 1, green: 0.68, blue: 0.35))
