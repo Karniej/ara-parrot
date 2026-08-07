@@ -1,6 +1,9 @@
 # Ara in an iOS keyboard — engineering analysis
 
-Researched 2026-07-30. Platform claims carry citations; anything unverified says so.
+Researched 2026-07-30. **Corrected 2026-08-07** — the microphone section was wrong and is
+marked where it was. Platform claims carry citations; anything unverified says so. A claim
+sourced to an *archived* Apple document is not settled fact, which is the lesson that
+correction bought.
 
 ## The sentence that reorganises the problem
 
@@ -9,22 +12,51 @@ The two products are blocked on **opposite** things, and neither block moves the
 - **Cleanup of typed text** (the Grammarly replacement): the text is already reachable
   inside the extension via `UITextDocumentProxy`. No microphone, no app switch. Blocked
   entirely on **running inference inside a ~30–48 MB extension process**.
-- **Dictation**: inference is easy — it happens in the containing app with a full app
-  memory budget running Ara's real MLX stack. Blocked entirely on **the microphone being
-  unavailable to keyboard extensions**, forcing an app-switch UX that iOS 26.4 made worse.
+- **Dictation**: inference is easy *in the containing app* — full memory budget, Ara's real
+  MLX stack. Blocked on getting **audio and recognition** to happen where the keyboard is.
+  As of 2026-08-07 the microphone half looks **open, not closed** (see Hard platform facts);
+  the recognition half is bounded by extension memory, so it turns on whether on-device ASR
+  can run out-of-process from an appex.
 
 One has the UX and needs an engine; the other has the engine and needs a UX. Do not design
 them as one thing.
 
 ## Hard platform facts
 
-**Microphone: impossible, settled.** Not policy — entitlement-enforced at the media daemon.
-Apple's archived keyboard guide: custom keyboards "have no access to the device microphone,
-so dictation input is not possible." Runtime proof with Full Access on:
-`CMSUtility_IsAllowedToStartRecording: … NOT allowed … because it is an extension`.
-`NSMicrophoneUsageDescription` in a keyboard's Info.plist is inert.
-**Note: the existing YapperX keyboard doc plans `AVAudioEngine` inside the extension. That
-will fail on device.** (No keyboard target was ever created, so nothing is lost.)
+**Microphone: OPEN QUESTION — this section was wrong.** ⚠️ Corrected 2026-08-07.
+
+The original claim was "impossible, settled", resting on Apple's *archived* custom-keyboard
+guide (that text dates to the iOS 8 era) and a runtime error string —
+`CMSUtility_IsAllowedToStartRecording: … NOT allowed … because it is an extension` — whose
+date and provenance were never established and which was never reproduced on a device for
+this project. It was presented as settled fact. It is not.
+
+**Contradicting field observation (2026-08-07, Wispr Flow on iOS, direct):** its keyboard is
+its own, not Apple's; tapping *its* microphone button raises *its own* permission prompt,
+shows *its own* recording animation, and inserts text into the active field **with no app
+switch**. Full Access is required. Apple's system dictation key does not behave that way —
+it would raise Apple's prompt and draw Apple's UI.
+
+So the honest state: **a shipping App Store keyboard appears to record audio in-process.**
+Treat in-appex recording as *probably available with Full Access*, and settle it in the
+spike (experiment 2) rather than by citation.
+
+**What did not change: memory.** Recording is cheap — a few MB of buffers. Transcribing is
+not. The section below still rules out a local Whisper or a local LLM inside a ~30–48 MB
+extension, so permission to record does not by itself buy on-device dictation. Wispr Flow
+is a **cloud** product: recording in the extension and streaming audio to a server fits
+every observation above, including why it needs Full Access. That route is closed to Ara by
+the product's own premise, not by the platform.
+
+**The question that now decides the iOS product** is therefore not "can we record?" but
+**"can on-device speech recognition run from an extension without being charged its
+memory?"** `SpeechAnalyzer` / `SFSpeechRecognizer` run in a system daemon out of the app's
+address space — the same architecture that makes Foundation Models viable at ~27 MB
+charged. If that holds inside a keyboard sandbox, Ara gets Wispr Flow's UX with none of its
+cloud. See experiment 3.
+
+**Note: the existing YapperX keyboard doc plans `AVAudioEngine` inside the extension.** That
+may well be fine — verify with experiment 2 before acting on either doc.
 
 **Memory: no documented number, ever.** Apple says only that limits "vary from model to
 model". Developer-sourced figures: 48 MB commonly cited; ~30–40 MB dirty from someone who
@@ -83,12 +115,23 @@ typed text should land near 1.0.
 
 ## Recommended path
 
-**1. Run the one-hour spike first.** Empty keyboard extension, `RequestsOpenAccess = YES`,
-physical A17 Pro+ device with Apple Intelligence on, one button calling
-`SystemLanguageModel.default.availability` then a `LanguageModelSession` response. Run it
-with Full Access **on and off**, and **on battery**. Record `.available`, sandbox error 159,
-or `.rateLimited`. While there, call `AVAudioEngine.start()` with an `inputNode` and confirm
-the recording refusal. That hour has more decision value than the next two weeks of code.
+**1. Run the one-day spike first — three experiments, one throwaway extension.** Empty
+keyboard extension, `RequestsOpenAccess = YES`, physical A17 Pro+ device with Apple
+Intelligence on. Run every experiment with Full Access **on and off**, and **on battery**.
+
+  1. **Foundation Models**: `SystemLanguageModel.default.availability`, then a real
+     `LanguageModelSession` response. Record `.available`, sandbox error 159, or
+     `.rateLimited`. Decides whether the smart cleanup tier exists.
+  2. **Microphone**: `AVAudioEngine.start()` with an `inputNode`, and whether the permission
+     prompt appears. The previous version of this document asserted this fails; a shipping
+     competitor suggests otherwise. Decides the whole dictation UX.
+  3. **On-device ASR, and the one that matters most**: `SpeechAnalyzer` (or
+     `SFSpeechRecognizer` with `requiresOnDeviceRecognition = true`) transcribing from
+     inside the appex, instrumented with `os_proc_available_memory()` before, during and
+     after. Decides whether Ara-on-iOS is possible **without a server**.
+
+That day has more decision value than the next two weeks of code. Experiment 3 gates the
+product; 2 gates its UX; 1 gates its polish.
 
 **2. Extract `AraText`** — Foundation-only, both platforms: Formatting, Modes, Vocabulary,
 Session, Config, plus new `ConfigLocation` (App Group container on iOS) and `LogSink`
@@ -107,23 +150,31 @@ with retuned guard bounds and the eval harness re-run with FM as a column. Ara's
 KNOWN-ISSUES is explicit that the FoundationModels path has never executed and its numbers
 "do not automatically transfer".
 
-**5a. Dictation v1 is nearly free — and this is the best effort:value ratio in the
-analysis.** On Face ID iPhones, iOS draws **its own dictation button** over a third-party
-keyboard *unless* you set `hasDictationKey = true`. So: don't set it. Apple provides the
-microphone, the ASR, the permission prompt and the privileged audio path at zero
-engineering cost, dictated text arrives via `UITextInputDelegate` — and then you run it
-through Ara's cleanup chain. **Apple's dictation is already good at transcription and bad
-at cleanup; Ara is a cleanup engine.** That is ~90% of the Ara experience for ~0% of the
-audio engineering, on every device, with no Full Access and no app hop. **2–3 days.**
-Known wrinkle: a developer reports the final `textDidChange` lowercases dictated text on
-acceptance — Ara's capitalisation rules mask it anyway.
+**5a. Dictation v1 — the free system key — is still the cheapest start.** On Face ID
+iPhones, iOS draws **its own dictation button** over a third-party keyboard *unless* you set
+`hasDictationKey = true`. So: don't set it. Apple provides the microphone, the ASR, the
+permission prompt and the privileged audio path at zero engineering cost; dictated text
+arrives via `UITextInputDelegate` and you run it through Ara's cleanup chain. **Apple's
+dictation is already good at transcription and bad at cleanup; Ara is a cleanup engine.**
+~90% of the Ara experience for ~0% of the audio engineering, on every device, with no Full
+Access. **2–3 days.** Known wrinkle: a developer reports the final `textDidChange`
+lowercases dictated text on acceptance — Ara's capitalisation rules mask it anyway.
 
-**5b. Dictation v2 — the containing-app recorder — only if v1's ceiling proves real.** on the container-app architecture, using
-`SpeechAnalyzer` rather than WhisperKit (runs outside your address space — zero app-size and
-zero runtime-memory cost). Accept the app-hop: Grammarly and Wispr Flow both ship it, and
-both document that **iOS 26 removed the automatic return** — the user must swipe back
-manually. DTS confirmed with App Review that launching *your own container app* from a
-keyboard is allowed; sending the user back has "no API available".
+Its ceiling is real, though: you get Apple's ASR, Apple's languages, Apple's UI, and no
+control over endpointing or the recording affordance. It is the fastest way to a shipped
+product, not the best product.
+
+**5b. Dictation v2 — own microphone, own recording UI, in the extension.** What Wispr Flow
+appears to do, minus the server. Gated on spike experiments 2 and 3 together: record with
+`AVAudioEngine` in the appex, recognise with `SpeechAnalyzer` out-of-process, insert the
+result. If both pass, this is the product — Wispr Flow's UX with an empty privacy label.
+If 3 fails on memory, fall back to 5a rather than to a server.
+
+**5c. Dictation v3 — the containing-app recorder — only if both above fail.** Accept the
+app-hop: Grammarly and Wispr Flow's earlier design both shipped it, and iOS 26 removed the
+automatic return, so the user must swipe back manually. DTS confirmed with App Review that
+launching *your own container app* from a keyboard is allowed; sending the user back has
+"no API available". Worst UX of the three; keep it as the floor, not the plan.
 
 ## UX facts to prototype before writing engine code
 
@@ -163,13 +214,14 @@ to the system keyboard. Legally excellent; means you cannot promise "works every
 
 | Work | Estimate |
 |---|---|
-| The Foundation-Models-in-an-appex spike | **1 day, do it first** |
+| The three-experiment spike (Foundation Models, microphone, on-device ASR) | **1 day, do it first** |
 | `AraCore` → `AraEngine` + `AraMacOS` refactor (de-ArgumentParser, store/log seams) | 3–5 days |
 | Architecture C slice 1 — deterministic keyboard, no ML | 2–3 weeks |
 | Slice 2 — Foundation Models engine, conditional on the spike | 1 week |
 | Polish to submittable (memory instrumentation, host matrix, IAP, manifests) | 1–2 weeks |
 | **Dictation v1 — free system mic + Ara cleanup** | **2–3 days** |
-| Dictation v2 — containing-app recorder, background audio survival | 4–6 weeks, high risk |
+| Dictation v2 — own mic in the appex + on-device ASR (needs experiments 2+3) | 1–2 weeks |
+| Dictation v3 — containing-app recorder, app-hop fallback | 4–6 weeks, high risk |
 
 **~5–7 weeks to a submittable Grammarly replacement**, of which the first four days are a
 refactor and one spike that could invalidate the plan.
