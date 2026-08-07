@@ -6,6 +6,7 @@ import UIKit
 final class KeyboardViewController: UIInputViewController {
     private var bridge: KeyboardBridge?
     private var state: KeyboardState?
+    private var bar: SuggestionBarModel?
 
     /// A custom keyboard gets the system's default height unless it asks for
     /// its own. Below `.required` so the system's transient layout passes
@@ -21,10 +22,12 @@ final class KeyboardViewController: UIInputViewController {
         super.viewDidLoad()
         let bridge = KeyboardBridge(controller: self)
         let state = KeyboardState(bridge: bridge)
+        let bar = SuggestionBarModel(bridge: bridge)
         self.bridge = bridge
         self.state = state
+        self.bar = bar
         let host = UIHostingController(
-            rootView: KeyboardRootView(bridge: bridge, state: state))
+            rootView: KeyboardRootView(bridge: bridge, state: state, bar: bar))
         host.view.backgroundColor = .clear
         addChild(host)
         view.addSubview(host.view)
@@ -47,6 +50,7 @@ final class KeyboardViewController: UIInputViewController {
         bridge?.refreshEnvironment()
         bridge?.loadEngineState()
         state?.activate()
+        bar?.refreshMicState()
     }
 
     override func viewDidDisappear(_ animated: Bool) {

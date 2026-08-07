@@ -6,10 +6,11 @@ import SwiftUI
 struct KeyboardRootView: View {
     @ObservedObject var bridge: KeyboardBridge
     @ObservedObject var state: KeyboardState
+    @ObservedObject var bar: SuggestionBarModel
 
     var body: some View {
         VStack(spacing: 0) {
-            SuggestionBarView(bridge: bridge)
+            SuggestionBarView(bridge: bridge, bar: bar)
             keyGrid
         }
         .frame(height: KeyboardMetrics.totalHeight)
