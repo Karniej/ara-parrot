@@ -3,73 +3,89 @@ import UIKit
 /// The throwaway keyboard whose only job is to run the three experiments from
 /// *inside* `com.apple.keyboard-service` and get the answers out.
 ///
-/// Reporting channel: the keyboard types its own report into whatever text
-/// field is focused (`Type report`), because an appex has no stderr anyone can
-/// read and this needs no App Group, no entitlements, no server. Open Notes,
-/// switch to this keyboard, run, tap Type report.
+/// This keyboard does not type and does not dictate — it is an instrument.
+/// One primary button runs all three checks in order; `Type results` reports
+/// by inserting the log into the focused text field, because an appex has no
+/// stderr anyone can read and this needs no App Group, no entitlements, no
+/// server.
 final class KeyboardViewController: UIInputViewController {
     private let log = UITextView()
     private var lines: [String] = []
+    private var running = false
+    private var runAllButton: UIButton!
+    private var typeButton: UIButton!
 
     override func viewDidLoad() {
         super.viewDidLoad()
         view.backgroundColor = UIColor(white: 0.06, alpha: 1)
+
+        let explainer = UILabel()
+        explainer.text = "Test keyboard — it doesn't type. Run the tests, then send the results."
+        explainer.font = .systemFont(ofSize: 12)
+        explainer.textColor = UIColor(white: 1, alpha: 0.55)
+        explainer.numberOfLines = 2
+
+        var primary = UIButton.Configuration.borderedProminent()
+        primary.title = "▶  Run all 3 tests (~30 s)"
+        primary.baseBackgroundColor = UIColor(red: 1, green: 0.68, blue: 0.35, alpha: 1)
+        primary.baseForegroundColor = .black
+        runAllButton = UIButton(configuration: primary, primaryAction:
+            UIAction { [weak self] _ in self?.runAll() })
+
+        var secondary = UIButton.Configuration.bordered()
+        secondary.title = "⌨️  Type results into the text field"
+        typeButton = UIButton(configuration: secondary, primaryAction:
+            UIAction { [weak self] _ in
+                guard let self else { return }
+                self.textDocumentProxy.insertText(self.lines.joined(separator: "\n") + "\n")
+            })
+        typeButton.isEnabled = false
 
         log.isEditable = false
         log.backgroundColor = .clear
         log.textColor = UIColor(red: 1, green: 0.75, blue: 0.46, alpha: 1)
         log.font = .monospacedSystemFont(ofSize: 11, weight: .regular)
 
-        let buttons = [
-            button("1 FM") { await Experiments.foundationModels() },
-            button("2 Mic") { await Experiments.microphone() },
-            button("3 ASR") { await Experiments.onDeviceASR() },
-        ]
-        let typeButton = UIButton(configuration: .borderedProminent(), primaryAction:
-            UIAction(title: "Type report") { [weak self] _ in
-                guard let self else { return }
-                self.textDocumentProxy.insertText(self.lines.joined(separator: "\n") + "\n")
-            })
-        let clearButton = UIButton(configuration: .bordered(), primaryAction:
-            UIAction(title: "Clear") { [weak self] _ in
-                self?.lines = []
-                self?.log.text = ""
-            })
-
-        let row1 = UIStackView(arrangedSubviews: buttons)
-        row1.distribution = .fillEqually
-        row1.spacing = 6
-        let row2 = UIStackView(arrangedSubviews: [typeButton, clearButton])
-        row2.distribution = .fillEqually
-        row2.spacing = 6
-        let stack = UIStackView(arrangedSubviews: [row1, row2, log])
+        let stack = UIStackView(arrangedSubviews: [explainer, runAllButton, typeButton, log])
         stack.axis = .vertical
-        stack.spacing = 6
+        stack.spacing = 8
         stack.translatesAutoresizingMaskIntoConstraints = false
         view.addSubview(stack)
         NSLayoutConstraint.activate([
             stack.topAnchor.constraint(equalTo: view.topAnchor, constant: 8),
-            stack.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 8),
-            stack.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -8),
+            stack.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 10),
+            stack.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -10),
             stack.bottomAnchor.constraint(equalTo: view.bottomAnchor, constant: -8),
-            view.heightAnchor.constraint(equalToConstant: 340),
+            view.heightAnchor.constraint(equalToConstant: 360),
         ])
 
-        // `hasFullAccess` is the variable every experiment is run against —
-        // the plan calls for one pass with it on and one with it off.
+        // `hasFullAccess` is the variable the whole pass is run against — the
+        // plan wants one pass with it on and one with it off.
         append(Experiments.header(context: "KEYBOARD EXTENSION",
                                   fullAccess: hasFullAccess))
+        append(["ready — tap ▶ to run"])
     }
 
-    private func button(_ title: String,
-                        run: @escaping () async -> [String]) -> UIButton {
-        UIButton(configuration: .bordered(), primaryAction:
-            UIAction(title: title) { [weak self] _ in
-                self?.append(["… running \(title)"])
-                Task { @MainActor [weak self] in
-                    self?.append(await run())
-                }
-            })
+    /// All three, in order, one tap. The mic test records ~1 s by itself —
+    /// there is nothing to hold and nothing to say; it only counts frames.
+    private func runAll() {
+        guard !running else { return }
+        running = true
+        runAllButton.isEnabled = false
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            self.append(["", "▶ test 1/3: Apple's on-device AI model…"])
+            self.append(await Experiments.foundationModels())
+            self.append(["", "▶ test 2/3: microphone (records ~1 s, just wait)…"])
+            self.append(await Experiments.microphone())
+            self.append(["", "▶ test 3/3: on-device speech-to-text…"])
+            self.append(await Experiments.onDeviceASR())
+            self.append(["", "✔ done — tap “Type results” with a text field focused,",
+                         "then run the same pass with Full Access off."])
+            self.running = false
+            self.runAllButton.isEnabled = true
+            self.typeButton.isEnabled = true
+        }
     }
 
     private func append(_ new: [String]) {
