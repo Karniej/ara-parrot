@@ -45,7 +45,15 @@ and `.voiceChat` all failed at `kAUStartIO` with `'what'`
 That is `mediaserverd` policy, exactly as the archived guide said — the original claim
 was right, and the Wispr Flow observation has a different explanation: their *container
 app* records in the background (UIBackgroundModes audio) while their keyboard fronts the
-UI and relays through the App Group. That theory is spike experiment 4.
+UI and relays through the App Group. That theory was spike experiment 4 — and it is now
+**MEASURED TRUE (2026-08-07, iPhone 11, iOS 26.0, build 8):** with the app backgrounded
+and the keyboard on screen, the app's `AVAudioEngine` tap kept delivering **+144,000
+frames over 3 s — exactly 48 kHz, zero gaps** — heartbeat fresh at 0.4 s, relayed through
+`group.com.silpho.araspike`. The container-relay architecture is real and is the basis
+for Phase 3. Two caveats bound it: the app must have been launched (a keyboard cannot
+cold-start its container app — the wake channel is the Live Activity / `LiveActivityIntent`
+question, spike experiment 5), and the App Group read from the keyboard requires **Full
+Access**, so the relay is a Full-Access feature by construction.
 
 **Also measured, and the product-deciding result: on-device ASR WORKS from the appex.**
 `SFSpeechRecognizer` with `requiresOnDeviceRecognition = true`, three runs, 415–477 ms

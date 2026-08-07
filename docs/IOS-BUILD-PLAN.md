@@ -55,14 +55,17 @@ that out on day one, not in week five.
 |---|---|
 | 1 | `deviceNotEligible` — hardware verdict only; re-run on an A17 Pro+ (arriving ~2026-08-14) answers the sandbox question |
 | 2 | **FAILED comprehensively** — permission granted, mic visible, all four capture paths refused (`kAUStartIO` → `'what'`; `AVAudioRecorder.record()` → false). In-appex recording is off the table. |
-| 3 | **PASSED ×3** — on-device `SFSpeechRecognizer`, 415–477 ms, ~0 MB charged to the appex (out-of-process). **The product exists without a server.** |
+| 3 | **PASSED ×6** — on-device `SFSpeechRecognizer`, 412–810 ms, ~0 MB charged to the appex (out-of-process). **The product exists without a server.** |
+| 4 | **PASSED** — container app kept recording while backgrounded with the keyboard frontmost: +144,000 frames / 3 s = exactly 48 kHz, no gaps, heartbeat 0.4 s over the App Group. **The container relay is the Phase 3 architecture.** |
 
-Consequence for Phase 3: "own mic in the appex" is dead; the routes are the system
-dictation key (v1) and the **container relay** — the app records in the background
-(UIBackgroundModes audio) while the keyboard fronts the UI, App Group carries the
-transcript. The relay is spike **experiment 4**; Wispr Flow's UX is explainable by it
-and by nothing else we can find. Full Access off pass and control-group run still
-outstanding, plus the A17 re-run of experiment 1.
+Consequence for Phase 3: the **container relay** is measured real — the app records in
+the background (UIBackgroundModes audio) while the keyboard fronts the UI, and the App
+Group carries audio-derived state to the keyboard. This is Wispr Flow's shape, reproduced.
+Its two boundaries: the keyboard cannot cold-start the app (the wake channel —
+Live Activity / `LiveActivityIntent` — is spike **experiment 5**, still to run), and the
+keyboard's App Group read needs Full Access, so the relay is a Full-Access feature; the
+system dictation key remains the no-Full-Access fallback tier. Still outstanding:
+Full Access off pass, control-group run, and the A17 re-run of experiment 1.
 
 ---
 
@@ -126,21 +129,27 @@ everywhere" is not a claim you can make.
 
 ---
 
-## Phase 3 — dictation. 2–3 days or 1–2 weeks, depending on Phase 0.
+## Phase 3 — dictation. Two tiers, both measured viable (spike results above).
 
-**If experiments 2 and 3 both passed:** own microphone button, own recording animation,
-`SpeechAnalyzer` for recognition, `AraEngine` for cleanup. Wispr Flow's UX with none of its
-cloud. 1–2 weeks.
+**Tier A — the container relay (Full Access, the flagship UX):** the app records in the
+background (`UIBackgroundModes: audio`), on-device ASR transcribes, `AraEngine` cleans up,
+the App Group carries the transcript, the keyboard's own mic button and recording animation
+front the whole thing. Wispr Flow's UX with none of its cloud — **measured working
+2026-08-07** (48 kHz sustained while backgrounded). Open engineering questions, in order:
+the wake channel when the app isn't running (experiment 5 — Live Activity /
+`LiveActivityIntent`; the honest fallback is "open the app once after reboot"), how long
+iOS lets the session live, and the always-on-mic privacy story (the orange indicator is
+permanent while armed — this must be a deliberate, user-visible mode, not a surprise).
 
-**If either failed:** do not set `hasDictationKey`, and iOS draws its own dictation button
-over your keyboard. Apple supplies the mic, the ASR, the permission prompt and the
-privileged audio path for free; text arrives via `UITextInputDelegate` and you clean it up.
-2–3 days, every device, no Full Access.
+**Tier B — the system dictation key (free tier, no Full Access):** don't set
+`hasDictationKey`; iOS draws its own dictation button over the keyboard. Apple supplies
+mic, ASR, permission prompt and the privileged audio path; text arrives via
+`UITextInputDelegate` and `AraEngine` cleans it up. 2–3 days, every device.
 
-Either way the cleanup chain is the same code, which is the point of Phase 1.
-
-**Do not build the containing-app recorder** unless both routes fail. The app-hop is the
-worst UX of the three and iOS 26 removed the automatic return.
+Ship B first inside Phase 2's keyboard, then build A on top. The cleanup chain is the same
+code either way, which is the point of Phase 1. The *foreground* app-hop recorder (switch
+to app, talk, switch back) stays dead — iOS 26 removed the automatic return and the relay
+makes it pointless.
 
 ---
 
