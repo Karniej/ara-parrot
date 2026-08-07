@@ -88,45 +88,126 @@ enum Experiments {
         }
 
         let session = AVAudioSession.sharedInstance()
-        do {
-            try session.setCategory(.record, mode: .measurement)
-            try session.setActive(true)
-            lines.append("audio session: active, sr \(Int(session.sampleRate))")
-        } catch {
-            lines.append("session activation THREW: \(error)")
-            return lines
-        }
+        lines.append("isInputAvailable: \(session.isInputAvailable) · "
+                     + "inputs: \(session.availableInputs?.map(\.portType.rawValue).joined(separator: ",") ?? "none")")
 
-        let engine = AVAudioEngine()
-        let format = engine.inputNode.inputFormat(forBus: 0)
-        lines.append("input format: \(Int(format.sampleRate)) Hz · \(format.channelCount) ch")
-        guard format.sampleRate > 0 else {
-            lines.append("stopping: zero-rate input format (no capture path)")
-            return lines
+        // First device run (2026-08-07): permission granted, session active,
+        // real input format — and `kAUStartIO` refused with 'what'
+        // (AVAudioSessionErrorCodeUnspecified). One refused API is not "the
+        // platform forbids recording": a shipping competitor records from a
+        // keyboard somehow, so this is a matrix over capture paths, hunting
+        // the one that starts. Each attempt tears its session down before the
+        // next so a failure cannot poison its successor.
+        var anyWorked = false
+        for attempt in Attempt.allCases {
+            lines.append("· \(attempt.label)")
+            let verdict = await attempt.run()
+            lines.append(contentsOf: verdict.map { "   \($0)" })
+            anyWorked = anyWorked || verdict.contains { $0.hasPrefix("OK") }
         }
+        try? session.setActive(false, options: .notifyOthersOnDeactivation)
 
-        let counter = FrameCounter()
-        engine.inputNode.installTap(onBus: 0, bufferSize: 2048, format: format) { buffer, _ in
-            counter.add(Int(buffer.frameLength))
-        }
-        do {
-            try engine.start()
-        } catch {
-            lines.append("engine.start THREW: \(error)")
-            engine.inputNode.removeTap(onBus: 0)
-            return lines
-        }
-        try? await Task.sleep(for: .milliseconds(1200))
-        engine.inputNode.removeTap(onBus: 0)
-        engine.stop()
-        try? session.setActive(false)
-
-        let frames = counter.total
-        lines.append("frames in 1.2 s: \(frames) (\(String(format: "%.2f", Double(frames) / format.sampleRate)) s of audio)")
-        lines.append(frames > 0 ? "VERDICT: recording WORKS in this process"
-                                : "VERDICT: engine ran but delivered no audio")
+        lines.append(anyWorked
+            ? "VERDICT: recording WORKS in this process (see which path above)"
+            : "VERDICT: every capture path refused — in-appex recording is off the table")
         lines.append("mem after: \(availableMemoryMB()) MB")
         return lines
+    }
+
+    /// The capture paths worth ruling in or out, cheapest-to-strangest.
+    enum Attempt: CaseIterable {
+        /// The original: plain engine under `.record`/`.measurement`.
+        case engineRecord
+        /// `.playAndRecord` with `.mixWithOthers` — a keyboard lives inside a
+        /// *host app* that may own the audio session; refusing to share is the
+        /// most likely reason an exclusive `.record` start is refused.
+        case engineMixed
+        /// `.voiceChat` mode — routes through the voice-processing unit, a
+        /// different I/O path with its own policy.
+        case engineVoiceChat
+        /// `AVAudioRecorder` to a file — the highest-level API; if policy
+        /// gates by API rather than by process, this is the one apps predating
+        /// AVAudioEngine still use.
+        case fileRecorder
+
+        var label: String {
+            switch self {
+            case .engineRecord: return "engine · .record/.measurement"
+            case .engineMixed: return "engine · .playAndRecord/.mixWithOthers"
+            case .engineVoiceChat: return "engine · .playAndRecord/.voiceChat"
+            case .fileRecorder: return "AVAudioRecorder → file"
+            }
+        }
+
+        func run() async -> [String] {
+            let session = AVAudioSession.sharedInstance()
+            defer { try? session.setActive(false, options: .notifyOthersOnDeactivation) }
+            do {
+                switch self {
+                case .engineRecord:
+                    try session.setCategory(.record, mode: .measurement)
+                case .engineMixed:
+                    try session.setCategory(.playAndRecord, mode: .default,
+                                            options: [.mixWithOthers, .defaultToSpeaker,
+                                                      .allowBluetooth])
+                case .engineVoiceChat:
+                    try session.setCategory(.playAndRecord, mode: .voiceChat,
+                                            options: [.allowBluetooth])
+                case .fileRecorder:
+                    try session.setCategory(.playAndRecord, mode: .default,
+                                            options: [.mixWithOthers])
+                }
+                try session.setActive(true)
+            } catch {
+                return ["session: THREW \(Self.shortError(error))"]
+            }
+
+            if self == .fileRecorder { return await Self.runFileRecorder() }
+
+            let engine = AVAudioEngine()
+            let format = engine.inputNode.inputFormat(forBus: 0)
+            guard format.sampleRate > 0 else { return ["zero-rate input format"] }
+            let counter = FrameCounter()
+            engine.inputNode.installTap(onBus: 0, bufferSize: 2048, format: format) { buffer, _ in
+                counter.add(Int(buffer.frameLength))
+            }
+            defer { engine.inputNode.removeTap(onBus: 0); engine.stop() }
+            do { try engine.start() } catch {
+                return ["start: THREW \(Self.shortError(error))"]
+            }
+            try? await Task.sleep(for: .milliseconds(900))
+            let frames = counter.total
+            return frames > 0
+                ? ["OK — \(frames) frames (\(String(format: "%.2f", Double(frames) / format.sampleRate)) s)"]
+                : ["started but 0 frames"]
+        }
+
+        private static func runFileRecorder() async -> [String] {
+            let url = FileManager.default.temporaryDirectory
+                .appendingPathComponent("spike-rec.m4a")
+            defer { try? FileManager.default.removeItem(at: url) }
+            do {
+                let recorder = try AVAudioRecorder(url: url, settings: [
+                    AVFormatIDKey: kAudioFormatMPEG4AAC,
+                    AVSampleRateKey: 16_000,
+                    AVNumberOfChannelsKey: 1,
+                ])
+                guard recorder.record() else { return ["record() returned false"] }
+                try? await Task.sleep(for: .milliseconds(900))
+                recorder.stop()
+                let size = (try? FileManager.default.attributesOfItem(atPath: url.path)[.size] as? Int) ?? 0
+                return size ?? 0 > 200
+                    ? ["OK — wrote \(size ?? 0) bytes"]
+                    : ["recorded but file is \(size ?? 0) bytes"]
+            } catch {
+                return ["init/record THREW \(shortError(error))"]
+            }
+        }
+
+        private static func shortError(_ error: any Error) -> String {
+            let ns = error as NSError
+            return "\(ns.domain) \(ns.code)"
+        }
     }
 
     // MARK: - Experiment 3: on-device ASR
