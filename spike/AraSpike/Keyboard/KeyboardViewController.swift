@@ -32,8 +32,20 @@ final class KeyboardViewController: UIInputViewController {
         runAllButton = UIButton(configuration: primary, primaryAction:
             UIAction { [weak self] _ in self?.runAll() })
 
+        var relayOnly = UIButton.Configuration.bordered()
+        relayOnly.title = "4 only"
+        let relayButton = UIButton(configuration: relayOnly, primaryAction:
+            UIAction { [weak self] _ in
+                guard let self, !self.running else { return }
+                self.append(["", "▶ test 4 alone…"])
+                Task { @MainActor [weak self] in
+                    self?.append(await RelayProbe.observeRelay())
+                    self?.typeButton.isEnabled = true
+                }
+            })
+
         var secondary = UIButton.Configuration.bordered()
-        secondary.title = "⌨️  Type results into the text field"
+        secondary.title = "⌨️  Type results"
         typeButton = UIButton(configuration: secondary, primaryAction:
             UIAction { [weak self] _ in
                 guard let self else { return }
@@ -46,7 +58,10 @@ final class KeyboardViewController: UIInputViewController {
         log.textColor = UIColor(red: 1, green: 0.75, blue: 0.46, alpha: 1)
         log.font = .monospacedSystemFont(ofSize: 11, weight: .regular)
 
-        let stack = UIStackView(arrangedSubviews: [explainer, runAllButton, typeButton, log])
+        let buttonRow = UIStackView(arrangedSubviews: [typeButton, relayButton])
+        buttonRow.distribution = .fillProportionally
+        buttonRow.spacing = 6
+        let stack = UIStackView(arrangedSubviews: [explainer, runAllButton, buttonRow, log])
         stack.axis = .vertical
         stack.spacing = 8
         stack.translatesAutoresizingMaskIntoConstraints = false

@@ -78,6 +78,11 @@ enum RelayProbe {
             return
         }
         running = (engine, counter)
+        // Stamp immediately, not at the timer's first tick: it splits "the
+        // app never started" from "the app started and was then suspended" —
+        // the two verdicts this experiment exists to distinguish.
+        defaults.set(0, forKey: framesKey)
+        defaults.set(Date().timeIntervalSince1970, forKey: stampKey)
         report("recording — leave this app NOW, open Notes, run the keyboard's test 4")
         heartbeat = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { _ in
             defaults.set(counter.total, forKey: framesKey)
@@ -122,6 +127,7 @@ enum RelayProbe {
                          + "(backgrounded apps without live audio get suspended)")
         }
         let first = defaults.integer(forKey: framesKey)
+        lines.append("frames at entry: \(first)")
         try? await Task.sleep(for: .seconds(3))
         let second = defaults.integer(forKey: framesKey)
         let delta = second - first
