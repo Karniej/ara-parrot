@@ -21,10 +21,12 @@ struct SpikeView: View {
             Text("""
             1. Settings → General → Keyboard → Keyboards → Add New Keyboard → AraSpike, \
             then tap it and Allow Full Access.
-            2. Open Notes, switch to the AraSpike keyboard (globe key), run 1/2/3, \
-            tap Type report.
-            3. Turn Full Access OFF and run all three again.
-            4. Run the control group below and compare.
+            2. Open Notes, switch to the AraSpike keyboard (globe key), tap ▶, \
+            then Type results.
+            3. Turn Full Access OFF and run again.
+            4. Run the control group below (1/2/3) and Copy.
+            5. Test 4: tap Start below, then go to Notes and run the keyboard's \
+            tests — test 4 checks whether recording here survives backgrounding.
             """).font(.footnote).foregroundStyle(.secondary)
 
             HStack {
@@ -35,6 +37,19 @@ struct SpikeView: View {
             }
             .buttonStyle(.bordered)
             .disabled(running)
+
+            // Experiment 4, app side: start recording HERE, then leave for
+            // Notes and run the keyboard's tests — its test 4 reads the
+            // heartbeat this writes and reports whether recording survived
+            // backgrounding.
+            HStack {
+                Button("▶ Start test 4 (background recording)") {
+                    RelayProbe.startBackgroundRecording { line in lines.append(line) }
+                }
+                Button("Stop") { RelayProbe.stop() }
+            }
+            .buttonStyle(.borderedProminent)
+            .tint(Color(red: 1, green: 0.68, blue: 0.35))
 
             ScrollView {
                 Text(lines.joined(separator: "\n"))

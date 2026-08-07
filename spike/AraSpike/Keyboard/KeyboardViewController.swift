@@ -26,7 +26,7 @@ final class KeyboardViewController: UIInputViewController {
         explainer.numberOfLines = 2
 
         var primary = UIButton.Configuration.borderedProminent()
-        primary.title = "▶  Run all 3 tests (~30 s)"
+        primary.title = "▶  Run all 4 tests (~40 s)"
         primary.baseBackgroundColor = UIColor(red: 1, green: 0.68, blue: 0.35, alpha: 1)
         primary.baseForegroundColor = .black
         runAllButton = UIButton(configuration: primary, primaryAction:
@@ -74,12 +74,14 @@ final class KeyboardViewController: UIInputViewController {
         runAllButton.isEnabled = false
         Task { @MainActor [weak self] in
             guard let self else { return }
-            self.append(["", "▶ test 1/3: Apple's on-device AI model…"])
+            self.append(["", "▶ test 1/4: Apple's on-device AI model…"])
             self.append(await Experiments.foundationModels())
-            self.append(["", "▶ test 2/3: microphone (records ~1 s, just wait)…"])
+            self.append(["", "▶ test 2/4: microphone (records ~1 s, just wait)…"])
             self.append(await Experiments.microphone())
-            self.append(["", "▶ test 3/3: on-device speech-to-text…"])
+            self.append(["", "▶ test 3/4: on-device speech-to-text…"])
             self.append(await Experiments.onDeviceASR())
+            self.append(["", "▶ test 4/4: container relay (tap Start in the app first)…"])
+            self.append(await RelayProbe.observeRelay())
             self.append(["", "✔ done — tap “Type results” with a text field focused,",
                          "then run the same pass with Full Access off."])
             self.running = false

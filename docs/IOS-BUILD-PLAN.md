@@ -49,7 +49,20 @@ If on-device ASR cannot run out-of-process from a keyboard sandbox within the me
 then in-keyboard dictation requires a server, and the product's entire premise is gone. Find
 that out on day one, not in week five.
 
-Write the three results into this file before writing any other code.
+**Results, 2026-08-07 — iPhone 11 (A13), iOS 26.0, Full Access on:**
+
+| # | Result |
+|---|---|
+| 1 | `deviceNotEligible` — hardware verdict only; re-run on an A17 Pro+ (arriving ~2026-08-14) answers the sandbox question |
+| 2 | **FAILED comprehensively** — permission granted, mic visible, all four capture paths refused (`kAUStartIO` → `'what'`; `AVAudioRecorder.record()` → false). In-appex recording is off the table. |
+| 3 | **PASSED ×3** — on-device `SFSpeechRecognizer`, 415–477 ms, ~0 MB charged to the appex (out-of-process). **The product exists without a server.** |
+
+Consequence for Phase 3: "own mic in the appex" is dead; the routes are the system
+dictation key (v1) and the **container relay** — the app records in the background
+(UIBackgroundModes audio) while the keyboard fronts the UI, App Group carries the
+transcript. The relay is spike **experiment 4**; Wispr Flow's UX is explainable by it
+and by nothing else we can find. Full Access off pass and control-group run still
+outstanding, plus the A17 re-run of experiment 1.
 
 ---
 

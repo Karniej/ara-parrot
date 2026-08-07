@@ -17,10 +17,13 @@ targets:
       properties:
         UILaunchScreen: {}
         CFBundleDisplayName: AraSpike
+        UIBackgroundModes: [audio]
         NSMicrophoneUsageDescription: Experiment 2 records ~1 second of audio to count frames. Nothing is stored.
         NSSpeechRecognitionUsageDescription: Experiment 3 transcribes a bundled sentence on-device.
     settings:
       PRODUCT_BUNDLE_IDENTIFIER: com.silpho.araspike
+    entitlements:
+      path: Entitlements/App.entitlements
     dependencies:
       - target: AraSpikeKeyboard
         embed: true
@@ -44,3 +47,5 @@ targets:
         NSSpeechRecognitionUsageDescription: Experiment 3 transcribes a bundled sentence on-device.
     settings:
       PRODUCT_BUNDLE_IDENTIFIER: com.silpho.araspike.keyboard
+    entitlements:
+      path: Entitlements/Keyboard.entitlements

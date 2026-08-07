@@ -37,9 +37,23 @@ shows *its own* recording animation, and inserts text into the active field **wi
 switch**. Full Access is required. Apple's system dictation key does not behave that way —
 it would raise Apple's prompt and draw Apple's UI.
 
-So the honest state: **a shipping App Store keyboard appears to record audio in-process.**
-Treat in-appex recording as *probably available with Full Access*, and settle it in the
-spike (experiment 2) rather than by citation.
+**MEASURED 2026-08-07 (iPhone 11, iOS 26.0, Full Access on): in-appex recording is
+dead — comprehensively.** Permission granted, `MicrophoneBuiltIn` visible, and every
+capture path refused: `AVAudioEngine` under `.record`, `.playAndRecord/.mixWithOthers`
+and `.voiceChat` all failed at `kAUStartIO` with `'what'`
+(AVAudioSessionErrorCodeUnspecified), and `AVAudioRecorder.record()` returned false.
+That is `mediaserverd` policy, exactly as the archived guide said — the original claim
+was right, and the Wispr Flow observation has a different explanation: their *container
+app* records in the background (UIBackgroundModes audio) while their keyboard fronts the
+UI and relays through the App Group. That theory is spike experiment 4.
+
+**Also measured, and the product-deciding result: on-device ASR WORKS from the appex.**
+`SFSpeechRecognizer` with `requiresOnDeviceRecognition = true`, three runs, 415–477 ms
+for a bundled sentence, memory charged to the extension ≈ 0 (65→65 MB) — recognition
+runs out-of-process in the speech daemon. Appex headroom measured at 67–72 MB, better
+than the 30–48 MB folklore. Experiment 1 reported `deviceNotEligible` — that is the
+iPhone 11's A13 speaking, not the sandbox; the eligible-hardware answer waits for an
+A17 Pro+ device.
 
 **What did not change: memory.** Recording is cheap — a few MB of buffers. Transcribing is
 not. The section below still rules out a local Whisper or a local LLM inside a ~30–48 MB
