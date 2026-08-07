@@ -24,7 +24,7 @@ enum Experiments {
 
     /// Bumped every push, printed in every header, so a pasted report names
     /// the build that produced it instead of leaving it to archaeology.
-    static let spikeBuild = 6
+    static let spikeBuild = 7
 
     static func header(context: String, fullAccess: Bool?) -> [String] {
         var lines = ["═══ Ara spike · \(context) · build \(spikeBuild) ═══",
