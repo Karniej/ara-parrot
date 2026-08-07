@@ -154,10 +154,16 @@ final class DictationCoordinator: ObservableObject {
 }
 
 /// Process-wide singletons the SwiftUI tree hangs off. A struct of lets, not
-/// a DI framework — two services do not need one.
+/// a DI framework — three services do not need one.
+///
+/// The store lives here, not only behind the paywall screen: its init
+/// re-derives the entitlement and rewrites the App Group mirror, and that
+/// must happen on every app launch — a refund or family-sharing change the
+/// keyboard should notice cannot wait for the user to open Settings.
 @MainActor
 final class AppServices {
     static let shared = AppServices()
     let dictation = DictationCoordinator()
+    let store = StoreService()
     private init() {}
 }

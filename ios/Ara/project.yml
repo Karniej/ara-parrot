@@ -7,6 +7,8 @@ settings:
   DEVELOPMENT_TEAM: 547LS36PQ8
   SWIFT_VERSION: "6.0"
   CODE_SIGN_STYLE: Automatic
+  MARKETING_VERSION: 0.1.0
+  CURRENT_PROJECT_VERSION: 1
 schemes:
   Ara:
     build:
@@ -29,6 +31,8 @@ targets:
       properties:
         UILaunchScreen: {}
         CFBundleDisplayName: Ara
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
         UIBackgroundModes: [audio]
         NSMicrophoneUsageDescription: Ara records only while you dictate, and only on this device. Audio never leaves your phone.
         NSSpeechRecognitionUsageDescription: Ara transcribes your dictation entirely on-device. Nothing is sent anywhere.
@@ -55,6 +59,8 @@ targets:
       path: Keyboard/Info.plist
       properties:
         CFBundleDisplayName: Ara
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
         NSExtension:
           NSExtensionPointIdentifier: com.apple.keyboard-service
           NSExtensionPrincipalClass: $(PRODUCT_MODULE_NAME).KeyboardViewController
