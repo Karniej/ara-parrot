@@ -15,19 +15,52 @@ struct SpikeView: View {
         Experiments.header(context: "CONTAINER APP (control)", fullAccess: nil)
     @State private var running = false
     @State private var relayRecording = false
+    @State private var relayError: String?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             Text("Ara spike").font(.title2.bold())
+
+            // Experiment 4, app side. Recording starts BY ITSELF when the app
+            // opens — two reports in a row came back "no heartbeat found"
+            // because the start tap never happened, so there is no start tap
+            // anymore. The banner below is the whole protocol.
+            if relayRecording {
+                VStack(alignment: .leading, spacing: 6) {
+                    Label("RECORDING", systemImage: "record.circle")
+                        .font(.title3.bold())
+                    Text("Switch to Notes now and tap “4 only” on the AraSpike keyboard. Don't come back until it finishes.")
+                        .font(.callout.bold())
+                }
+                .foregroundStyle(.black)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(12)
+                .background(Color(red: 1, green: 0.45, blue: 0.35),
+                            in: RoundedRectangle(cornerRadius: 10))
+            } else if let relayError {
+                VStack(alignment: .leading, spacing: 6) {
+                    Label("TEST 4 CAN'T START", systemImage: "xmark.octagon.fill")
+                        .font(.title3.bold())
+                    Text(relayError).font(.callout.monospaced())
+                    Text("Send this line back — it's the diagnosis.")
+                        .font(.footnote)
+                }
+                .foregroundStyle(.white)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(12)
+                .background(Color(red: 0.75, green: 0.1, blue: 0.1),
+                            in: RoundedRectangle(cornerRadius: 10))
+            } else {
+                Label("starting the microphone…", systemImage: "hourglass")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+            }
+
+            Text("Control group + first-time setup:")
+                .font(.footnote).foregroundStyle(.secondary)
             Text("""
-            1. Settings → General → Keyboard → Keyboards → Add New Keyboard → AraSpike, \
-            then tap it and Allow Full Access.
-            2. Open Notes, switch to the AraSpike keyboard (globe key), tap ▶, \
-            then Type results.
-            3. Turn Full Access OFF and run again.
-            4. Run the control group below (1/2/3) and Copy.
-            5. Test 4: tap Start below, then go to Notes and run the keyboard's \
-            tests — test 4 checks whether recording here survives backgrounding.
+            Setup once: Settings → General → Keyboard → Keyboards → Add New Keyboard → \
+            AraSpike, then Allow Full Access. Control group: run 1/2/3 below and Copy.
             """).font(.footnote).foregroundStyle(.secondary)
 
             HStack {
@@ -39,35 +72,6 @@ struct SpikeView: View {
             .buttonStyle(.bordered)
             .disabled(running)
 
-            // Experiment 4, app side: start recording HERE, then leave for
-            // Notes and run the keyboard's tests — its test 4 reads the
-            // heartbeat this writes and reports whether recording survived
-            // backgrounding.
-            if relayRecording {
-                Label("RECORDING — now switch to Notes and tap “4 only” in the keyboard",
-                      systemImage: "record.circle")
-                    .font(.callout.bold())
-                    .foregroundStyle(.black)
-                    .frame(maxWidth: .infinity)
-                    .padding(10)
-                    .background(Color(red: 1, green: 0.45, blue: 0.35),
-                                in: RoundedRectangle(cornerRadius: 10))
-            }
-            HStack {
-                Button("▶ Start test 4 (background recording)") {
-                    RelayProbe.startBackgroundRecording { line in
-                        lines.append(line)
-                        if line.hasPrefix("recording") { relayRecording = true }
-                    }
-                }
-                Button("Stop") {
-                    RelayProbe.stop()
-                    relayRecording = false
-                }
-            }
-            .buttonStyle(.borderedProminent)
-            .tint(Color(red: 1, green: 0.68, blue: 0.35))
-
             ScrollView {
                 Text(lines.joined(separator: "\n"))
                     .font(.system(size: 11, design: .monospaced))
@@ -78,9 +82,30 @@ struct SpikeView: View {
         }
         .padding()
         .preferredColorScheme(.dark)
+        .onAppear(perform: startRelay)
+    }
+
+    private func startRelay() {
+        guard !relayRecording else { return }
+        RelayProbe.startBackgroundRecording { line in
+            lines.append(line)
+            if line.hasPrefix("recording") {
+                relayRecording = true
+                relayError = nil
+            } else {
+                relayError = line
+            }
+        }
     }
 
     private func run(_ body: @escaping () async -> [String]) {
+        // The relay holds the audio session; a control-group test running
+        // against a busy session would report a false failure.
+        if relayRecording {
+            RelayProbe.stop()
+            relayRecording = false
+            lines.append("(relay stopped for control run — relaunch the app to restart it)")
+        }
         running = true
         Task {
             let result = await body()
