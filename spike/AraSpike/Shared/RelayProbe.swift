@@ -28,6 +28,19 @@ enum RelayProbe {
     /// entire point.
     @MainActor
     static func startBackgroundRecording(report: @escaping (String) -> Void) {
+        Task { @MainActor in
+            if AVAudioApplication.shared.recordPermission != .granted {
+                guard await AVAudioApplication.requestRecordPermission() else {
+                    report("mic permission denied")
+                    return
+                }
+            }
+            begin(report: report)
+        }
+    }
+
+    @MainActor
+    private static func begin(report: (String) -> Void) {
         guard let defaults = UserDefaults(suiteName: group) else {
             report("no App Group access — provisioning did not grant \(group)")
             return
@@ -50,7 +63,14 @@ enum RelayProbe {
             return
         }
         let counter = FrameTally()
-        engine.inputNode.installTap(onBus: 0, bufferSize: 2048, format: format) { buffer, _ in
+        // `@Sendable`, load-bearing: a closure literal formed inside a
+        // `@MainActor` function silently inherits main-actor isolation, and
+        // the tap fires on the realtime capture thread — the runtime enforces
+        // the mismatch with dispatch_assert_queue and kills the app. Crashed
+        // exactly that way on first device run; `@Sendable` severs the
+        // inference.
+        engine.inputNode.installTap(onBus: 0, bufferSize: 2048,
+                                    format: format) { @Sendable buffer, _ in
             counter.add(Int(buffer.frameLength))
         }
         do { try engine.start() } catch {
