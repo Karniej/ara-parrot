@@ -9,3 +9,5 @@ dist/
 # kdb auto-rendered task index (regenerate with `kdb render`)
 .tasks/
 .claude/
+spike/AraSpike/build/
+spike/AraSpike/DerivedData/

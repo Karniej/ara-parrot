@@ -1,0 +1,44 @@
+name: AraSpike
+options:
+  bundleIdPrefix: com.silpho
+  deploymentTarget:
+    iOS: "26.0"
+settings:
+  DEVELOPMENT_TEAM: 547LS36PQ8
+  SWIFT_VERSION: "6.0"
+  CODE_SIGN_STYLE: Automatic
+targets:
+  AraSpike:
+    type: application
+    platform: iOS
+    sources: [App, Shared]
+    info:
+      path: App/Info.plist
+      properties:
+        UILaunchScreen: {}
+        NSMicrophoneUsageDescription: Experiment 2 records ~1 second of audio to count frames. Nothing is stored.
+        NSSpeechRecognitionUsageDescription: Experiment 3 transcribes a bundled sentence on-device.
+    settings:
+      PRODUCT_BUNDLE_IDENTIFIER: com.silpho.araspike
+    dependencies:
+      - target: AraSpikeKeyboard
+        embed: true
+  AraSpikeKeyboard:
+    type: app-extension
+    platform: iOS
+    sources: [Keyboard, Shared]
+    info:
+      path: Keyboard/Info.plist
+      properties:
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.keyboard-service
+          NSExtensionPrincipalClass: $(PRODUCT_MODULE_NAME).KeyboardViewController
+          NSExtensionAttributes:
+            IsASCIICapable: false
+            PrefersRightToLeft: false
+            PrimaryLanguage: en-US
+            RequestsOpenAccess: true
+        NSMicrophoneUsageDescription: Experiment 2 records ~1 second of audio to count frames. Nothing is stored.
+        NSSpeechRecognitionUsageDescription: Experiment 3 transcribes a bundled sentence on-device.
+    settings:
+      PRODUCT_BUNDLE_IDENTIFIER: com.silpho.araspike.keyboard
