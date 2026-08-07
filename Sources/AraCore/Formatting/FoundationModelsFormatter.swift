@@ -32,7 +32,7 @@ import FoundationModels
 /// See that method for why this is a correctness requirement rather than
 /// tidiness.
 @available(macOS 26.0, *)
-public struct FoundationModelsFormatter: Formatter {
+public struct FoundationModelsFormatter: AraEngine.Formatter {
     /// The single model-facing step, injectable so tests can drive the real
     /// `format` path — including its executor routing and its error mapping —
     /// on a machine where no model exists. Everything outside this closure is

@@ -1,4 +1,3 @@
-import ArgumentParser
 import Foundation
 
 /// What the user asked for — the `inject` config key or the `--inject` flag.
@@ -8,7 +7,7 @@ import Foundation
 /// but is dropped or mangled by terminals and Electron apps; paste works
 /// everywhere those live but briefly occupies the pasteboard. `auto` sends
 /// each utterance down the path that works in the app it was spoken into.
-public enum InjectionSetting: String, CaseIterable, Sendable, ExpressibleByArgument {
+public enum InjectionSetting: String, CaseIterable, Sendable {
     case auto, type, paste
 
     public static var valueNames: String {

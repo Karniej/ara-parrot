@@ -59,7 +59,7 @@ import Foundation
 /// continuation-bait at high). The joke and factual-question guards held in
 /// every pair measured. Numbers in docs/KNOWN-ISSUES.md; code mode is
 /// unmeasured.
-enum TranscriptPrompt {
+public enum TranscriptPrompt {
     /// The wrapper tag around the transcript. Named once so the instructions,
     /// the prompt and `clean` cannot drift apart.
     private static let wrapper = "transcript"
@@ -88,7 +88,7 @@ enum TranscriptPrompt {
     /// model (Qwen2.5-1.5B-Instruct-4bit, temperature 0): the rule sentence
     /// alone did not stop the joke; the worked example did, at all three
     /// intensities, without costing any quality case.
-    static func instructions(for mode: Mode) -> String {
+    public static func instructions(for mode: Mode) -> String {
         switch mode.cleanup {
         case .light: return lightInstructions(for: mode)
         case .medium, .none: return mediumInstructions(for: mode)
@@ -284,7 +284,7 @@ enum TranscriptPrompt {
     /// prompt injection with no exotic payload required. Whisper will not
     /// produce that from speech, but callers take a `String` and nothing stops
     /// one from passing clipboard contents or previously formatted text.
-    static func wrap(_ text: String) -> String {
+    public static func wrap(_ text: String) -> String {
         let escaped = text.replacingOccurrences(of: closeTag, with: "&lt;/\(wrapper)>")
         return openTag + escaped + closeTag
     }
@@ -298,7 +298,7 @@ enum TranscriptPrompt {
     /// opening and closing tags are handled independently, since a truncated
     /// generation leaves just one of them behind, and repeatedly, since a model
     /// that echoes the wrapper once may echo it twice.
-    static func clean(_ raw: String) -> String {
+    public static func clean(_ raw: String) -> String {
         var out = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         var stripped = true
         while stripped {

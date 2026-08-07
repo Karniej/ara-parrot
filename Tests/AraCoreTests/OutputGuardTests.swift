@@ -1,5 +1,6 @@
 import Testing
 @testable import AraCore
+@testable import AraEngine
 
 @Suite("OutputGuard")
 struct OutputGuardTests {

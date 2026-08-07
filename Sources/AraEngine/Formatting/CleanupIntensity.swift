@@ -28,7 +28,7 @@ public enum CleanupIntensity: String, Codable, Sendable, CaseIterable {
 
     /// The valid spellings, rendered for the config warning: a user who
     /// typo'd one deserves the list, not just the rejection.
-    static var validNames: String {
+    public static var validNames: String {
         allCases.map(\.rawValue).joined(separator: ", ")
     }
 }

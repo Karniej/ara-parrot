@@ -47,7 +47,7 @@ import Tokenizers
 /// ## Everything model-facing runs off the cooperative pool
 ///
 /// See `runOffCooperativePool`. Both the load and the generation go through it.
-public final class MLXFormatter: Formatter, @unchecked Sendable {
+public final class MLXFormatter: AraEngine.Formatter, @unchecked Sendable {
     /// The single model-facing step, injectable so tests can drive the real
     /// `format` path — its executor routing, its prompt construction and its
     /// error mapping — on a machine with no model on disk. Everything outside

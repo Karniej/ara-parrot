@@ -23,7 +23,7 @@ public enum Pipeline {
     /// unmeasured on hardware that is eligible but still downloading. That is
     /// fine once, on the CLI's own thread, and would not be per utterance on a
     /// cooperative-pool thread.
-    public static func appleFormatter() -> (any Formatter)? {
+    public static func appleFormatter() -> (any AraEngine.Formatter)? {
         if #available(macOS 26.0, *), FoundationModelsFormatter.isAvailable {
             return FoundationModelsFormatter()
         }
@@ -81,13 +81,13 @@ public enum Pipeline {
     /// bare chain, and only the tests reach for this directly.
     static func makeChain(config: Config,
                           apiKey: String?,
-                          mlx: (any Formatter)?,
-                          apple: (any Formatter)?,
-                          rules: any Formatter = RuleBasedFormatter(),
+                          mlx: (any AraEngine.Formatter)?,
+                          apple: (any AraEngine.Formatter)?,
+                          rules: any AraEngine.Formatter = RuleBasedFormatter(),
                           cloudTransport: CloudFormatter.Transport? = nil)
         -> FormatterChain
     {
-        var cloud: (any Formatter)?
+        var cloud: (any AraEngine.Formatter)?
         if let cloudConfig = config.cloud {
             if let cloudTransport {
                 cloud = CloudFormatter(config: cloudConfig, apiKey: apiKey,
@@ -127,10 +127,10 @@ public enum Pipeline {
     /// snippets are file-only in v1, so the URL loader is the whole story.
     public static func makeSession(config: Config,
                                    apiKey: String?,
-                                   mlx: (any Formatter)?,
-                                   apple: (any Formatter)?,
+                                   mlx: (any AraEngine.Formatter)?,
+                                   apple: (any AraEngine.Formatter)?,
                                    registry: ModeRegistry = ModeRegistry(userModes: []),
-                                   rules: any Formatter = RuleBasedFormatter(),
+                                   rules: any AraEngine.Formatter = RuleBasedFormatter(),
                                    cloudTransport: CloudFormatter.Transport? = nil,
                                    dictionaryURL: URL? = nil,
                                    dictionary: (@Sendable () -> LocalDictionary)? = nil,

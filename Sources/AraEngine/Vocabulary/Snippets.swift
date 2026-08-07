@@ -52,10 +52,10 @@ public struct Snippets: Sendable, Equatable {
     }
 
     /// `snippets.json` in the directory the user already edits configuration
-    /// in — derived from `Config.defaultURL` rather than spelled out again,
+    /// in — derived from `ConfigLocation.directory` rather than spelled out again,
     /// so the files cannot drift apart.
     public static var defaultURL: URL {
-        Config.defaultURL.deletingLastPathComponent()
+        ConfigLocation.directory
             .appendingPathComponent("snippets.json")
     }
 
@@ -102,7 +102,7 @@ public struct Snippets: Sendable, Equatable {
             // user has not been told about.
             failureLog.warnOnce(signature: "malformed \(data.hashValue)",
                                 at: url.path, warn: warn) {
-                "ignoring \(url.path): \(Config.describe(error)); "
+                "ignoring \(url.path): \(JSONErrors.describe(error)); "
                 + "dictating without snippets"
             }
             return Snippets()

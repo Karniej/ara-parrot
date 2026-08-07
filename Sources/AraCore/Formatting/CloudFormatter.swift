@@ -43,7 +43,7 @@ import Foundation
 /// async API resumes a continuation from its own delegate queue, so an
 /// outstanding request costs no pool thread; a `DispatchSemaphore` around
 /// `dataTask` would be the easy version of this and the wrong one.
-public struct CloudFormatter: Formatter {
+public struct CloudFormatter: AraEngine.Formatter {
     public typealias Transport =
         @Sendable (URLRequest) async throws -> (Data, URLResponse)
 

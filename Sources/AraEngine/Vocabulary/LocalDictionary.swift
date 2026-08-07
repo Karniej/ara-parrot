@@ -37,10 +37,10 @@ public struct LocalDictionary: Sendable, Equatable {
     }
 
     /// `dictionary.json` in the directory the user already edits
-    /// configuration in — derived from `Config.defaultURL` rather than
+    /// configuration in — derived from `ConfigLocation.directory` rather than
     /// spelled out again, so the two files cannot drift apart.
     public static var defaultURL: URL {
-        Config.defaultURL.deletingLastPathComponent()
+        ConfigLocation.directory
             .appendingPathComponent("dictionary.json")
     }
 
@@ -89,7 +89,7 @@ public struct LocalDictionary: Sendable, Equatable {
             // which is exactly the lifetime this dedupe needs.
             failureLog.warnOnce(signature: "malformed \(data.hashValue)",
                                 at: url.path, warn: warn) {
-                "ignoring \(url.path): \(Config.describe(error)); "
+                "ignoring \(url.path): \(JSONErrors.describe(error)); "
                 + "dictating without corrections"
             }
             return LocalDictionary()
