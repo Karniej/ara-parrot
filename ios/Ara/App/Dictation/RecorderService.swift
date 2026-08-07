@@ -70,7 +70,10 @@ final class RecorderService {
             forName: AVAudioSession.interruptionNotification, object: nil,
             queue: .main
         ) { [weak self] note in
-            MainActor.assumeIsolated { self?.handleInterruption(note) }
+            // Extract the one Sendable value here — the Notification itself
+            // cannot cross into the main-actor hop under Swift 6.
+            let raw = note.userInfo?[AVAudioSessionInterruptionTypeKey] as? UInt
+            MainActor.assumeIsolated { self?.handleInterruption(rawType: raw) }
         })
         observers.append(center.addObserver(
             forName: AVAudioSession.routeChangeNotification, object: nil,
@@ -82,8 +85,8 @@ final class RecorderService {
         })
     }
 
-    private func handleInterruption(_ note: Notification) {
-        guard let raw = note.userInfo?[AVAudioSessionInterruptionTypeKey] as? UInt,
+    private func handleInterruption(rawType: UInt?) {
+        guard let raw = rawType,
               let type = AVAudioSession.InterruptionType(rawValue: raw) else { return }
         switch type {
         case .began:

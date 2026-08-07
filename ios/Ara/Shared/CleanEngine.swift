@@ -27,7 +27,9 @@ enum CleanEngine {
 
     /// Rules floor + dictionary + conservative spell repair. Returns nil when
     /// the result would be unusable — and nil means *abort*, because by the
-    /// data-loss guard no delete has happened yet.
+    /// data-loss guard no delete has happened yet. `@MainActor` because
+    /// `UITextChecker` is, and callers are keyboard UI anyway.
+    @MainActor
     static func clean(_ sentence: String, mode: Mode,
                       dictionary: LocalDictionary) async -> String? {
         let trimmed = sentence.trimmingCharacters(in: .whitespaces)
@@ -46,6 +48,7 @@ enum CleanEngine {
     /// only when the checker has a first guess, and never words the user's
     /// dictionary declares canonical — the user's own vocabulary outranks
     /// Apple's lexicon.
+    @MainActor
     static func spellRepair(_ text: String,
                             protecting dictionary: LocalDictionary) -> String {
         let checker = UITextChecker()
