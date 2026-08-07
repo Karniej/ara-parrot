@@ -4,19 +4,26 @@ import Foundation
 /// `LocalDictionary` and `Snippets` compile for an iOS keyboard without
 /// knowing anything about either platform's conventions.
 ///
-/// On iOS this must become the App Group container so the container app and
-/// the keyboard extension read the same dictionary; the group id is a product
-/// decision the spike has not forced yet, so until then the fallback is
-/// Application Support — real, writable, and wrong only in that the two
-/// processes would not share it.
+/// On iOS this is the App Group container (`group.com.silpho.ara`, decided
+/// 2026-08-07) so the container app and the keyboard extension read the same
+/// dictionary. The Application Support fallback exists only for processes
+/// missing the entitlement — real, writable, and wrong only in that the two
+/// processes would not share it; `containerURL` returning nil is the honest
+/// signal provisioning is broken, and UI should surface it.
 public enum ConfigLocation {
+    public static let appGroup = "group.com.silpho.ara"
+
     public static var directory: URL {
         #if os(macOS)
         FileManager.default.homeDirectoryForCurrentUser
             .appendingPathComponent(".config/ara")
         #else
-        FileManager.default.urls(for: .applicationSupportDirectory,
-                                 in: .userDomainMask)[0]
+        if let container = FileManager.default
+            .containerURL(forSecurityApplicationGroupIdentifier: appGroup) {
+            return container.appendingPathComponent("ara")
+        }
+        return FileManager.default.urls(for: .applicationSupportDirectory,
+                                        in: .userDomainMask)[0]
             .appendingPathComponent("ara")
         #endif
     }

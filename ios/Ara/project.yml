@@ -1,0 +1,64 @@
+name: Ara
+options:
+  bundleIdPrefix: com.silpho
+  deploymentTarget:
+    iOS: "17.0"
+settings:
+  DEVELOPMENT_TEAM: 547LS36PQ8
+  SWIFT_VERSION: "6.0"
+  CODE_SIGN_STYLE: Automatic
+targets:
+  Ara:
+    type: application
+    platform: iOS
+    sources:
+      - App
+      - Shared
+      - path: ../../Sources/AraEngine
+        group: AraEngine
+    info:
+      path: App/Info.plist
+      properties:
+        UILaunchScreen: {}
+        CFBundleDisplayName: Ara
+        UIBackgroundModes: [audio]
+        NSMicrophoneUsageDescription: Ara records only while you dictate, and only on this device. Audio never leaves your phone.
+        NSSpeechRecognitionUsageDescription: Ara transcribes your dictation entirely on-device. Nothing is sent anywhere.
+        ITSAppUsesNonExemptEncryption: false
+    settings:
+      PRODUCT_BUNDLE_IDENTIFIER: com.silpho.ara
+    entitlements:
+      path: Entitlements/App.entitlements
+      properties:
+        com.apple.security.application-groups:
+          - group.com.silpho.ara
+    dependencies:
+      - target: AraKeyboard
+        embed: true
+  AraKeyboard:
+    type: app-extension
+    platform: iOS
+    sources:
+      - Keyboard
+      - Shared
+      - path: ../../Sources/AraEngine
+        group: AraEngine
+    info:
+      path: Keyboard/Info.plist
+      properties:
+        CFBundleDisplayName: Ara
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.keyboard-service
+          NSExtensionPrincipalClass: $(PRODUCT_MODULE_NAME).KeyboardViewController
+          NSExtensionAttributes:
+            IsASCIICapable: false
+            PrefersRightToLeft: false
+            PrimaryLanguage: en-US
+            RequestsOpenAccess: true
+    settings:
+      PRODUCT_BUNDLE_IDENTIFIER: com.silpho.ara.keyboard
+    entitlements:
+      path: Entitlements/Keyboard.entitlements
+      properties:
+        com.apple.security.application-groups:
+          - group.com.silpho.ara
