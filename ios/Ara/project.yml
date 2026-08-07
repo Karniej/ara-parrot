@@ -7,6 +7,14 @@ settings:
   DEVELOPMENT_TEAM: 547LS36PQ8
   SWIFT_VERSION: "6.0"
   CODE_SIGN_STYLE: Automatic
+schemes:
+  Ara:
+    build:
+      targets:
+        Ara: all
+    run:
+      config: Debug
+      storeKitConfiguration: App/Products.storekit
 targets:
   Ara:
     type: application

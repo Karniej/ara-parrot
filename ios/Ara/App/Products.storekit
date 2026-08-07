@@ -1,0 +1,33 @@
+{
+  "identifier" : "F3D2C7A1-0000-4000-8000-ARA000000001",
+  "nonRenewingSubscriptions" : [
+
+  ],
+  "products" : [
+    {
+      "displayPrice" : "14.99",
+      "familyShareable" : false,
+      "internalID" : "ARA-LIFETIME-0001",
+      "localizations" : [
+        {
+          "description" : "Dictation and cleanup, forever, on this device.",
+          "displayName" : "Ara — lifetime",
+          "locale" : "en_US"
+        }
+      ],
+      "productID" : "com.silpho.ara.lifetime",
+      "referenceName" : "Ara Lifetime",
+      "type" : "NonConsumable"
+    }
+  ],
+  "settings" : {
+
+  },
+  "subscriptionGroups" : [
+
+  ],
+  "version" : {
+    "major" : 3,
+    "minor" : 0
+  }
+}

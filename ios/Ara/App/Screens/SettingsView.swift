@@ -10,6 +10,8 @@ import SwiftUI
 struct SettingsView: View {
     @State private var intensity = EngineProvider.intensity()
     @State private var haptics = EngineProvider.hapticsEnabled()
+    @StateObject private var store = StoreService()
+    @State private var restoring = false
 
     var body: some View {
         NavigationStack {
@@ -41,10 +43,19 @@ struct SettingsView: View {
                 }
 
                 Section {
-                    Button("Restore purchases") {}
-                        .disabled(true)
+                    Button(restoring ? "Restoring…" : "Restore purchase") {
+                        restoring = true
+                        Task {
+                            await store.restore()
+                            restoring = false
+                        }
+                    }
+                    .disabled(restoring)
                 } footer: {
-                    Text("Arrives with purchase support.")
+                    Text(store.isUnlocked
+                         ? "Ara is unlocked on this device."
+                         : "Bought Ara before, on this or another device? "
+                           + "This asks the App Store — no account needed.")
                 }
 
                 Section {

@@ -36,7 +36,7 @@ struct HomeView: View {
             isUnlocked = StoreGate.isUnlocked
         }
         .onChange(of: coordinator.isArmed) { _, value in armed = value }
-        .sheet(isPresented: $showPaywall) { PaywallPlaceholderView() }
+        .sheet(isPresented: $showPaywall) { PaywallView() }
     }
 
     // MARK: - Pieces
