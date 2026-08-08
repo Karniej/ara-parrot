@@ -8,6 +8,11 @@ struct SuggestionBarView: View {
     var body: some View {
         HStack(spacing: 8) {
             micKey
+            if bar.micState == .recording {
+                WaveformView(bars: 5, barWidth: 3, spacing: 3, maxHeight: 18,
+                             glow: false)
+                    .transition(.scale(scale: 0.6).combined(with: .opacity))
+            }
             Text(bar.status ?? "")
                 .font(.footnote)
                 .foregroundStyle(statusColor)
@@ -17,23 +22,36 @@ struct SuggestionBarView: View {
                 .animation(nil, value: bar.status)
             cleanKey
         }
+        .animation(.spring(duration: 0.3), value: bar.micState)
         .padding(.horizontal, 10)
         .frame(maxWidth: .infinity)
         .frame(height: KeyboardMetrics.suggestionBarHeight)
         .background(Theme.background)
     }
 
+    /// The hero key: a filled control, not an icon — amber and glowing the
+    /// whole time audio is live, which makes it the in-keyboard twin of the
+    /// system's orange indicator.
     private var micKey: some View {
         Button(action: { bar.micTapped() }) {
-            Image(systemName: micSymbol)
-                .font(.system(size: 16, weight: .medium))
-                .foregroundStyle(micColor)
-                .symbolEffect(.pulse, isActive: bar.micState == .recording)
-                .frame(width: 44, height: KeyboardMetrics.suggestionBarHeight)
-                .contentShape(Rectangle())
+            ZStack {
+                RoundedRectangle(cornerRadius: 9, style: .continuous)
+                    .fill(micIsLive ? Theme.accentFill : Theme.surface)
+                    .shadow(color: micIsLive ? Theme.accentFill.opacity(0.5) : .clear,
+                            radius: 8)
+                Image(systemName: micSymbol)
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundStyle(micIsLive ? Color.black : micColor)
+            }
+            .frame(width: 44, height: 30)
+            .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .accessibilityLabel("Dictate")
+    }
+
+    private var micIsLive: Bool {
+        bar.micState == .recording || bar.micState == .transcribing
     }
 
     private var cleanKey: some View {
@@ -56,7 +74,7 @@ struct SuggestionBarView: View {
 
     private var micSymbol: String {
         switch bar.micState {
-        case .recording: return "stop.circle.fill"
+        case .recording: return "stop.fill"
         case .transcribing: return "waveform"
         case .locked: return "mic.slash"
         default: return "mic.fill"

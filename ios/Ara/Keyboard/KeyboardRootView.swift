@@ -12,6 +12,12 @@ struct KeyboardRootView: View {
         VStack(spacing: 0) {
             SuggestionBarView(bridge: bridge, bar: bar)
             keyGrid
+                // While recording, the keyboard visibly stops being a
+                // keyboard and becomes a listener: keys recede, the bar is
+                // the only living surface. Typing still works — dictating
+                // and correcting are not exclusive.
+                .opacity(bar.micState == .recording ? 0.35 : 1)
+                .animation(.easeOut(duration: 0.25), value: bar.micState)
         }
         .frame(height: KeyboardMetrics.totalHeight)
         .background(Theme.background)
@@ -70,6 +76,10 @@ struct KeyView: View {
             .overlay { label }
             .frame(height: KeyboardMetrics.keyHeight)
             .modifier(KeyWidth(span: key.span, unit: unit))
+            // A quick pop on contact — the visual half of the haptic tick.
+            // Down is instant (any lag reads as input lag); release springs.
+            .scaleEffect(isPressed ? 1.08 : 1)
+            .animation(isPressed ? nil : .spring(duration: 0.18), value: isPressed)
             .contentShape(Rectangle())
             .background(frameReader)
             .gesture(gesture)

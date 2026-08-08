@@ -7,6 +7,10 @@ import UIKit
 /// to reason about, not easier.
 enum OnboardingState {
     static let key = "onboarding.completed"
+    /// The page the user was on, persisted because the "open Settings" step
+    /// backgrounds the app and iOS may kill it there — relaunching into page
+    /// one after the user did what page two asked reads as a broken app.
+    static let pageKey = "onboarding.page"
 }
 
 /// First launch only: three dark full-screen pages, swipe or Continue. Page 2
@@ -16,7 +20,7 @@ struct OnboardingView: View {
     /// Called once, from the last page. The caller owns persistence.
     let onFinish: () -> Void
 
-    @State private var page = 0
+    @AppStorage(OnboardingState.pageKey) private var page = 0
 
     var body: some View {
         VStack(spacing: 0) {
@@ -50,10 +54,27 @@ struct OnboardingView: View {
 
 // MARK: - Pages
 
-/// Page ①: what Ara is, and the one claim the whole product rests on.
+/// Page ①: what Ara is, and the one claim the whole product rests on. The
+/// waveform performs once as an entrance — a few seconds of voice — then
+/// falls still, because in this product motion means the microphone is open
+/// and the intro should teach that instinct, not undermine it.
 private struct IntroPage: View {
+    @State private var performing = false
+
     var body: some View {
         OnboardingPage(title: "Ara — dictation that never leaves your phone") {
+            HStack {
+                Spacer()
+                WaveformView(bars: 7, barWidth: 7, spacing: 6, maxHeight: 84,
+                             animating: performing)
+                Spacer()
+            }
+            .padding(.vertical, 16)
+            .task {
+                performing = true
+                try? await Task.sleep(for: .seconds(3.2))
+                performing = false
+            }
             Text("You speak, Ara types. Recording and transcription both happen "
                  + "on this device, through Apple's on-device recognizer.")
             Text("There is no account, no analytics, and no server to send "
@@ -68,28 +89,29 @@ private struct IntroPage: View {
 private struct AddKeyboardPage: View {
     var body: some View {
         OnboardingPage(title: "Add the Ara keyboard") {
-            Text("iOS will not enable a keyboard on an app's say-so. The path "
-                 + "is:")
-            Text("Settings → General → Keyboard → Keyboards → Add New "
-                 + "Keyboard → Ara")
-                .font(.subheadline.monospaced())
-                .foregroundStyle(Theme.textPrimary)
-                .padding(12)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .background(Theme.surface,
-                            in: RoundedRectangle(cornerRadius: Theme.cornerRadius))
+            Text("iOS will not enable a keyboard on an app's say-so, but the "
+                 + "button below lands one tap away:")
 
+            // The supported deep link opens *Ara's* Settings page, which
+            // carries the Keyboards row. There is no public URL for
+            // General → Keyboard; the `App-prefs:` scheme is private API and
+            // a rejection magnet.
             Button {
                 if let url = URL(string: UIApplication.openSettingsURLString) {
                     UIApplication.shared.open(url)
                 }
             } label: {
-                Label("Open Ara's settings", systemImage: "arrow.up.forward.app")
+                Label("Open Settings → tap Keyboards", systemImage: "arrow.up.forward.app")
                     .font(.subheadline.weight(.semibold))
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 12)
+                    .background(Theme.surface,
+                                in: RoundedRectangle(cornerRadius: Theme.cornerRadius))
             }
             .foregroundStyle(Theme.accent)
 
-            Text("Then turn on Allow Full Access.")
+            Text("There, turn on Ara and Allow Full Access. (The long way "
+                 + "around is Settings → General → Keyboard → Keyboards.)")
                 .foregroundStyle(Theme.textPrimary)
             Text("Full Access is what lets the keyboard reach this app through "
                  + "the shared app group — the relay that carries your "

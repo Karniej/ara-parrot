@@ -40,7 +40,10 @@ final class SpeechService {
         // Reference type because the callback below mutates it from spawned
         // main-actor tasks — captured `var`s can't cross that boundary.
         let utterance = UtteranceState()
-        task = recognizer.recognitionTask(with: request) { result, error in
+        // `@Sendable` on the callback for the same reason as everywhere audio
+        // touches concurrency: it fires on the recognizer's queue, and an
+        // inherited main-actor isolation would be enforced with a crash.
+        task = recognizer.recognitionTask(with: request) { @Sendable result, error in
             // Callback queue is the recognizer's; hop before touching state.
             let text = result.map { $0.bestTranscription.formattedString }
             let isFinal = result?.isFinal ?? false

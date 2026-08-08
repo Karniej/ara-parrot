@@ -6,6 +6,7 @@ import SwiftUI
 struct PaywallView: View {
     @Environment(\.dismiss) private var dismiss
     @StateObject private var store = StoreService()
+    @State private var glowing = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -54,12 +55,17 @@ struct PaywallView: View {
                     Task { await store.purchase() }
                 } label: {
                     Text(purchaseLabel)
-                        .font(.headline)
+                        .font(.system(.headline, design: .rounded))
                         .foregroundStyle(.black)
                         .frame(maxWidth: .infinity)
                         .padding(.vertical, 16)
                         .background(Theme.accentFill, in: RoundedRectangle(
                             cornerRadius: Theme.cornerRadius))
+                        .shadow(color: Theme.accentFill.opacity(glowing ? 0.4 : 0.15),
+                                radius: glowing ? 22 : 10)
+                        .animation(.easeInOut(duration: 2.4)
+                            .repeatForever(autoreverses: true), value: glowing)
+                        .onAppear { glowing = true }
                 }
                 Button {
                     Task { await store.restore() }

@@ -12,6 +12,7 @@ struct HomeView: View {
     @State private var armed = false
     @State private var isUnlocked = StoreGate.isUnlocked
     @State private var showPaywall = false
+    @State private var breathe = false
 
     var body: some View {
         NavigationStack {
@@ -41,19 +42,54 @@ struct HomeView: View {
 
     // MARK: - Pieces
 
+    /// The hero: the brand waveform inside a breathing halo. The one motion
+    /// rule from the design system — movement means the microphone is open —
+    /// is enforced here: bars animate only while recording, the halo breathes
+    /// only while the mic session is live, and idle is perfectly still.
     private var stateCard: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(spacing: 14) {
+            ZStack {
+                Circle()
+                    .stroke(Theme.accentFill.opacity(0.25), lineWidth: 1)
+                    .background {
+                        Circle().fill(Theme.accentFill.opacity(micIsLive ? 0.05 : 0))
+                    }
+                    .frame(width: 148, height: 148)
+                    .shadow(color: Theme.accentFill.opacity(micIsLive ? 0.35 : 0),
+                            radius: breathe ? 34 : 18)
+                    .scaleEffect(breathe ? 1.03 : 1)
+                    .animation(micIsLive
+                               ? .easeInOut(duration: 2).repeatForever(autoreverses: true)
+                               : .easeOut(duration: 0.4),
+                               value: breathe)
+                WaveformView(bars: 5, barWidth: 7, spacing: 6, maxHeight: 72,
+                             animating: coordinator.state == .recording,
+                             color: micIsLive ? Theme.accentFill : Theme.textSecondary)
+            }
+            .padding(.top, 10)
+            .onAppear { breathe = micIsLive }
+            .onChange(of: micIsLive) { _, live in breathe = live }
             Text(stateHeadline)
-                .font(.system(size: 34, weight: .semibold, design: .rounded))
+                .font(.system(size: 26, weight: .bold, design: .rounded))
                 .foregroundStyle(stateColor)
+                .contentTransition(.opacity)
+                .animation(.easeOut(duration: 0.2), value: stateHeadline)
             Text(stateDetail)
                 .font(.footnote)
                 .foregroundStyle(Theme.textSecondary)
+                .multilineTextAlignment(.center)
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(20)
+        .frame(maxWidth: .infinity)
+        .padding(24)
         .background(Theme.surface,
-                    in: RoundedRectangle(cornerRadius: Theme.cornerRadius))
+                    in: RoundedRectangle(cornerRadius: 24, style: .continuous))
+    }
+
+    private var micIsLive: Bool {
+        switch coordinator.state {
+        case .armed, .recording, .transcribing: return true
+        case .idle, .error: return false
+        }
     }
 
     private var armToggle: some View {

@@ -70,8 +70,13 @@ final class DictationCoordinator: ObservableObject {
     func requestPermissions() async -> Bool {
         let mic = await AVAudioApplication.requestRecordPermission()
         let speechAuth = await withCheckedContinuation { continuation in
-            SFSpeechRecognizer.requestAuthorization {
-                continuation.resume(returning: $0 == .authorized)
+            // `@Sendable`, load-bearing: this callback arrives on a background
+            // queue, and a closure literal formed in a `@MainActor` method
+            // otherwise inherits main-actor isolation — the runtime enforces
+            // the mismatch with dispatch_assert_queue and kills the app.
+            // Crashed exactly that way on first device run.
+            SFSpeechRecognizer.requestAuthorization { @Sendable status in
+                continuation.resume(returning: status == .authorized)
             }
         }
         return mic && speechAuth
