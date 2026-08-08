@@ -12,10 +12,23 @@ struct SettingsView: View {
     @State private var haptics = EngineProvider.hapticsEnabled()
     @StateObject private var store = StoreService()
     @State private var restoring = false
+    @EnvironmentObject private var appearanceModel: AppearanceModel
 
     var body: some View {
         NavigationStack {
             Form {
+                Section {
+                    Picker("Appearance", selection: $appearanceModel.appearance) {
+                        ForEach(Appearance.allCases, id: \.self) { choice in
+                            Text(choice.label).tag(choice)
+                        }
+                    }
+                    .pickerStyle(.segmented)
+                } footer: {
+                    Text("Applies to the app and the Ara keyboard, whatever "
+                         + "the app you're typing in uses.")
+                }
+
                 Section {
                     Picker("Cleanup intensity", selection: $intensity) {
                         ForEach(CleanupIntensity.allCases, id: \.self) { level in

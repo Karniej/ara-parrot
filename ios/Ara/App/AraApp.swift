@@ -6,14 +6,23 @@ struct AraApp: App {
     var body: some Scene {
         WindowGroup {
             RootView()
-                .preferredColorScheme(.dark)
                 .tint(Theme.accent)
         }
     }
 }
 
+/// Bridges the App-Group appearance setting into SwiftUI. An object rather
+/// than a read in `body` so the Settings picker can flip the whole app live.
+@MainActor
+final class AppearanceModel: ObservableObject {
+    @Published var appearance: Appearance = .current {
+        didSet { Appearance.set(appearance) }
+    }
+}
+
 /// Three tabs, with onboarding covering them until it has been through once.
 struct RootView: View {
+    @StateObject private var appearanceModel = AppearanceModel()
     @AppStorage(OnboardingState.key) private var onboardingCompleted = false
     /// Read once from `UserDefaults` rather than derived from the binding: a
     /// cover driven by a negated `@AppStorage` value re-presents itself the
@@ -31,6 +40,8 @@ struct RootView: View {
                 .tabItem { Label("Settings", systemImage: "gearshape") }
         }
         .tint(Theme.accent)
+        .preferredColorScheme(appearanceModel.appearance.colorScheme)
+        .environmentObject(appearanceModel)
         .onAppear { applyBarAppearance() }
         .fullScreenCover(isPresented: $showOnboarding) {
             OnboardingView {
@@ -41,21 +52,28 @@ struct RootView: View {
     }
 
     /// UIKit still owns the tab and navigation bar chrome, and its default
-    /// translucent material over `#000` reads as grey. The appearance proxies
-    /// are the only way to reach it.
+    /// translucent material over a flat background reads as grey. The
+    /// appearance proxies are the only way to reach it; the colors are
+    /// dynamic, so they track light/dark on their own.
     @MainActor
     private func applyBarAppearance() {
+        let background = UIColor { $0.userInterfaceStyle == .dark
+            ? .black
+            : UIColor(red: 0.98, green: 0.976, blue: 0.968, alpha: 1) }
+        let text = UIColor { $0.userInterfaceStyle == .dark
+            ? .white
+            : UIColor(white: 0.1, alpha: 1) }
         let tabBar = UITabBarAppearance()
         tabBar.configureWithOpaqueBackground()
-        tabBar.backgroundColor = .black
+        tabBar.backgroundColor = background
         UITabBar.appearance().standardAppearance = tabBar
         UITabBar.appearance().scrollEdgeAppearance = tabBar
 
         let navigationBar = UINavigationBarAppearance()
         navigationBar.configureWithOpaqueBackground()
-        navigationBar.backgroundColor = .black
-        navigationBar.titleTextAttributes = [.foregroundColor: UIColor.white]
-        navigationBar.largeTitleTextAttributes = [.foregroundColor: UIColor.white]
+        navigationBar.backgroundColor = background
+        navigationBar.titleTextAttributes = [.foregroundColor: text]
+        navigationBar.largeTitleTextAttributes = [.foregroundColor: text]
         UINavigationBar.appearance().standardAppearance = navigationBar
         UINavigationBar.appearance().scrollEdgeAppearance = navigationBar
     }

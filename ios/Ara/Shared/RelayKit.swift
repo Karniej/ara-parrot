@@ -37,6 +37,7 @@ enum Relay {
         static let entitled = "store.entitled"
         static let haptics = "settings.haptics"
         static let intensity = "settings.intensity"
+        static let appearance = "settings.appearance"
         static let appLaunched = "app.launched"
     }
 

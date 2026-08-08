@@ -39,7 +39,7 @@ struct OnboardingView: View {
             .foregroundStyle(Color.black)
             .frame(maxWidth: .infinity)
             .padding(.vertical, 16)
-            .background(Theme.accent,
+            .background(Theme.accentFill,
                         in: RoundedRectangle(cornerRadius: Theme.cornerRadius))
             .padding(.horizontal, 24)
             .padding(.bottom, 24)

@@ -58,7 +58,7 @@ struct PaywallView: View {
                         .foregroundStyle(.black)
                         .frame(maxWidth: .infinity)
                         .padding(.vertical, 16)
-                        .background(Theme.accent, in: RoundedRectangle(
+                        .background(Theme.accentFill, in: RoundedRectangle(
                             cornerRadius: Theme.cornerRadius))
                 }
                 Button {

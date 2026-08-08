@@ -47,6 +47,12 @@ final class KeyboardViewController: UIInputViewController {
     override func viewWillAppear(_ animated: Bool) {
         super.viewWillAppear(animated)
         heightConstraint.isActive = true
+        // A keyboard inherits the *host app's* interface style — exactly
+        // wrong for a user forcing light because their display struggles
+        // with dark. The App-Group setting wins; `.unspecified` restores
+        // host-following for "system".
+        view.window?.overrideUserInterfaceStyle = Appearance.current.interfaceStyle
+        view.overrideUserInterfaceStyle = Appearance.current.interfaceStyle
         bridge?.refreshEnvironment()
         bridge?.loadEngineState()
         state?.activate()
