@@ -17,7 +17,10 @@ struct SuggestionBarView: View {
                 .font(.footnote)
                 .foregroundStyle(statusColor)
                 .lineLimit(1)
-                .truncationMode(.head)
+                .truncationMode(bar.statusIsTranscript ? .head : .tail)
+                // Instructions are short enough to fit whole on any phone this
+                // ships to; shrinking a little beats truncating at all.
+                .minimumScaleFactor(bar.statusIsTranscript ? 1 : 0.75)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .animation(nil, value: bar.status)
             cleanKey

@@ -26,6 +26,10 @@ final class SuggestionBarModel: ObservableObject {
     /// One line in the bar's center: live partials while recording,
     /// instructions or errors otherwise. Nil shows nothing.
     @Published private(set) var status: String?
+    /// Transcripts truncate from the head — the newest words are the ones
+    /// worth seeing. Messages must truncate from the tail, or the instruction
+    /// loses its first half and reads as gibberish.
+    @Published private(set) var statusIsTranscript = false
     @Published private(set) var isCleaning = false
 
     private weak var bridge: KeyboardBridge?
@@ -51,11 +55,14 @@ final class SuggestionBarModel: ObservableObject {
     func micTapped() {
         switch micState {
         case .locked:
-            show("Ara's mic unlocks in the Ara app", for: 4)
+            show("Unlock Ara's mic in the app", for: 4)
         case .noFullAccess:
-            show("Allow Full Access in Settings to dictate with Ara", for: 4)
+            show("Allow Full Access in Settings", for: 4)
         case .appCold:
-            show("Open the Ara app once, then dictate from here", for: 4)
+            // Not "open the app once": opening it is not enough. The mic key
+            // needs a live heartbeat, and that only exists while the app is
+            // armed, so the switch is the actual instruction.
+            show("Turn on “Ready to dictate” in Ara", for: 5)
         case .ready:
             lastInsertedSeq = Relay.defaults?.integer(forKey: Relay.Key.transcriptSeq) ?? 0
             RelayClient.send(.start)
@@ -84,7 +91,7 @@ final class SuggestionBarModel: ObservableObject {
             let base = baseline()
             if micState != base, micState == .recording || micState == .transcribing {
                 // The app dropped out mid-utterance (disarmed, suspended).
-                show("Dictation stopped — check the Ara app", for: 4)
+                show("Dictation stopped — check Ara", for: 4)
             }
             micState = base
         }
@@ -114,7 +121,7 @@ final class SuggestionBarModel: ObservableObject {
         } else {
             // Live partials render in the bar only; inserting them would mean
             // a delete-storm across the proxy IPC boundary on every revision.
-            show(transcript.text, for: nil)
+            show(transcript.text, for: nil, isTranscript: true)
         }
     }
 
@@ -135,7 +142,7 @@ final class SuggestionBarModel: ObservableObject {
     func cleanTapped() {
         guard !isCleaning else { return }
         guard StoreGate.isUnlocked else {
-            show("Clean unlocks in the Ara app", for: 4)
+            show("Unlock Clean in the Ara app", for: 4)
             return
         }
         guard let bridge, let context = bridge.contextBeforeInput else { return }
@@ -169,9 +176,11 @@ final class SuggestionBarModel: ObservableObject {
 
     // MARK: - Status line
 
-    private func show(_ message: String?, for seconds: Double?) {
+    private func show(_ message: String?, for seconds: Double?,
+                      isTranscript: Bool = false) {
         statusExpiry?.cancel()
         status = message
+        statusIsTranscript = isTranscript
         guard message != nil, let seconds else { return }
         statusExpiry = Task { [weak self] in
             try? await Task.sleep(for: .seconds(seconds))
