@@ -61,8 +61,11 @@ struct PaywallView: View {
                         .padding(.vertical, 16)
                         .background(Theme.accentFill, in: RoundedRectangle(
                             cornerRadius: Theme.cornerRadius))
-                        .shadow(color: Theme.accentFill.opacity(glowing ? 0.4 : 0.15),
-                                radius: glowing ? 22 : 10)
+                        // Opacity animates, radius does not: a fixed-radius
+                        // shadow can be cached, an animating one re-renders
+                        // offscreen every frame for as long as the sheet is up.
+                        .shadow(color: Theme.accentFill.opacity(glowing ? 0.40 : 0.12),
+                                radius: 16)
                         .animation(.easeInOut(duration: 2.4)
                             .repeatForever(autoreverses: true), value: glowing)
                         .onAppear { glowing = true }

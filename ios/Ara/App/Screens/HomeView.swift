@@ -49,22 +49,36 @@ struct HomeView: View {
     private var stateCard: some View {
         VStack(spacing: 14) {
             ZStack {
+                // The halo breathes on opacity and scale only. Animating a
+                // shadow's radius instead — which is what this used to do —
+                // re-renders an offscreen pass every frame for as long as the
+                // mic is open, which is precisely the whole time the user is
+                // looking at it.
+                Circle()
+                    .fill(RadialGradient(
+                        colors: [Theme.accentFill.opacity(0.30),
+                                 Theme.accentFill.opacity(0)],
+                        center: .center, startRadius: 40, endRadius: 108))
+                    .frame(width: 216, height: 216)
+                    .opacity(micIsLive ? (breathe ? 1 : 0.55) : 0)
+                    .scaleEffect(breathe ? 1.06 : 1)
+                    .animation(micIsLive
+                               ? .easeInOut(duration: 2).repeatForever(autoreverses: true)
+                               : .easeOut(duration: 0.4),
+                               value: breathe)
+                    .animation(.easeOut(duration: 0.4), value: micIsLive)
                 Circle()
                     .stroke(Theme.accentFill.opacity(0.25), lineWidth: 1)
                     .background {
                         Circle().fill(Theme.accentFill.opacity(micIsLive ? 0.05 : 0))
                     }
                     .frame(width: 148, height: 148)
-                    .shadow(color: Theme.accentFill.opacity(micIsLive ? 0.35 : 0),
-                            radius: breathe ? 34 : 18)
-                    .scaleEffect(breathe ? 1.03 : 1)
-                    .animation(micIsLive
-                               ? .easeInOut(duration: 2).repeatForever(autoreverses: true)
-                               : .easeOut(duration: 0.4),
-                               value: breathe)
                 WaveformView(bars: 5, barWidth: 7, spacing: 6, maxHeight: 72,
                              animating: coordinator.state == .recording,
-                             color: micIsLive ? Theme.accentFill : Theme.textSecondary)
+                             color: micIsLive ? Theme.accentFill : Theme.textSecondary,
+                             // Idle bars are grey, and a grey glow is just a
+                             // smudge. The glow belongs to the live state.
+                             glow: micIsLive)
             }
             .padding(.top, 10)
             .onAppear { breathe = micIsLive }
@@ -107,11 +121,14 @@ struct HomeView: View {
         .padding(16)
         .background(Theme.surface,
                     in: RoundedRectangle(cornerRadius: Theme.cornerRadius))
+        .disabled(coordinator.isTransitioning)
         .onChange(of: armed) { _, isOn in
             guard isOn != coordinator.isArmed else { return }
-            if isOn { coordinator.arm() } else { coordinator.disarm() }
-            // Snap back if the coordinator refused.
-            armed = coordinator.isArmed
+            Task {
+                if isOn { await coordinator.arm() } else { await coordinator.disarm() }
+                // Snap back if the coordinator refused.
+                armed = coordinator.isArmed
+            }
         }
     }
 
@@ -183,6 +200,7 @@ struct HomeView: View {
     // MARK: - State rendering
 
     private var stateHeadline: String {
+        if coordinator.isTransitioning { return "Starting…" }
         switch coordinator.state {
         case .idle: return "Off"
         case .armed: return "Ready"

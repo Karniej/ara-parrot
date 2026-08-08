@@ -8,16 +8,26 @@ import Foundation
 /// backgrounded; keeping the session *continuously* active while armed is
 /// what keeps iOS from suspending the process, which is why arming shows the
 /// orange mic indicator the whole time. That is presented as a feature.
-@MainActor
-final class RecorderService {
+///
+/// Deliberately *not* main-actor isolated. `setActive(true)`, `inputFormat`
+/// and `engine.start()` each block the calling thread while the audio HAL
+/// configures — together, seconds on a cold session, and longer when another
+/// app is giving the microphone up. Run from the main actor that is a frozen
+/// UI, which is exactly how it felt. Every audio call is serialized onto one
+/// private queue instead, and callers await the result.
+final class RecorderService: @unchecked Sendable {
     /// Receives buffers on the realtime capture thread. Must be cheap and
     /// allocation-free on the hot path.
     private let sink: AudioSink
+    /// The single thread every AVAudioSession/AVAudioEngine call runs on.
+    /// Serial, so start/stop/restart can never interleave.
+    private let queue = DispatchQueue(label: "com.silpho.ara.recorder",
+                                      qos: .userInitiated)
+    /// All of these are touched only on `queue`.
     private var engine: AVAudioEngine?
     private var restartOnInterruptionEnd = false
     private var observers: [NSObjectProtocol] = []
 
-    var isRunning: Bool { engine != nil }
     var framesCaptured: Int { sink.frames }
 
     init(sink: AudioSink) {
@@ -26,7 +36,32 @@ final class RecorderService {
 
     /// Throws with a user-presentable message; the coordinator publishes it
     /// as `RelayState.error` so the *keyboard* can show it too.
-    func start() throws {
+    func start() async throws {
+        try await withCheckedThrowingContinuation {
+            (continuation: CheckedContinuation<Void, Error>) in
+            queue.async {
+                do {
+                    try self.startOnQueue()
+                    continuation.resume()
+                } catch {
+                    continuation.resume(throwing: error)
+                }
+            }
+        }
+    }
+
+    func stop() async {
+        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+            queue.async {
+                self.stopOnQueue()
+                continuation.resume()
+            }
+        }
+    }
+
+    // MARK: - On the recorder queue
+
+    private func startOnQueue() throws {
         guard engine == nil else { return }
         let session = AVAudioSession.sharedInstance()
         try session.setCategory(.playAndRecord, mode: .measurement,
@@ -38,25 +73,25 @@ final class RecorderService {
             throw RecorderError.zeroRateInput
         }
         let sink = self.sink
-        // `@Sendable`, load-bearing: a closure literal formed inside a
-        // `@MainActor` method inherits main-actor isolation, and the tap
-        // fires on the realtime capture thread — the runtime kills the app
-        // with dispatch_assert_queue. The spike crashed exactly this way.
+        // `@Sendable`, load-bearing: the tap fires on the realtime capture
+        // thread, and a closure literal that inherits any actor's isolation
+        // gets the process killed by dispatch_assert_queue. The spike crashed
+        // exactly this way.
         engine.inputNode.installTap(onBus: 0, bufferSize: 2048,
                                     format: format) { @Sendable buffer, _ in
             sink.consume(buffer)
         }
         try engine.start()
         self.engine = engine
-        installObservers()
+        installObserversOnQueue()
     }
 
-    func stop() {
+    private func stopOnQueue() {
         guard let engine else { return }
         engine.inputNode.removeTap(onBus: 0)
         engine.stop()
         self.engine = nil
-        removeObservers()
+        removeObserversOnQueue()
         try? AVAudioSession.sharedInstance()
             .setActive(false, options: .notifyOthersOnDeactivation)
     }
@@ -64,51 +99,58 @@ final class RecorderService {
     /// Phone calls, Siri, other apps taking the mic: stop cleanly, then
     /// re-arm when the interruption ends. Without this, one phone call
     /// silently kills dictation until the user finds the toggle.
-    private func installObservers() {
+    private func installObserversOnQueue() {
         let center = NotificationCenter.default
+        // `queue: nil` delivers on the posting thread; the handler hops to the
+        // recorder queue itself. Handing NotificationCenter our serial queue
+        // is not an option — it takes an OperationQueue, not a DispatchQueue.
         observers.append(center.addObserver(
             forName: AVAudioSession.interruptionNotification, object: nil,
-            queue: .main
+            queue: nil
         ) { [weak self] note in
-            // Extract the one Sendable value here — the Notification itself
-            // cannot cross into the main-actor hop under Swift 6.
+            // Extract the one Sendable value before the hop — the Notification
+            // itself cannot cross a concurrency boundary under Swift 6.
             let raw = note.userInfo?[AVAudioSessionInterruptionTypeKey] as? UInt
-            MainActor.assumeIsolated { self?.handleInterruption(rawType: raw) }
+            // Resolve the weak reference once, before the hop: reading `self?`
+            // again inside the escaping block is a second, racing load.
+            guard let self else { return }
+            self.queue.async { self.handleInterruptionOnQueue(rawType: raw) }
         })
         observers.append(center.addObserver(
             forName: AVAudioSession.routeChangeNotification, object: nil,
-            queue: .main
+            queue: nil
         ) { [weak self] _ in
             // Route changes (headphones in/out) can leave the engine wedged
             // on the old input format; a restart is cheap and always correct.
-            MainActor.assumeIsolated { self?.restart() }
+            guard let self else { return }
+            self.queue.async { self.restartOnQueue() }
         })
     }
 
-    private func handleInterruption(rawType: UInt?) {
+    private func handleInterruptionOnQueue(rawType: UInt?) {
         guard let raw = rawType,
               let type = AVAudioSession.InterruptionType(rawValue: raw) else { return }
         switch type {
         case .began:
-            restartOnInterruptionEnd = isRunning
-            stop()
+            restartOnInterruptionEnd = engine != nil
+            stopOnQueue()
         case .ended:
             if restartOnInterruptionEnd {
                 restartOnInterruptionEnd = false
-                try? start()
+                try? startOnQueue()
             }
         @unknown default:
             break
         }
     }
 
-    private func restart() {
-        guard isRunning else { return }
-        stop()
-        try? start()
+    private func restartOnQueue() {
+        guard engine != nil else { return }
+        stopOnQueue()
+        try? startOnQueue()
     }
 
-    private func removeObservers() {
+    private func removeObserversOnQueue() {
         observers.forEach(NotificationCenter.default.removeObserver)
         observers.removeAll()
     }

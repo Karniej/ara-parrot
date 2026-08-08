@@ -19,6 +19,8 @@ final class DictationCoordinator: ObservableObject {
     @Published private(set) var state: RelayState = .idle
     @Published private(set) var lastError: String?
     @Published private(set) var isArmed = false
+    /// True while the audio session is coming up or going down. UI only.
+    @Published private(set) var isTransitioning = false
 
     private let sink = AudioSink()
     private lazy var recorder = RecorderService(sink: sink)
@@ -39,14 +41,19 @@ final class DictationCoordinator: ObservableObject {
         publish(.idle)
     }
 
-    func arm() {
-        guard !isArmed else { return }
+    /// Async because bringing the audio session up blocks for as long as the
+    /// HAL needs — on the main actor that was a multi-second frozen UI.
+    /// `isTransitioning` covers the gap so the switch does not look stuck.
+    func arm() async {
+        guard !isArmed, !isTransitioning else { return }
         guard Relay.available else {
             fail("App Group unavailable — reinstall Ara")
             return
         }
+        isTransitioning = true
+        defer { isTransitioning = false }
         do {
-            try recorder.start()
+            try await recorder.start()
         } catch {
             fail(error.localizedDescription)
             return
@@ -56,13 +63,19 @@ final class DictationCoordinator: ObservableObject {
         startHeartbeat()
     }
 
-    func disarm() {
+    func disarm() async {
+        guard !isTransitioning else { return }
+        isTransitioning = true
+        defer { isTransitioning = false }
         speech.cancel()
         sink.setForward(nil)
-        recorder.stop()
+        // Stop the heartbeat before the mic goes away, not after: the keyboard
+        // reads a stale-by-3s heartbeat as "app is live" and would offer a mic
+        // key that cannot record for as long as tearing down takes.
         stopHeartbeat()
         isArmed = false
         publish(.idle)
+        await recorder.stop()
     }
 
     /// Permissions are requested app-side (onboarding calls this too); the

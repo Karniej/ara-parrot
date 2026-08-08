@@ -26,13 +26,27 @@ struct WaveformView: View {
                         .fill(color)
                         .frame(width: barWidth,
                                height: height(bar: index, time: animating ? t : 0))
-                        .shadow(color: glow ? color.opacity(0.45) : .clear,
-                                radius: glow ? barWidth * 1.6 : 0)
                 }
             }
             .animation(.easeOut(duration: 0.12), value: animating)
         }
         .frame(height: maxHeight)
+        // One static gradient behind the bars rather than a `.shadow` on each.
+        // A shadow inside a 30 fps TimelineView is an offscreen render pass per
+        // bar per frame — seven of them was measurably choppy on an iPhone 11.
+        // A gradient composites on the GPU and never re-renders.
+        .background { glowLayer }
+    }
+
+    @ViewBuilder private var glowLayer: some View {
+        if glow {
+            Ellipse()
+                .fill(RadialGradient(
+                    colors: [color.opacity(0.28), color.opacity(0)],
+                    center: .center, startRadius: 0, endRadius: maxHeight * 0.75))
+                .scaleEffect(x: 1.35, y: 1.1)
+                .allowsHitTesting(false)
+        }
     }
 
     /// Three incommensurate sine frequencies per bar — repeats visually never,
