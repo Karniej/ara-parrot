@@ -13,6 +13,9 @@ struct SettingsView: View {
     @StateObject private var store = StoreService()
     @State private var restoring = false
     @EnvironmentObject private var appearanceModel: AppearanceModel
+    #if DEBUG
+    @State private var debugUnlocked = StoreGate.debugUnlocked
+    #endif
 
     var body: some View {
         NavigationStack {
@@ -75,6 +78,23 @@ struct SettingsView: View {
                     NavigationLink("What leaves your phone") { PrivacyView() }
                 }
 
+                #if DEBUG
+                Section {
+                    Toggle("Unlock everything (debug)", isOn: $debugUnlocked)
+                        .tint(Theme.danger)
+                        .onChange(of: debugUnlocked) { _, value in
+                            StoreGate.debugUnlocked = value
+                        }
+                } header: {
+                    Text("Developer")
+                } footer: {
+                    Text("Grants the paid features to this device without a "
+                         + "purchase, so dictation can be tested after a "
+                         + "reinstall. The keyboard reads the same switch. "
+                         + "This section does not exist in a release build.")
+                }
+                #endif
+
                 Section {
                     Text(versionLine)
                         .font(.footnote)
@@ -93,6 +113,9 @@ struct SettingsView: View {
         .onAppear {
             intensity = EngineProvider.intensity()
             haptics = EngineProvider.hapticsEnabled()
+            #if DEBUG
+            debugUnlocked = StoreGate.debugUnlocked
+            #endif
         }
     }
 

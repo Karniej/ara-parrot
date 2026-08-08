@@ -9,10 +9,28 @@ enum StoreGate {
 
     /// Read by both processes. Written only by the app's StoreService.
     static var isUnlocked: Bool {
-        Relay.defaults?.bool(forKey: Relay.Key.entitled) ?? false
+        #if DEBUG
+        if debugUnlocked { return true }
+        #endif
+        return Relay.defaults?.bool(forKey: Relay.Key.entitled) ?? false
     }
 
     static func mirror(unlocked: Bool) {
         Relay.defaults?.set(unlocked, forKey: Relay.Key.entitled)
     }
+
+    #if DEBUG
+    /// A developer override, so testing dictation on a device does not require
+    /// re-buying after every reinstall. Deliberately a *separate* key OR'd in
+    /// rather than a write to `entitled`: `refreshEntitlement()` rewrites the
+    /// real mirror from `currentEntitlements` on every launch and would erase
+    /// anything stored there, and keeping them apart means the paywall path
+    /// stays exercisable — turn this off and the real gate is back, untouched.
+    ///
+    /// Compiled out of Release entirely; a shipped build has no way to set it.
+    static var debugUnlocked: Bool {
+        get { Relay.defaults?.bool(forKey: Relay.Key.debugUnlocked) ?? false }
+        set { Relay.defaults?.set(newValue, forKey: Relay.Key.debugUnlocked) }
+    }
+    #endif
 }

@@ -45,7 +45,14 @@ final class StoreService: ObservableObject {
     func purchase() async {
         guard let product else {
             await load()
-            guard product != nil else { return }
+            // `load()` only reports thrown errors; an empty result is silent —
+            // it is what a build with no StoreKit configuration and no App
+            // Store product returns. Without this the CTA looks dead: tapped,
+            // nothing happens, nothing explains why.
+            guard product != nil else {
+                lastError = "This build cannot reach the App Store product yet."
+                return
+            }
             await purchase()
             return
         }
@@ -84,7 +91,10 @@ final class StoreService: ObservableObject {
                 unlocked = true
             }
         }
-        isUnlocked = unlocked
         StoreGate.mirror(unlocked: unlocked)
+        // Read back through the gate rather than using `unlocked` directly, so
+        // the app's own UI agrees with what the keyboard sees — in DEBUG that
+        // includes the developer override.
+        isUnlocked = StoreGate.isUnlocked
     }
 }

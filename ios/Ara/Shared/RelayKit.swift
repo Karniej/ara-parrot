@@ -35,6 +35,8 @@ enum Relay {
         static let heartbeatFrames = "relay.heartbeat.frames"
         static let transcriptSeq = "relay.transcript.seq"
         static let entitled = "store.entitled"
+        /// DEBUG builds only — see `StoreGate.debugUnlocked`.
+        static let debugUnlocked = "store.debugUnlocked"
         static let haptics = "settings.haptics"
         static let intensity = "settings.intensity"
         static let appearance = "settings.appearance"
