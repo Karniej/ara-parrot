@@ -41,6 +41,11 @@ final class SuggestionBarModel: ObservableObject {
 
     init(bridge: KeyboardBridge) {
         self.bridge = bridge
+        // Start level with whatever has already been published. Finals insert
+        // without checking the mic state, so a keyboard opening on top of a
+        // leftover transcript file would otherwise type a previous session's
+        // words into the user's next message.
+        lastInsertedSeq = Relay.defaults?.integer(forKey: Relay.Key.transcriptSeq) ?? 0
         notifier.observe(Relay.Note.state) { [weak self] in
             Task { @MainActor in self?.refreshMicState() }
         }
@@ -89,8 +94,12 @@ final class SuggestionBarModel: ObservableObject {
             show(message, for: 5)
         default:
             let base = baseline()
-            if micState != base, micState == .recording || micState == .transcribing {
-                // The app dropped out mid-utterance (disarmed, suspended).
+            // Only a genuine drop-out warrants the warning: the app disarming
+            // or going quiet. Returning to .armed is how every *successful*
+            // utterance ends, and warning on that told the user dictation had
+            // failed at the exact moment it had worked.
+            let droppedOut = relayState == .idle || !RelayClient.appIsLive()
+            if droppedOut, micState == .recording || micState == .transcribing {
                 show("Dictation stopped — check Ara", for: 4)
             }
             micState = base
@@ -110,15 +119,27 @@ final class SuggestionBarModel: ObservableObject {
     }
 
     private func consumeTranscript() {
-        guard micState == .recording || micState == .transcribing,
-              let transcript = RelayTranscript.load(),
+        guard let transcript = RelayTranscript.load(),
               transcript.seq > lastInsertedSeq else { return }
         if transcript.isFinal {
+            // Deliberately not gated on `micState`. The app posts the
+            // transcript and then the state, as two Darwin notifications whose
+            // relative delivery order is not guaranteed; when the state
+            // arrives first it moves the bar out of .transcribing, and a
+            // state-gated insert would drop the finished utterance on the
+            // floor. `seq` already makes this exactly-once.
             lastInsertedSeq = transcript.seq
             insertFinal(transcript.text)
-            micState = baseline()
+            // Not baseline(): the relay's state key can still read
+            // .transcribing until its own notification lands, and adopting
+            // that makes the next state update look like a mid-utterance
+            // drop-out. We know what just happened — the utterance finished.
+            micState = RelayClient.appIsLive() ? .ready : .appCold
             show(nil, for: nil)
         } else {
+            // Partials are cosmetic, so they stay gated: showing them when we
+            // are not recording would be noise.
+            guard micState == .recording || micState == .transcribing else { return }
             // Live partials render in the bar only; inserting them would mean
             // a delete-storm across the proxy IPC boundary on every revision.
             show(transcript.text, for: nil, isTranscript: true)

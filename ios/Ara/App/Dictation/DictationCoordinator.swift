@@ -32,6 +32,13 @@ final class DictationCoordinator: ObservableObject {
     init() {
         Relay.defaults?.set(Date().timeIntervalSince1970,
                             forKey: Relay.Key.appLaunched)
+        // Resume the sequence where the last launch left it. The keyboard
+        // skips any transcript whose seq it has already seen, so a counter
+        // that restarts at 0 every launch publishes seq 1 to a keyboard
+        // waiting for something above 5 — and every transcript is dropped in
+        // silence. iOS kills this app in the background routinely, so that is
+        // the normal case, not the edge case.
+        transcriptSeq = Relay.defaults?.integer(forKey: Relay.Key.transcriptSeq) ?? 0
         // A `@MainActor` class is Sendable, so `self` may cross into the
         // `@Sendable` Darwin handler; the hop back to the main actor happens
         // in the Task.

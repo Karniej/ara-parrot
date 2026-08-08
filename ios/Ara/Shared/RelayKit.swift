@@ -34,6 +34,7 @@ enum Relay {
         static let heartbeatStamp = "relay.heartbeat.stamp"
         static let heartbeatFrames = "relay.heartbeat.frames"
         static let transcriptSeq = "relay.transcript.seq"
+        static let transcript = "relay.transcript"
         static let entitled = "store.entitled"
         /// DEBUG builds only — see `StoreGate.debugUnlocked`.
         static let debugUnlocked = "store.debugUnlocked"
@@ -108,23 +109,31 @@ enum RelayState: Sendable, Equatable {
 /// One dictation utterance's rolling transcript. `seq` increments on every
 /// update so the keyboard can cheaply skip stale reads; `isFinal` flips once,
 /// after which `text` is the finished, dictionary-corrected utterance.
+/// Carried in the App Group's defaults, not a file in the container.
+///
+/// It was a file. On device the file never appeared: `transcript.seq` climbed
+/// to 2 in the shared defaults while the container held nothing but
+/// `Library/`, and both `Data.write` and `Data(contentsOf:)` swallow their
+/// errors through `try?`, so every transcript vanished in silence — partials
+/// and finals alike, since both travel this way. Defaults writes from both
+/// processes demonstrably land in that same container, so the transcript now
+/// rides the channel with evidence behind it. A transcript is a short string;
+/// it never needed a file.
 struct RelayTranscript: Codable, Sendable, Equatable {
     var seq: Int
     var text: String
     var isFinal: Bool
 
-    static var fileURL: URL? {
-        Relay.containerURL?.appendingPathComponent("relay-transcript.json")
-    }
-
     static func load() -> RelayTranscript? {
-        guard let url = fileURL, let data = try? Data(contentsOf: url) else { return nil }
+        guard let data = Relay.defaults?.data(forKey: Relay.Key.transcript) else {
+            return nil
+        }
         return try? JSONDecoder().decode(RelayTranscript.self, from: data)
     }
 
     func write() {
-        guard let url = Self.fileURL, let data = try? JSONEncoder().encode(self) else { return }
-        try? data.write(to: url, options: .atomic)
+        guard let data = try? JSONEncoder().encode(self) else { return }
+        Relay.defaults?.set(data, forKey: Relay.Key.transcript)
     }
 }
 
