@@ -28,8 +28,15 @@ enum StoreGate {
     /// stays exercisable — turn this off and the real gate is back, untouched.
     ///
     /// Compiled out of Release entirely; a shipped build has no way to set it.
+    ///
+    /// Defaults to *on*: a debug build exists to exercise the product, and
+    /// every reinstall wipes the purchase, so defaulting to locked means the
+    /// flagship feature is unreachable on a test device until someone
+    /// remembers a switch. Turn it off to put the real paywall back.
+    /// `object(forKey:)` rather than `bool(forKey:)` so "never set" stays
+    /// distinguishable from "deliberately set to false".
     static var debugUnlocked: Bool {
-        get { Relay.defaults?.bool(forKey: Relay.Key.debugUnlocked) ?? false }
+        get { Relay.defaults?.object(forKey: Relay.Key.debugUnlocked) as? Bool ?? true }
         set { Relay.defaults?.set(newValue, forKey: Relay.Key.debugUnlocked) }
     }
     #endif

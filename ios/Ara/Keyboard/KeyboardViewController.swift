@@ -54,6 +54,9 @@ final class KeyboardViewController: UIInputViewController {
         view.window?.overrideUserInterfaceStyle = Appearance.current.interfaceStyle
         view.overrideUserInterfaceStyle = Appearance.current.interfaceStyle
         bridge?.refreshEnvironment()
+        // Proof-of-life for the app's onboarding: only reachable with Full
+        // Access, which is exactly what page ② is asking the user to grant.
+        if bridge?.hasFullAccess == true { Relay.markKeyboardSeen() }
         bridge?.loadEngineState()
         state?.activate()
         bar?.refreshMicState()

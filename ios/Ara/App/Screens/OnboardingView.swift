@@ -1,3 +1,5 @@
+import AVFAudio
+import Speech
 import SwiftUI
 import UIKit
 
@@ -87,8 +89,18 @@ private struct IntroPage: View {
 
 /// Page ②: the toggle path, the deep link, and an honest Full Access answer.
 private struct AddKeyboardPage: View {
+    @State private var keyboardSeen = Relay.keyboardEverSeen
+    @Environment(\.scenePhase) private var scenePhase
+
     var body: some View {
         OnboardingPage(title: "Add the Ara keyboard") {
+            if keyboardSeen {
+                Label("The Ara keyboard is added, with Full Access",
+                      systemImage: "checkmark.circle.fill")
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(Theme.accent)
+            }
+
             Text("iOS will not enable a keyboard on an app's say-so, but the "
                  + "button below lands one tap away:")
 
@@ -123,12 +135,37 @@ private struct AddKeyboardPage: View {
             Text("Without Full Access the keyboard still types, and dictation "
                  + "falls back to Apple's own mic key.")
         }
+        .onChange(of: scenePhase) { _, phase in
+            if phase == .active { keyboardSeen = Relay.keyboardEverSeen }
+        }
+    }
+}
+
+/// The live answer to both prompts. Derived from the system every time rather
+/// than remembered from a tap: the user can grant, deny, or change either one
+/// in Settings while this page is on screen, and a page still offering "Grant"
+/// for a permission already granted reads as an app that is not paying
+/// attention.
+enum PermissionState {
+    case undetermined, granted, denied
+
+    static var current: PermissionState {
+        let mic = AVAudioApplication.shared.recordPermission
+        let speech = SFSpeechRecognizer.authorizationStatus()
+        if mic == .granted, speech == .authorized { return .granted }
+        // Denied is sticky: iOS will not re-prompt, so the only honest next
+        // step is Settings. Restricted (parental controls) behaves the same.
+        if mic == .denied || speech == .denied || speech == .restricted {
+            return .denied
+        }
+        return .undetermined
     }
 }
 
 /// Page ③: the two prompts only the app can raise, then somewhere to try it.
 private struct PermissionsPage: View {
-    @State private var granted: Bool?
+    @State private var permission = PermissionState.current
+    @Environment(\.scenePhase) private var scenePhase
 
     var body: some View {
         OnboardingPage(title: "Microphone and speech") {
@@ -139,27 +176,48 @@ private struct PermissionsPage: View {
             Text("A keyboard extension cannot raise these prompts, so they "
                  + "happen here, once.")
 
-            Button {
-                Task { granted = await AppServices.shared.dictation
-                    .requestPermissions() }
-            } label: {
-                Label("Grant microphone and speech", systemImage: "mic")
+            switch permission {
+            case .granted:
+                Label("Microphone and speech are granted",
+                      systemImage: "checkmark.circle.fill")
                     .font(.subheadline.weight(.semibold))
-            }
-            .foregroundStyle(Theme.accent)
-
-            if let granted {
-                Text(granted
-                     ? "Granted. Dictation is available."
-                     : "Declined — dictation stays off until both are allowed "
-                       + "in Settings. The keyboard still types.")
+                    .foregroundStyle(Theme.accent)
+            case .undetermined:
+                Button {
+                    Task {
+                        _ = await AppServices.shared.dictation.requestPermissions()
+                        permission = .current
+                    }
+                } label: {
+                    Label("Grant microphone and speech", systemImage: "mic")
+                        .font(.subheadline.weight(.semibold))
+                }
+                .foregroundStyle(Theme.accent)
+            case .denied:
+                Text("Declined — iOS will not ask again, so dictation stays "
+                     + "off until both are allowed in Settings. The keyboard "
+                     + "still types.")
                     .font(.footnote)
-                    .foregroundStyle(granted ? Theme.textSecondary : Theme.danger)
+                    .foregroundStyle(Theme.danger)
+                Button {
+                    if let url = URL(string: UIApplication.openSettingsURLString) {
+                        UIApplication.shared.open(url)
+                    }
+                } label: {
+                    Label("Open Ara's settings", systemImage: "arrow.up.forward.app")
+                        .font(.subheadline.weight(.semibold))
+                }
+                .foregroundStyle(Theme.accent)
             }
 
             PlaygroundField(caption: "Try it here",
                             prompt: "Switch to the Ara keyboard and type")
                 .padding(.top, 8)
+        }
+        // Returning from Settings is the whole point of re-reading: the user
+        // may have changed either switch while we were backgrounded.
+        .onChange(of: scenePhase) { _, phase in
+            if phase == .active { permission = .current }
         }
     }
 }

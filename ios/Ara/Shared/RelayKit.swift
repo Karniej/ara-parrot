@@ -41,6 +41,22 @@ enum Relay {
         static let intensity = "settings.intensity"
         static let appearance = "settings.appearance"
         static let appLaunched = "app.launched"
+        static let keyboardSeen = "keyboard.seen"
+    }
+
+    /// Stamped by the keyboard every time it appears with Full Access.
+    ///
+    /// This is the app's only honest proof that the keyboard is both installed
+    /// and permitted: a keyboard without Full Access cannot write to the group
+    /// at all, so the mark existing carries both facts. The alternative —
+    /// reading `AppleKeyboards` out of standard defaults — asks a private-ish
+    /// list a question it was not meant to answer.
+    static func markKeyboardSeen() {
+        defaults?.set(Date().timeIntervalSince1970, forKey: Key.keyboardSeen)
+    }
+
+    static var keyboardEverSeen: Bool {
+        (defaults?.double(forKey: Key.keyboardSeen) ?? 0) > 0
     }
 
     /// Darwin notification names. Darwin notifications carry no payload — the
