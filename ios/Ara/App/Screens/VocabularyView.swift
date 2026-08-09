@@ -19,6 +19,8 @@ struct VocabularyView: View {
     @State private var snippets = Snippets()
     @State private var addingDictionaryEntry = false
     @State private var addingSnippet = false
+    @State private var editingDictionaryEntry: EntryIndex?
+    @State private var editingSnippet: EntryIndex?
     @State private var saveError: String?
 
     var body: some View {
@@ -76,6 +78,28 @@ struct VocabularyView: View {
                 persist(Snippets(entries: snippets.entries + [entry]))
             }
         }
+        .sheet(item: $editingDictionaryEntry) { selection in
+            DictionaryEditSheet(entry: dictionary.entries[selection.index]) { entry in
+                var entries = dictionary.entries
+                entries[selection.index] = entry
+                persist(LocalDictionary(entries: entries))
+            } onDelete: {
+                var entries = dictionary.entries
+                entries.remove(at: selection.index)
+                persist(LocalDictionary(entries: entries))
+            }
+        }
+        .sheet(item: $editingSnippet) { selection in
+            SnippetEditSheet(entry: snippets.entries[selection.index]) { entry in
+                var entries = snippets.entries
+                entries[selection.index] = entry
+                persist(Snippets(entries: entries))
+            } onDelete: {
+                var entries = snippets.entries
+                entries.remove(at: selection.index)
+                persist(Snippets(entries: entries))
+            }
+        }
     }
 
     // MARK: - Lists
@@ -83,15 +107,26 @@ struct VocabularyView: View {
     private var dictionaryList: some View {
         List {
             Section {
+                if dictionary.entries.isEmpty {
+                    VocabularyEmptyState(
+                        title: "Ara can learn your words",
+                        detail: "Add a name, product, or term and the ways speech recognition may hear it.",
+                        action: "Add your first word") {
+                            addingDictionaryEntry = true
+                        }
+                }
                 ForEach(dictionary.entries.indices, id: \.self) { index in
                     let entry = dictionary.entries[index]
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text(entry.canonical)
-                            .foregroundStyle(Theme.textPrimary)
-                        Text(entry.variants.joined(separator: ", "))
-                            .font(.footnote)
-                            .foregroundStyle(Theme.textSecondary)
+                    Button { editingDictionaryEntry = EntryIndex(index: index) } label: {
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text(entry.canonical)
+                                .foregroundStyle(Theme.textPrimary)
+                            Text(entry.variants.joined(separator: ", "))
+                                .font(.footnote)
+                                .foregroundStyle(Theme.textSecondary)
+                        }
                     }
+                    .buttonStyle(.plain)
                 }
                 .onDelete { offsets in
                     var entries = dictionary.entries
@@ -114,16 +149,27 @@ struct VocabularyView: View {
     private var snippetList: some View {
         List {
             Section {
+                if snippets.entries.isEmpty {
+                    VocabularyEmptyState(
+                        title: "Say less. Type more.",
+                        detail: "Speak a short trigger and Ara inserts the exact text you saved.",
+                        action: "Add your first snippet") {
+                            addingSnippet = true
+                        }
+                }
                 ForEach(snippets.entries.indices, id: \.self) { index in
                     let entry = snippets.entries[index]
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text(entry.trigger)
-                            .foregroundStyle(Theme.textPrimary)
-                        Text(entry.expansion)
-                            .font(.footnote)
-                            .foregroundStyle(Theme.textSecondary)
-                            .lineLimit(2)
+                    Button { editingSnippet = EntryIndex(index: index) } label: {
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text(entry.trigger)
+                                .foregroundStyle(Theme.textPrimary)
+                            Text(entry.expansion)
+                                .font(.footnote)
+                                .foregroundStyle(Theme.textSecondary)
+                                .lineLimit(2)
+                        }
                     }
+                    .buttonStyle(.plain)
                 }
                 .onDelete { offsets in
                     var entries = snippets.entries

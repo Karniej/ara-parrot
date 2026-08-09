@@ -56,33 +56,21 @@ struct OnboardingView: View {
 
 // MARK: - Pages
 
-/// Page ①: what Ara is, and the one claim the whole product rests on. The
-/// waveform performs once as an entrance — a few seconds of voice — then
-/// falls still, because in this product motion means the microphone is open
-/// and the intro should teach that instinct, not undermine it.
+/// Page ①: what Ara is, and the one claim the whole product rests on.
+/// The waveform stays still because motion always means the mic is live.
 private struct IntroPage: View {
-    @State private var performing = false
-
     var body: some View {
-        OnboardingPage(title: "Ara — dictation that never leaves your phone") {
+        OnboardingPage(title: "Your voice, typed. Nothing leaves the phone.") {
             HStack {
                 Spacer()
-                WaveformView(bars: 7, barWidth: 7, spacing: 6, maxHeight: 84,
-                             animating: performing)
+                WaveformView(bars: 5, barWidth: 7, spacing: 6, maxHeight: 84,
+                             animating: false)
                 Spacer()
             }
             .padding(.vertical, 16)
-            .task {
-                performing = true
-                try? await Task.sleep(for: .seconds(3.2))
-                performing = false
-            }
             Text("You speak, Ara types. Recording and transcription both happen "
                  + "on this device, through Apple's on-device recognizer.")
-            Text("There is no account, no analytics, and no server to send "
-                 + "anything to. That is why Ara's App Store privacy label is "
-                 + "empty — not as a promise, but because there is nothing to "
-                 + "declare.")
+            PrivacyLabelView(scale: .medium)
         }
     }
 }

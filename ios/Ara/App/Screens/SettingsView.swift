@@ -12,6 +12,7 @@ struct SettingsView: View {
     @State private var haptics = EngineProvider.hapticsEnabled()
     @StateObject private var store = StoreService()
     @State private var restoring = false
+    @State private var showPaywall = false
     @EnvironmentObject private var appearanceModel: AppearanceModel
     #if DEBUG
     @State private var debugUnlocked = StoreGate.debugUnlocked
@@ -33,13 +34,23 @@ struct SettingsView: View {
                 }
 
                 Section {
-                    Picker("Cleanup intensity", selection: $intensity) {
-                        ForEach(CleanupIntensity.allCases, id: \.self) { level in
-                            Text(level.rawValue.capitalized).tag(level)
+                    if store.isUnlocked {
+                        Picker("Cleanup intensity", selection: $intensity) {
+                            ForEach(CleanupIntensity.allCases, id: \.self) { level in
+                                Text(level.rawValue.capitalized).tag(level)
+                            }
                         }
-                    }
-                    .onChange(of: intensity) { _, value in
-                        EngineProvider.set(intensity: value)
+                        .onChange(of: intensity) { _, value in
+                            EngineProvider.set(intensity: value)
+                        }
+                    } else {
+                        Button { showPaywall = true } label: {
+                            HStack {
+                                Text("Cleanup intensity")
+                                Spacer()
+                                Text("Locked ›").foregroundStyle(Theme.accent)
+                            }
+                        }
                     }
                 } footer: {
                     Text("How far the Clean action goes: none leaves the "
@@ -110,6 +121,7 @@ struct SettingsView: View {
             .navigationTitle("Settings")
             .toolbarBackground(Theme.background, for: .navigationBar)
         }
+        .sheet(isPresented: $showPaywall) { PaywallView() }
         .onAppear {
             intensity = EngineProvider.intensity()
             haptics = EngineProvider.hapticsEnabled()

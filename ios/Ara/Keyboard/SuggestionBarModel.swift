@@ -31,6 +31,7 @@ final class SuggestionBarModel: ObservableObject {
     /// loses its first half and reads as gibberish.
     @Published private(set) var statusIsTranscript = false
     @Published private(set) var isCleaning = false
+    @Published private(set) var cleanFeedback: String?
 
     private weak var bridge: KeyboardBridge?
     private let notifier = DarwinNotifier()
@@ -60,14 +61,14 @@ final class SuggestionBarModel: ObservableObject {
     func micTapped() {
         switch micState {
         case .locked:
-            show("Unlock Ara's mic in the app", for: 4)
+            show("Dictation unlocks in the Ara app", for: 4)
         case .noFullAccess:
-            show("Allow Full Access in Settings", for: 4)
+            show("Full Access off — keyboard still types", for: 4)
         case .appCold:
             // Not "open the app once": opening it is not enough. The mic key
             // needs a live heartbeat, and that only exists while the app is
             // armed, so the switch is the actual instruction.
-            show("Turn on “Ready to dictate” in Ara", for: 5)
+            show("Open Ara and turn on Keep Ara ready", for: 5)
         case .ready:
             lastInsertedSeq = Relay.defaults?.integer(forKey: Relay.Key.transcriptSeq) ?? 0
             RelayClient.send(.start)
@@ -103,6 +104,9 @@ final class SuggestionBarModel: ObservableObject {
                 show("Dictation stopped — check Ara", for: 4)
             }
             micState = base
+            if status == nil, base == .ready {
+                show("tap to dictate — stays on this phone", for: nil)
+            }
         }
     }
 
@@ -135,7 +139,7 @@ final class SuggestionBarModel: ObservableObject {
             // that makes the next state update look like a mid-utterance
             // drop-out. We know what just happened — the utterance finished.
             micState = RelayClient.appIsLive() ? .ready : .appCold
-            show(nil, for: nil)
+            show("tap to dictate — stays on this phone", for: nil)
         } else {
             // Partials are cosmetic, so they stay gated: showing them when we
             // are not recording would be noise.
@@ -163,12 +167,19 @@ final class SuggestionBarModel: ObservableObject {
     func cleanTapped() {
         guard !isCleaning else { return }
         guard StoreGate.isUnlocked else {
-            show("Unlock Clean in the Ara app", for: 4)
+            show("Clean unlocks in the Ara app", for: 4)
             return
         }
-        guard let bridge, let context = bridge.contextBeforeInput else { return }
+        guard let bridge, let context = bridge.contextBeforeInput else {
+            show("Nothing to clean", for: 2)
+            return
+        }
         let scope = CleanEngine.sentenceScope(of: context)
-        guard !scope.trimmingCharacters(in: .whitespaces).isEmpty else { return }
+        guard !scope.trimmingCharacters(in: .whitespaces).isEmpty else {
+            show("Nothing to clean", for: 2)
+            return
+        }
+        cleanFeedback = nil
         isCleaning = true
         Task { @MainActor in
             defer { isCleaning = false }
@@ -182,15 +193,21 @@ final class SuggestionBarModel: ObservableObject {
             // Re-read the context: the host may have changed under us while
             // the formatter ran, and a stale diff deletes the wrong text.
             guard bridge.contextBeforeInput == context else {
-                show("Text changed — try again", for: 3)
+                show("Left as it was", for: 3)
                 return
             }
             let edit = CleanEngine.suffixEdit(from: scope, to: cleaned)
             guard edit.deleteCount > 0 || !edit.insert.isEmpty else {
-                show("Already clean", for: 2)
+                show("Nothing to clean", for: 2)
                 return
             }
             for _ in 0..<edit.deleteCount { bridge.deleteBackward() }
+            cleanFeedback = "✓"
+            Task { @MainActor [weak self] in
+                try? await Task.sleep(for: .seconds(1.5))
+                guard !Task.isCancelled else { return }
+                self?.cleanFeedback = nil
+            }
             bridge.insert(edit.insert)
         }
     }

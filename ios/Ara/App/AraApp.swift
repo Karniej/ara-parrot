@@ -57,12 +57,8 @@ struct RootView: View {
     /// dynamic, so they track light/dark on their own.
     @MainActor
     private func applyBarAppearance() {
-        let background = UIColor { $0.userInterfaceStyle == .dark
-            ? .black
-            : UIColor(red: 0.98, green: 0.976, blue: 0.968, alpha: 1) }
-        let text = UIColor { $0.userInterfaceStyle == .dark
-            ? .white
-            : UIColor(white: 0.1, alpha: 1) }
+        let background = UIColor(Theme.background)
+        let text = UIColor(Theme.textPrimary)
         let tabBar = UITabBarAppearance()
         tabBar.configureWithOpaqueBackground()
         tabBar.backgroundColor = background

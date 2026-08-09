@@ -1,0 +1,52 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<document type="com.apple.InterfaceBuilder3.CocoaTouch.Storyboard.XIB" version="3.0" toolsVersion="23094" targetRuntime="iOS.CocoaTouch" useAutolayout="YES" launchScreen="YES" useSafeAreas="YES" colorMatched="YES" initialViewController="ara-launch">
+    <device id="retina6_12" orientation="portrait" appearance="dark"/>
+    <dependencies>
+        <plugIn identifier="com.apple.InterfaceBuilder.IBCocoaTouchPlugin" version="23084"/>
+        <capability name="Safe area layout guides" minToolsVersion="9.0"/>
+        <capability name="System colors in document resources" minToolsVersion="11.0"/>
+    </dependencies>
+    <scenes>
+        <scene sceneID="ara-scene">
+            <objects>
+                <viewController id="ara-launch" sceneMemberID="viewController">
+                    <view key="view" contentMode="scaleToFill" id="ara-root">
+                        <rect key="frame" x="0.0" y="0.0" width="393" height="852"/>
+                        <autoresizingMask key="autoresizingMask" widthSizable="YES" heightSizable="YES"/>
+                        <subviews>
+                            <stackView opaque="NO" contentMode="scaleToFill" axis="vertical" spacing="18" translatesAutoresizingMaskIntoConstraints="NO" id="ara-lockup">
+                                <rect key="frame" x="151" y="375" width="91" height="102"/>
+                                <subviews>
+                                    <stackView opaque="NO" contentMode="center" distribution="fillEqually" spacing="6" translatesAutoresizingMaskIntoConstraints="NO" id="ara-bars">
+                                        <rect key="frame" x="18" y="0.0" width="55" height="54"/>
+                                        <subviews>
+                                            <view contentMode="scaleToFill" translatesAutoresizingMaskIntoConstraints="NO" id="bar-1"><rect key="frame" x="0.0" y="16" width="6" height="22"/><color key="backgroundColor" red="1" green="0.745" blue="0.463" alpha="1" colorSpace="custom" customColorSpace="sRGB"/><constraints><constraint firstAttribute="width" constant="6" id="w1"/><constraint firstAttribute="height" constant="22" id="h1"/></constraints></view>
+                                            <view contentMode="scaleToFill" translatesAutoresizingMaskIntoConstraints="NO" id="bar-2"><rect key="frame" x="12" y="9" width="6" height="36"/><color key="backgroundColor" red="1" green="0.745" blue="0.463" alpha="1" colorSpace="custom" customColorSpace="sRGB"/><constraints><constraint firstAttribute="width" constant="6" id="w2"/><constraint firstAttribute="height" constant="36" id="h2"/></constraints></view>
+                                            <view contentMode="scaleToFill" translatesAutoresizingMaskIntoConstraints="NO" id="bar-3"><rect key="frame" x="24" y="0" width="7" height="54"/><color key="backgroundColor" red="1" green="0.745" blue="0.463" alpha="1" colorSpace="custom" customColorSpace="sRGB"/><constraints><constraint firstAttribute="width" constant="7" id="w3"/><constraint firstAttribute="height" constant="54" id="h3"/></constraints></view>
+                                            <view contentMode="scaleToFill" translatesAutoresizingMaskIntoConstraints="NO" id="bar-4"><rect key="frame" x="37" y="6" width="6" height="42"/><color key="backgroundColor" red="1" green="0.745" blue="0.463" alpha="1" colorSpace="custom" customColorSpace="sRGB"/><constraints><constraint firstAttribute="width" constant="6" id="w4"/><constraint firstAttribute="height" constant="42" id="h4"/></constraints></view>
+                                            <view contentMode="scaleToFill" translatesAutoresizingMaskIntoConstraints="NO" id="bar-5"><rect key="frame" x="49" y="13" width="6" height="28"/><color key="backgroundColor" red="1" green="0.745" blue="0.463" alpha="1" colorSpace="custom" customColorSpace="sRGB"/><constraints><constraint firstAttribute="width" constant="6" id="w5"/><constraint firstAttribute="height" constant="28" id="h5"/></constraints></view>
+                                        </subviews>
+                                        <constraints><constraint firstAttribute="height" constant="54" id="bars-height"/></constraints>
+                                    </stackView>
+                                    <label opaque="NO" userInteractionEnabled="NO" contentMode="left" text="ara" textAlignment="center" translatesAutoresizingMaskIntoConstraints="NO" id="ara-wordmark">
+                                        <rect key="frame" x="0.0" y="72" width="91" height="30"/>
+                                        <fontDescription key="fontDescription" type="system" weight="semibold" pointSize="25"/>
+                                        <color key="textColor" white="1" alpha="1" colorSpace="custom" customColorSpace="genericGamma22GrayColorSpace"/>
+                                    </label>
+                                </subviews>
+                            </stackView>
+                        </subviews>
+                        <viewLayoutGuide key="safeArea" id="ara-safe"/>
+                        <color key="backgroundColor" white="0.0" alpha="1" colorSpace="custom" customColorSpace="genericGamma22GrayColorSpace"/>
+                        <constraints>
+                            <constraint firstItem="ara-lockup" firstAttribute="centerX" secondItem="ara-root" secondAttribute="centerX" id="center-x"/>
+                            <constraint firstItem="ara-lockup" firstAttribute="centerY" secondItem="ara-root" secondAttribute="centerY" id="center-y"/>
+                            <constraint firstItem="ara-bars" firstAttribute="centerX" secondItem="ara-lockup" secondAttribute="centerX" id="bars-center"/>
+                        </constraints>
+                    </view>
+                </viewController>
+                <placeholder placeholderIdentifier="IBFirstResponder" id="ara-responder" sceneMemberID="firstResponder"/>
+            </objects>
+        </scene>
+    </scenes>
+</document>

@@ -7,6 +7,14 @@ struct PrivacyView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("Nothing leaves the phone.")
+                        .font(.system(.largeTitle, design: .rounded, weight: .bold))
+                    Text("Not a promise. A product constraint you can inspect.")
+                        .font(.subheadline)
+                        .foregroundStyle(Theme.textSecondary)
+                }
+                PrivacyLabelView(scale: .full)
                 section("Nothing leaves this device",
                         "Audio is captured, recognized, corrected and inserted "
                         + "inside Ara. There is no upload step, because there "
@@ -47,10 +55,10 @@ struct PrivacyView: View {
                         + "purchases and of frameworks it ships is Apple's to "
                         + "describe, not ours to promise about.")
             }
-            .padding(20)
+            .padding(22)
         }
         .background(Theme.background)
-        .navigationTitle("What leaves your phone")
+        .navigationTitle("Privacy")
         .navigationBarTitleDisplayMode(.inline)
         .toolbarBackground(Theme.background, for: .navigationBar)
     }

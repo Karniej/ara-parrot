@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 /// The dictation card, which is the whole of Home: what the relay is doing,
 /// the one switch that starts and stops it, and the two honest footnotes that
@@ -13,20 +14,28 @@ struct HomeView: View {
     @State private var isUnlocked = StoreGate.isUnlocked
     @State private var showPaywall = false
     @State private var breathe = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 20) {
-                    if !Relay.available { provisioningWarning }
                     stateCard
-                    if isUnlocked { armToggle } else { lockedToggle }
+                    if !Relay.available {
+                        provisioningWarning
+                    } else if !isUnlocked {
+                        lockedToggle
+                    } else if !Relay.keyboardEverSeen {
+                        fullAccessAction
+                    } else {
+                        armToggle
+                    }
                     indicatorNote
                     batteryNote
                     PlaygroundField(caption: "Try it here",
                                     prompt: "Switch to the Ara keyboard and dictate")
                 }
-                .padding(20)
+                .padding(22)
             }
             .background(Theme.background)
             .navigationTitle("Ara")
@@ -37,7 +46,9 @@ struct HomeView: View {
             isUnlocked = StoreGate.isUnlocked
         }
         .onChange(of: coordinator.isArmed) { _, value in armed = value }
-        .sheet(isPresented: $showPaywall) { PaywallView() }
+        .sheet(isPresented: $showPaywall, onDismiss: {
+            isUnlocked = StoreGate.isUnlocked
+        }) { PaywallView() }
     }
 
     // MARK: - Pieces
@@ -60,9 +71,9 @@ struct HomeView: View {
                                  Theme.accentFill.opacity(0)],
                         center: .center, startRadius: 40, endRadius: 108))
                     .frame(width: 216, height: 216)
-                    .opacity(micIsLive ? (breathe ? 1 : 0.55) : 0)
-                    .scaleEffect(breathe ? 1.06 : 1)
-                    .animation(micIsLive
+                    .opacity(micIsLive ? (reduceMotion ? 0.72 : (breathe ? 1 : 0.55)) : 0)
+                    .scaleEffect(reduceMotion ? 1 : (breathe ? 1.06 : 1))
+                    .animation(micIsLive && !reduceMotion
                                ? .easeInOut(duration: 2).repeatForever(autoreverses: true)
                                : .easeOut(duration: 0.4),
                                value: breathe)
@@ -74,7 +85,7 @@ struct HomeView: View {
                     }
                     .frame(width: 148, height: 148)
                 WaveformView(bars: 5, barWidth: 7, spacing: 6, maxHeight: 72,
-                             animating: coordinator.state == .recording,
+                             animating: coordinator.state == .recording && !reduceMotion,
                              color: micIsLive ? Theme.accentFill : Theme.textSecondary,
                              // Idle bars are grey, and a grey glow is just a
                              // smudge. The glow belongs to the live state.
@@ -95,8 +106,8 @@ struct HomeView: View {
         }
         .frame(maxWidth: .infinity)
         .padding(24)
-        .background(Theme.surface,
-                    in: RoundedRectangle(cornerRadius: 24, style: .continuous))
+        .background(Theme.card, in: RoundedRectangle(
+            cornerRadius: Theme.heroCornerRadius, style: .continuous))
     }
 
     private var micIsLive: Bool {
@@ -109,10 +120,10 @@ struct HomeView: View {
     private var armToggle: some View {
         Toggle(isOn: $armed) {
             VStack(alignment: .leading, spacing: 4) {
-                Text("Keep Ara ready to dictate")
+                Text("Keep Ara ready")
                     .foregroundStyle(Theme.textPrimary)
-                Text("Holds the microphone session open so the keyboard's mic "
-                     + "key works instantly.")
+                Text("The orange privacy indicator stays visible while the mic "
+                     + "session is open.")
                     .font(.footnote)
                     .foregroundStyle(Theme.textSecondary)
             }
@@ -138,11 +149,10 @@ struct HomeView: View {
                 Image(systemName: "lock.fill")
                     .foregroundStyle(Theme.accent)
                 VStack(alignment: .leading, spacing: 4) {
-                    Text("Keep Ara ready to dictate")
+                    Text("Keep Ara ready")
                         .foregroundStyle(Theme.textPrimary)
-                    Text("Ara's own dictation is part of the one-time unlock. "
-                         + "The keyboard types, and Apple's mic key still "
-                         + "works, without it.")
+                    Text("Ara dictation and Clean unlock for $49.99 once. "
+                         + "The free keyboard still types normally.")
                         .font(.footnote)
                         .foregroundStyle(Theme.textSecondary)
                         .multilineTextAlignment(.leading)
@@ -166,7 +176,7 @@ struct HomeView: View {
                  + "open. iOS makes it impossible to hide, and we wouldn't "
                  + "want to.")
         } icon: {
-            Circle().fill(Color.orange).frame(width: 8, height: 8)
+            Circle().fill(Theme.micIndicator).frame(width: 8, height: 8)
                 .padding(.top, 5)
         }
         .font(.footnote)
@@ -197,37 +207,69 @@ struct HomeView: View {
                     in: RoundedRectangle(cornerRadius: Theme.cornerRadius))
     }
 
+    private var fullAccessAction: some View {
+        Button {
+            if let url = URL(string: UIApplication.openSettingsURLString) {
+                UIApplication.shared.open(url)
+            }
+        } label: {
+            Label("Allow Full Access", systemImage: "keyboard.badge.ellipsis")
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(Theme.textPrimary)
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 14)
+                .background(Theme.surface, in: RoundedRectangle(
+                    cornerRadius: Theme.cornerRadius, style: .continuous))
+        }
+        .buttonStyle(.plain)
+    }
+
+
     // MARK: - State rendering
 
     private var stateHeadline: String {
+        if !Relay.available { return "The keyboard can't reach Ara" }
+        if !isUnlocked { return "Dictation is locked" }
+        if !Relay.keyboardEverSeen { return "Keyboard is limited" }
         if coordinator.isTransitioning { return "Starting…" }
         switch coordinator.state {
-        case .idle: return "Off"
-        case .armed: return "Ready"
-        case .recording: return "Listening"
+        case .idle: return "Ara is off"
+        case .armed: return "Listening for you"
+        case .recording: return "Recording"
         case .transcribing: return "Transcribing"
-        case .error: return "Error"
+        case .error: return "Ara needs attention"
         }
     }
 
     private var stateDetail: String {
+        if !Relay.available {
+            return "The shared App Group is missing. Dictation cannot work until that link is restored."
+        }
+        if !isUnlocked {
+            return "The Ara keyboard types free, forever. Dictation and Clean unlock with one purchase — no subscription."
+        }
+        if !Relay.keyboardEverSeen {
+            return "Without Full Access, the Ara keyboard still types like any keyboard. Dictation and Clean need the on-device link to this app."
+        }
         switch coordinator.state {
         case .idle:
-            return "The microphone is released. The keyboard's mic key falls "
-                + "back to Apple's dictation."
+            return "The microphone is released. Turn on Keep Ara ready when "
+                + "you want to dictate from the keyboard."
         case .armed:
-            return "The microphone is open and waiting for the keyboard's mic "
-                + "key. Nothing is being transcribed."
+            return "Dictate from the Ara keyboard in any app. Everything is "
+                + "transcribed on this phone."
         case .recording:
-            return "Recording. Tap the keyboard's mic key again to finish."
+            return "Tap the amber mic again when your thought is complete."
         case .transcribing:
-            return "Turning the last utterance into text, on this device."
+            return "Your voice is becoming text. Nothing is leaving this phone."
         case .error(let message):
             return message
         }
     }
 
     private var stateColor: Color {
+        if !Relay.available { return Theme.danger }
+        if !isUnlocked || !Relay.keyboardEverSeen { return Theme.textSecondary }
         switch coordinator.state {
         case .error: return Theme.danger
         case .armed, .recording, .transcribing: return Theme.accent

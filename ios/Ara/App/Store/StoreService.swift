@@ -1,6 +1,17 @@
 import Foundation
 import StoreKit
 
+enum StorePhase: Equatable {
+    case idle
+    case purchasing
+    case purchased
+    case pending
+    case restoring
+    case restored
+    case nothingToRestore
+    case failed(String)
+}
+
 /// StoreKit 2, directly — no RevenueCat, no SDK, no account. The privacy
 /// nutrition label stays literally empty only if nothing phones anywhere;
 /// Apple's own rails give account-free restore via
@@ -12,6 +23,7 @@ final class StoreService: ObservableObject {
     @Published private(set) var product: Product?
     @Published private(set) var isUnlocked = StoreGate.isUnlocked
     @Published private(set) var lastError: String?
+    @Published private(set) var phase: StorePhase = .idle
 
     private var updatesTask: Task<Void, Never>?
 
@@ -35,14 +47,18 @@ final class StoreService: ObservableObject {
     }
 
     func load() async {
+        lastError = nil
         do {
             product = try await Product.products(for: [StoreGate.productID]).first
         } catch {
             lastError = "store unavailable — check your connection"
+            phase = .failed("That didn't go through")
         }
     }
 
     func purchase() async {
+        phase = .purchasing
+        lastError = nil
         guard let product else {
             await load()
             // `load()` only reports thrown errors; an empty result is silent —
@@ -51,6 +67,7 @@ final class StoreService: ObservableObject {
             // nothing happens, nothing explains why.
             guard product != nil else {
                 lastError = "This build cannot reach the App Store product yet."
+                phase = .failed("That didn't go through")
                 return
             }
             await purchase()
@@ -64,20 +81,37 @@ final class StoreService: ObservableObject {
                     await transaction.finish()
                 }
                 await refreshEntitlement()
-            case .userCancelled, .pending:
-                break
+                phase = isUnlocked ? .purchased : .failed("That didn't go through")
+            case .userCancelled:
+                phase = .idle
+            case .pending:
+                phase = .pending
             @unknown default:
-                break
+                phase = .failed("That didn't go through")
             }
         } catch {
             lastError = "purchase failed — nothing was charged"
+            phase = .failed("That didn't go through")
         }
     }
 
     /// Account-free restore: sync with the App Store, then re-derive.
     func restore() async {
-        try? await AppStore.sync()
-        await refreshEntitlement()
+        phase = .restoring
+        lastError = nil
+        do {
+            try await AppStore.sync()
+            await refreshEntitlement()
+            phase = isUnlocked ? .restored : .nothingToRestore
+        } catch {
+            lastError = "restore failed — nothing changed"
+            phase = .failed("That didn't go through")
+        }
+    }
+
+    func resetPhase() {
+        phase = .idle
+        lastError = nil
     }
 
     /// The single source of truth. Derives from `currentEntitlements` every

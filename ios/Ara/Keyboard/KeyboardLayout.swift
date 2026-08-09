@@ -60,7 +60,7 @@ enum KeyboardMetrics {
     static let keySpacing: CGFloat = 6
     static let edgeInset: CGFloat = 3
     static let verticalInset: CGFloat = 5
-    static let suggestionBarHeight: CGFloat = 36
+    static let suggestionBarHeight: CGFloat = 44
     /// 4 rows × 44 + 3 × 10 + 2 × 5.
     static let keyboardHeight: CGFloat = 216
     static let totalHeight = keyboardHeight + suggestionBarHeight

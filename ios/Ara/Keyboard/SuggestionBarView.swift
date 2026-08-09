@@ -4,13 +4,14 @@ import SwiftUI
 struct SuggestionBarView: View {
     @ObservedObject var bridge: KeyboardBridge
     @ObservedObject var bar: SuggestionBarModel
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         HStack(spacing: 8) {
             micKey
             if bar.micState == .recording {
                 WaveformView(bars: 5, barWidth: 3, spacing: 3, maxHeight: 18,
-                             glow: false)
+                             animating: !reduceMotion, glow: false)
                     .transition(.scale(scale: 0.6).combined(with: .opacity))
             }
             Text(bar.status ?? "")
@@ -25,7 +26,8 @@ struct SuggestionBarView: View {
                 .animation(nil, value: bar.status)
             cleanKey
         }
-        .animation(.spring(duration: 0.3), value: bar.micState)
+        .animation(reduceMotion ? nil : .spring(duration: 0.3),
+                   value: bar.micState)
         .padding(.horizontal, 10)
         .frame(maxWidth: .infinity)
         .frame(height: KeyboardMetrics.suggestionBarHeight)
@@ -60,13 +62,16 @@ struct SuggestionBarView: View {
     private var cleanKey: some View {
         Button(action: { bar.cleanTapped() }) {
             Group {
-                if bar.isCleaning {
-                    ProgressView().controlSize(.small).tint(Theme.accent)
+                if let feedback = bar.cleanFeedback {
+                    Text(feedback).font(.headline.weight(.semibold))
+                } else if bar.isCleaning {
+                    Text("Cleaning…").font(.footnote.weight(.medium))
                 } else {
                     Text("✨ Clean").font(.footnote.weight(.medium))
                 }
             }
-            .foregroundStyle(bar.canClean ? Theme.accent : Theme.textSecondary)
+            .foregroundStyle(StoreGate.isUnlocked && bar.canClean
+                             ? Theme.accent : Theme.textSecondary)
             .frame(height: KeyboardMetrics.suggestionBarHeight)
             .contentShape(Rectangle())
         }

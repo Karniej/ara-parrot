@@ -29,7 +29,7 @@ targets:
     info:
       path: App/Info.plist
       properties:
-        UILaunchScreen: {}
+        UILaunchStoryboardName: LaunchScreen
         CFBundleDisplayName: Ara
         CFBundleShortVersionString: $(MARKETING_VERSION)
         CFBundleVersion: $(CURRENT_PROJECT_VERSION)
@@ -39,6 +39,7 @@ targets:
         ITSAppUsesNonExemptEncryption: false
     settings:
       PRODUCT_BUNDLE_IDENTIFIER: com.silpho.ara
+      ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
     entitlements:
       path: Entitlements/App.entitlements
       properties:

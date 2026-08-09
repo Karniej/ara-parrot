@@ -28,18 +28,34 @@ enum Theme {
     static let surfacePressed = adaptive(
         dark: UIColor(white: 0.22, alpha: 1),
         light: UIColor(red: 0.87, green: 0.862, blue: 0.842, alpha: 1))
+    static let card = adaptive(
+        dark: UIColor(red: 22 / 255, green: 18 / 255, blue: 14 / 255, alpha: 1),
+        light: UIColor(red: 247 / 255, green: 244 / 255, blue: 238 / 255, alpha: 1))
+    static let functionalSurface = adaptive(
+        dark: UIColor(white: 0.08, alpha: 1),
+        light: UIColor(red: 239 / 255, green: 237 / 255, blue: 234 / 255, alpha: 1))
+    static let hairline = adaptive(
+        dark: UIColor(red: 42 / 255, green: 32 / 255, blue: 21 / 255, alpha: 1),
+        light: UIColor(red: 228 / 255, green: 225 / 255, blue: 218 / 255, alpha: 1))
     static let textPrimary = adaptive(
         dark: .white,
         light: UIColor(white: 0.1, alpha: 1))
     static let textSecondary = adaptive(
         dark: UIColor(white: 0.62, alpha: 1),
         light: UIColor(white: 0.42, alpha: 1))
+    static let textTertiary = adaptive(
+        dark: UIColor(white: 0.42, alpha: 1),
+        light: UIColor(white: 0.56, alpha: 1))
+    static let micIndicator = adaptive(
+        dark: UIColor(red: 1, green: 0.58, blue: 0.12, alpha: 1),
+        light: UIColor(red: 0.88, green: 0.38, blue: 0.05, alpha: 1))
     /// Destructive/error accents (relay failures, delete actions).
     static let danger = adaptive(
         dark: UIColor(red: 1, green: 0.35, blue: 0.30, alpha: 1),
         light: UIColor(red: 0.78, green: 0.19, blue: 0.15, alpha: 1))
 
     static let cornerRadius: CGFloat = 12
+    static let heroCornerRadius: CGFloat = 24
     static let keyCornerRadius: CGFloat = 6
 
     private static func adaptive(dark: UIColor, light: UIColor) -> Color {

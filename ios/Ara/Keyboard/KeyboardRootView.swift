@@ -7,6 +7,7 @@ struct KeyboardRootView: View {
     @ObservedObject var bridge: KeyboardBridge
     @ObservedObject var state: KeyboardState
     @ObservedObject var bar: SuggestionBarModel
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         VStack(spacing: 0) {
@@ -17,7 +18,7 @@ struct KeyboardRootView: View {
                 // the only living surface. Typing still works — dictating
                 // and correcting are not exclusive.
                 .opacity(bar.micState == .recording ? 0.35 : 1)
-                .animation(.easeOut(duration: 0.25), value: bar.micState)
+                .animation(reduceMotion ? nil : .easeOut(duration: 0.25), value: bar.micState)
         }
         .frame(height: KeyboardMetrics.totalHeight)
         .background(Theme.background)
@@ -72,7 +73,7 @@ struct KeyView: View {
 
     var body: some View {
         RoundedRectangle(cornerRadius: Theme.keyCornerRadius, style: .continuous)
-            .fill(isPressed || isShiftEngaged ? Theme.surfacePressed : Theme.surface)
+            .fill(keyFill)
             .overlay { label }
             .frame(height: KeyboardMetrics.keyHeight)
             .modifier(KeyWidth(span: key.span, unit: unit))
@@ -85,6 +86,15 @@ struct KeyView: View {
             .gesture(gesture)
     }
 
+    private var keyFill: Color {
+        if isPressed || isShiftEngaged { return Theme.surfacePressed }
+        switch key.action {
+        case .shift, .backspace, .layer, .globe, .newline:
+            return Theme.functionalSurface
+        case .character, .space:
+            return Theme.surface
+        }
+    }
     private var isShiftEngaged: Bool {
         key.action == .shift && state.shift != .off
     }
