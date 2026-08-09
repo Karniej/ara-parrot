@@ -50,8 +50,7 @@ final class SpeechService {
             Task { @MainActor in
                 guard !utterance.finished else { return }
                 if let text {
-                    utterance.best = text
-                    onPartial(text)
+                    onPartial(utterance.observe(text))
                 }
                 if isFinal {
                     utterance.finished = true
@@ -100,7 +99,64 @@ private final class RequestBox: @unchecked Sendable {
 }
 
 @MainActor
-private final class UtteranceState {
-    var best = ""
+final class UtteranceState {
+    private(set) var best = ""
     var finished = false
+
+    /// On-device recognition normally returns a complete rolling snapshot,
+    /// but it can also move its window forward and return only the visible
+    /// tail. The keyboard must insert the complete utterance, not that last
+    /// window. Preserve a shorter suffix and join a shifted window at its
+    /// word overlap. A new snapshot from the start remains authoritative so
+    /// normal recognition corrections still replace earlier guesses.
+    func observe(_ snapshot: String) -> String {
+        let incoming = snapshot.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !incoming.isEmpty else { return best }
+        guard !best.isEmpty else {
+            best = incoming
+            return best
+        }
+
+        let previousWords = normalizedWords(in: best)
+        let incomingWords = normalizedWords(in: incoming)
+        guard !previousWords.isEmpty, !incomingWords.isEmpty else {
+            best = incoming
+            return best
+        }
+
+        if incomingWords.starts(with: previousWords) {
+            best = incoming
+            return best
+        }
+        if previousWords.suffix(incomingWords.count).elementsEqual(incomingWords) {
+            return best
+        }
+
+        let overlapLimit = min(previousWords.count, incomingWords.count)
+        if overlapLimit >= 2 {
+            for overlap in stride(from: overlapLimit, through: 2, by: -1) {
+                if previousWords.suffix(overlap)
+                    .elementsEqual(incomingWords.prefix(overlap)) {
+                    let suffix = snapshotWords(in: incoming).dropFirst(overlap)
+                    if !suffix.isEmpty {
+                        best += " " + suffix.joined(separator: " ")
+                    }
+                    return best
+                }
+            }
+        }
+
+        best = incoming
+        return best
+    }
+
+    private func normalizedWords(in text: String) -> [String] {
+        snapshotWords(in: text).map {
+            $0.trimmingCharacters(in: .punctuationCharacters).lowercased()
+        }.filter { !$0.isEmpty }
+    }
+
+    private func snapshotWords(in text: String) -> [String] {
+        text.split(whereSeparator: { $0.isWhitespace }).map(String.init)
+    }
 }

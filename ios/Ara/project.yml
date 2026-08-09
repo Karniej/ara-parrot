@@ -17,6 +17,9 @@ schemes:
     run:
       config: Debug
       storeKitConfiguration: App/Products.storekit
+    test:
+      targets:
+        - AraTests
 targets:
   Ara:
     type: application
@@ -77,3 +80,10 @@ targets:
       properties:
         com.apple.security.application-groups:
           - group.com.silpho.ara
+  AraTests:
+    type: bundle.unit-test
+    platform: iOS
+    sources:
+      - Tests
+    dependencies:
+      - target: Ara
