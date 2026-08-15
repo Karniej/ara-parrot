@@ -17,9 +17,10 @@ let package = Package(
     ],
     targets: [
         // The portable engine: cleanup, vocabulary, modes, the session. No
-        // dependencies at all — this is the target an iOS keyboard extension
-        // links, and every dependency it grows is paid inside a ~30-48 MB
-        // memory budget. Foundation only, forever.
+        // dependencies at all, and that is the point — this is the target
+        // something small links, where every dependency is paid inside a
+        // memory budget measured in tens of megabytes rather than gigabytes.
+        // Foundation only, forever.
         .target(name: "AraEngine"),
         .target(
             name: "AraCore",
@@ -27,8 +28,8 @@ let package = Package(
                 "AraEngine",
                 // Still here because the CLI command types (Install, Setup,
                 // Doctor) live in this library — a macOS-only concern.
-                // AraEngine, the target an iOS extension links, has no
-                // dependencies at all; that is the boundary that matters.
+                // AraEngine has no dependencies at all; that is the boundary
+                // that matters, and it is why the split exists.
                 .product(name: "ArgumentParser", package: "swift-argument-parser"),
                 .product(name: "WhisperKit", package: "WhisperKit"),
                 .product(name: "MLXLLM", package: "mlx-swift-lm"),
