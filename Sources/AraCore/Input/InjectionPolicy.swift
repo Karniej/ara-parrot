@@ -25,9 +25,22 @@ public enum InjectionMethod: Sendable, Equatable {
 /// resolution already carries, sampled at hotkey release (see `FrontmostApp`
 /// for why it must be carried, not re-read).
 public enum InjectionPolicy {
-    /// The apps where `auto` picks paste: terminals and Electron apps, which
-    /// drop or reorder synthesized unicode keyboard events. Every serious
-    /// dictation tool pastes into these. One list, one place — extend it here.
+    /// The apps where `auto` picks paste: terminals, Electron apps, and
+    /// editors, which drop or reorder synthesized unicode keyboard events.
+    /// Every serious dictation tool pastes into these. One list, one place —
+    /// extend it here.
+    ///
+    /// A list is the wrong shape for this problem and is known to be: it
+    /// fails silently for every app nobody has added yet, and the symptom is
+    /// mangled text rather than an error. It is kept because the alternative —
+    /// pasting everywhere by default — puts the transcript on the pasteboard
+    /// of every app the user dictates into, which is a privacy cost paid
+    /// always to fix a problem that happens sometimes.
+    ///
+    /// A wrong identifier here is inert: it matches nothing, and that app goes
+    /// on typing exactly as it did before. So the risk of adding one is
+    /// bounded, and the entries below that could be checked against a real
+    /// install were — `notion.id` and `com.apple.dt.Xcode` among them.
     public static let pastePreferredBundleIDs: Set<String> = [
         "com.apple.Terminal",             // Terminal
         "com.googlecode.iterm2",          // iTerm2
@@ -38,6 +51,14 @@ public enum InjectionPolicy {
         "net.kovidgoyal.kitty",           // kitty
         "org.alacritty",                  // Alacritty
         "com.github.wez.wezterm",         // WezTerm
+        "com.mitchellh.ghostty",          // Ghostty
+        "dev.warp.Warp-Stable",           // Warp
+        "co.zeit.hyper",                  // Hyper
+        "notion.id",                      // Notion
+        "md.obsidian",                    // Obsidian
+        "com.linear",                     // Linear
+        "dev.zed.Zed",                    // Zed
+        "com.apple.dt.Xcode",             // Xcode
     ]
 
     /// An explicit setting is absolute; `auto` consults the list. An unknown

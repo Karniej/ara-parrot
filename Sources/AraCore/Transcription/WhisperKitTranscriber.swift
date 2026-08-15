@@ -406,7 +406,21 @@ public actor WhisperKitTranscriber: Transcriber {
 
     private func pass(_ audio: [Float], pipeline: WhisperKit,
                       language: String?, detectLanguage: Bool) async throws -> Pass {
-        let options = DecodingOptions(language: language, detectLanguage: detectLanguage)
+        // `chunkingStrategy: .vad` is what makes a long dictation work.
+        //
+        // WhisperKit branches on this in `transcribe(audioArray:)`: with a
+        // strategy it splits the audio on silence, with none it falls to a
+        // branch whose own comment reads "audio is short enough to transcribe
+        // in a single window" — which long audio is not. That branch is the
+        // plain sliding-window loop, where a window that fails its own
+        // thresholds contributes nothing and the words in it are simply gone.
+        //
+        // Costs nothing on short utterances: WhisperKit only consults the
+        // strategy when the audio exceeds one window, so anything under 30
+        // seconds takes the same path it always did.
+        let options = DecodingOptions(language: language,
+                                      detectLanguage: detectLanguage,
+                                      chunkingStrategy: .vad)
         let results: [TranscriptionResult] = try await pipeline.transcribe(
             audioArray: audio, decodeOptions: options)
         return Pass(text: results.map(\.text).joined(separator: " "),

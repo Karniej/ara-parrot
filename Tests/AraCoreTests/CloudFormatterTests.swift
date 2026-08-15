@@ -118,6 +118,9 @@ private final class LoopbackHTTPServer: @unchecked Sendable {
 /// compared by tag.
 private enum ErrorKind {
     case unavailable, timedOut, implausibleOutput, refused, transportFailure, busy
+    /// Never produced by `CloudFormatter` — only the local engine can know it
+    /// ran out of token budget. Present so this mirror stays exhaustive.
+    case truncated
 }
 
 /// Records the requests a formatter actually issued, so a test can assert on
@@ -165,6 +168,7 @@ struct CloudFormatterTests {
             case .refused: return .refused
             case .transportFailure: return .transportFailure
             case .busy: return .busy
+            case .truncated: return .truncated
             }
         } catch {
             Issue.record("expected a FormatterError, got \(error)")

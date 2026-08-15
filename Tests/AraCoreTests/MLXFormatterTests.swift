@@ -459,3 +459,36 @@ struct MLXFormatterConcurrencyTests {
         _ = try await first.value
     }
 }
+
+/// The token budget, which is the whole of the "long dictation loses words"
+/// fix that can be tested without a GPU.
+@Suite("MLXFormatter token budget")
+struct MLXFormatterBudgetTests {
+    @Test("short utterances keep the original 512-token floor")
+    func floorHolds() {
+        #expect(MLXFormatter.maxTokens(forCharacters: 0) == 512)
+        #expect(MLXFormatter.maxTokens(forCharacters: 40) == 512)
+        // The floor binds right up to where scaling overtakes it.
+        #expect(MLXFormatter.maxTokens(forCharacters: 767) == 512)
+    }
+
+    @Test("a long dictation gets more room than the old flat budget")
+    func scalesWithInput() {
+        // ~2 minutes of speech. Under the old flat 512 this was the case that
+        // stopped mid-sentence and had its ending typed away.
+        let twoMinutes = MLXFormatter.maxTokens(forCharacters: 1_800)
+        #expect(twoMinutes == 1_028)
+        #expect(twoMinutes > 512)
+    }
+
+    @Test("the ceiling still bounds a model stuck in a loop")
+    func ceilingHolds() {
+        #expect(MLXFormatter.maxTokens(forCharacters: 10_000) == 2_048)
+        #expect(MLXFormatter.maxTokens(forCharacters: .max) == 2_048)
+    }
+
+    @Test("a negative count cannot produce a negative budget")
+    func negativeInput() {
+        #expect(MLXFormatter.maxTokens(forCharacters: -100) == 512)
+    }
+}
