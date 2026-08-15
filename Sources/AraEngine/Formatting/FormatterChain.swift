@@ -286,6 +286,7 @@ public struct FormatterChain: Formatter {
         case .timedOut: return "timed out"
         case .implausibleOutput: return "output failed the plausibility guard"
         case .refused: return "model refused the rewrite"
+        case .truncated: return "rewrite hit the token budget and stopped mid-utterance"
         case .transportFailure(let detail): return "transport failure: \(detail)"
         case .busy: return "still busy with the previous utterance"
         }

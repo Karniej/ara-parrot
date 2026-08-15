@@ -227,10 +227,30 @@ public final class MLXFormatter: AraEngine.Formatter, @unchecked Sendable {
             let session = ChatSession(
                 container,
                 instructions: instructions,
-                generateParameters: MLXFormatter.generateParameters)
+                generateParameters: MLXFormatter.generateParameters(
+                    forCharacters: prompt.count))
             do {
                 return try await withError {
-                    try await session.respond(to: prompt)
+                    // `streamDetails` rather than `respond`, for one value:
+                    // `respond` returns the text and nothing else, so a
+                    // generation that stopped because it ran out of budget is
+                    // indistinguishable from one that finished. The stop
+                    // reason is the only place that distinction exists.
+                    var output = ""
+                    var stopReason: GenerateStopReason?
+                    for try await generation in session.streamDetails(to: prompt) {
+                        switch generation {
+                        case .chunk(let text): output += text
+                        case .info(let info): stopReason = info.stopReason
+                        default: break
+                        }
+                    }
+                    // Throwing discards a rewrite the user would mostly have
+                    // liked. That is the trade: the chain falls to the rules
+                    // floor and types every word they said, unpolished, which
+                    // beats polished text with the ending missing.
+                    if stopReason == .length { throw FormatterError.truncated }
+                    return output
                 }
             } catch let error as MLXError {
                 throw MLXFormatter.runtimeFailure(error)
@@ -276,12 +296,42 @@ public final class MLXFormatter: AraEngine.Formatter, @unchecked Sendable {
     /// the rewrite of a given transcript reproducible, which is also what makes
     /// a latency measurement mean anything.
     ///
-    /// `maxTokens` bounds the worst case. A rewrite is about as long as its
-    /// input, so 512 is generous for dictated speech while still capping a
-    /// model that decides to keep talking — an unbounded generation would run
-    /// past the deadline and be abandoned mid-compute.
-    static let generateParameters = GenerateParameters(
-        maxTokens: 512, temperature: 0.0)
+    /// The token budget for one rewrite, scaled to the transcript.
+    ///
+    /// This was a flat 512, on the reasoning that a rewrite is about as long
+    /// as its input and 512 is generous for dictated speech. It is generous
+    /// for a *sentence*. A user who dictates for two minutes produces more
+    /// than 512 tokens of output, generation stops mid-word, and — because
+    /// nothing downstream could tell a truncated rewrite from a finished one —
+    /// the back of the utterance was typed at nobody's cursor. Reported from
+    /// the field as "when I talk longer it loses words", which is exactly
+    /// what it was doing.
+    ///
+    /// Scaling to the input is the fix; the ceiling is what is left of the
+    /// original argument. Runaway generation is bounded first by
+    /// `FormatterDeadline` — 8 s at most, which at the measured 3.26 ms/char
+    /// is reached well before 2048 tokens — so the ceiling only has to stop a
+    /// model stuck in a loop from holding the GPU, and never binds on real
+    /// dictation.
+    static func generateParameters(forCharacters characters: Int) -> GenerateParameters {
+        GenerateParameters(maxTokens: maxTokens(forCharacters: characters),
+                           temperature: 0.0)
+    }
+
+    /// Two characters per token, plus a fixed allowance.
+    ///
+    /// Deliberately pessimistic. English runs nearer four characters per token
+    /// on this tokenizer, but Ara is dictated to in Polish as well, and a
+    /// language the tokenizer fits badly spends more tokens on the same
+    /// sentence. Guessing high costs nothing — the budget is a ceiling, not a
+    /// target, and generation stops at the end of the rewrite either way —
+    /// while guessing low costs the user the end of their paragraph.
+    ///
+    /// The floor keeps short utterances exactly where they were.
+    static func maxTokens(forCharacters characters: Int) -> Int {
+        let scaled = max(0, characters) / 2 + 128
+        return min(max(scaled, 512), 2048)
+    }
 
     // MARK: - Staying off the cooperative pool
 

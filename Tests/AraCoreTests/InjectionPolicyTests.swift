@@ -31,6 +31,14 @@ struct InjectionPolicyTests {
             "net.kovidgoyal.kitty",           // kitty
             "org.alacritty",                  // Alacritty
             "com.github.wez.wezterm",         // WezTerm
+            "com.mitchellh.ghostty",          // Ghostty
+            "dev.warp.Warp-Stable",           // Warp
+            "co.zeit.hyper",                  // Hyper
+            "notion.id",                      // Notion
+            "md.obsidian",                    // Obsidian
+            "com.linear",                     // Linear
+            "dev.zed.Zed",                    // Zed
+            "com.apple.dt.Xcode",             // Xcode
           ])
     func autoPastesIntoKnownApps(bundleID: String) {
         #expect(InjectionPolicy.pastePreferredBundleIDs.contains(bundleID))
