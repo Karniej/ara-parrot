@@ -3,7 +3,7 @@ import PackageDescription
 
 let package = Package(
     name: "ara",
-    platforms: [.macOS(.v14), .iOS(.v17)],
+    platforms: [.macOS(.v14)],
     dependencies: [
         .package(url: "https://github.com/apple/swift-argument-parser.git", from: "1.3.0"),
         .package(url: "https://github.com/argmaxinc/WhisperKit.git", from: "0.9.0"),

@@ -1,24 +1,17 @@
 import Foundation
 
-/// Where Ara's user-editable files live, per platform — the seam that lets
-/// `LocalDictionary` and `Snippets` compile for an iOS keyboard without
-/// knowing anything about either platform's conventions.
+/// Where Ara's user-editable files live.
 ///
-/// On iOS this must become the App Group container so the container app and
-/// the keyboard extension read the same dictionary; the group id is a product
-/// decision the spike has not forced yet, so until then the fallback is
-/// Application Support — real, writable, and wrong only in that the two
-/// processes would not share it.
+/// Still a seam rather than a path spelled out at each call site:
+/// `LocalDictionary` and `Snippets` sit in the engine, and the engine is the
+/// part that gets reused. What it is reused *by* is no longer this package's
+/// business — the phone builds have their own repository and their own answer,
+/// which on those platforms is a shared App Group container. Here there is one
+/// process and one home directory, so there is one path and no conditional.
 public enum ConfigLocation {
     public static var directory: URL {
-        #if os(macOS)
         FileManager.default.homeDirectoryForCurrentUser
             .appendingPathComponent(".config/ara")
-        #else
-        FileManager.default.urls(for: .applicationSupportDirectory,
-                                 in: .userDomainMask)[0]
-            .appendingPathComponent("ara")
-        #endif
     }
 }
 
