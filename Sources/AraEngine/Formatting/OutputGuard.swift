@@ -103,6 +103,38 @@ enum OutputGuard {
         if inWords < 4 { return outWords <= max(12, inWords * 4) }
 
         let ratio = Double(outWords) / Double(inWords)
-        return ratio >= 0.4 && ratio <= 4.0
+        return ratio >= minimumRatio(forWords: inWords) && ratio <= 4.0
+    }
+
+    /// How much of the transcript a rewrite must keep, by how long it was.
+    ///
+    /// A flat 0.4 was the rule, and it is the right number for a sentence:
+    /// "um so I think maybe we should you know go" losing its filler is a
+    /// legitimate 40% cut. It is the wrong number for a paragraph, and the
+    /// difference is not academic — measured from a real dictation, 109 words
+    /// in and 76 out, a ratio of 0.697. The rewrite had deleted the opening
+    /// sentence, deleted the closing sentence, and pasted the opening back on
+    /// the end. It sailed through this guard with 0.297 to spare and was typed
+    /// at the user's cursor.
+    ///
+    /// The reason a flat floor fails is that filler does not scale. A speaker
+    /// does not become three times as hesitant in a paragraph as in a
+    /// sentence, so the *proportion* a faithful rewrite may drop should not
+    /// grow with length — while a model's appetite for summarising very much
+    /// does. So the floor rises: 0.4 up to 20 words, tightening to 0.8 by 100,
+    /// and 0.8 above that.
+    ///
+    /// A rejected rewrite costs polish, never words: the chain falls to the
+    /// rules floor and the raw transcript is typed. That asymmetry is why the
+    /// bound is set to catch the observed failure with margin rather than to
+    /// sit just past it.
+    static func minimumRatio(forWords words: Int) -> Double {
+        let (shortEnough, longEnough) = (20.0, 100.0)
+        let (loosest, tightest) = (0.4, 0.8)
+        let count = Double(words)
+        if count <= shortEnough { return loosest }
+        if count >= longEnough { return tightest }
+        let travelled = (count - shortEnough) / (longEnough - shortEnough)
+        return loosest + travelled * (tightest - loosest)
     }
 }

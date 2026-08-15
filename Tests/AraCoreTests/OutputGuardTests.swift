@@ -113,3 +113,57 @@ struct OutputGuardTests {
             output: "I can't make Thursday. Can we move it?"))
     }
 }
+
+/// The length-scaled lower bound. A flat 0.4 let a paragraph lose a third of
+/// itself; these pin the rule that replaced it.
+@Suite("OutputGuard keeps long rewrites honest")
+struct OutputGuardLengthTests {
+    /// Distinct tokens, not a repeated one: an output built from the same word
+    /// over and over contains its own input many times over, which trips the
+    /// verbatim-duplication check and rejects for the wrong reason.
+    private func words(_ count: Int) -> String {
+        (1...max(1, count)).map { "w\($0)" }.joined(separator: " ")
+    }
+
+    /// Floating-point interpolation does not land on round numbers.
+    private func isClose(_ value: Double, _ expected: Double) -> Bool {
+        abs(value - expected) < 0.000_001
+    }
+
+    @Test("the observed failure is now rejected")
+    func realDictationLoss() {
+        // Measured from a real 77-second dictation: 109 words in, 76 out.
+        // The rewrite had dropped the opening sentence, dropped the closing
+        // sentence, and repeated the opening at the end. Ratio 0.697.
+        #expect(!OutputGuard.isPlausible(input: words(109), output: words(76)))
+    }
+
+    @Test("a sentence may still shed its filler")
+    func shortUtterancesUnchanged() {
+        // 12 words to 6 is 0.5 — under the old flat floor's 0.4 ceiling for
+        // rejection, and it must stay accepted.
+        #expect(OutputGuard.isPlausible(input: words(12), output: words(6)))
+        #expect(isClose(OutputGuard.minimumRatio(forWords: 12), 0.4))
+        #expect(isClose(OutputGuard.minimumRatio(forWords: 20), 0.4))
+    }
+
+    @Test("the floor tightens with length and then stops")
+    func floorSchedule() {
+        #expect(isClose(OutputGuard.minimumRatio(forWords: 60), 0.6))
+        #expect(isClose(OutputGuard.minimumRatio(forWords: 100), 0.8))
+        #expect(isClose(OutputGuard.minimumRatio(forWords: 400), 0.8))
+    }
+
+    @Test("a faithful long rewrite still passes")
+    func faithfulLongRewrite() {
+        // Punctuation and light tidying, not summarising.
+        #expect(OutputGuard.isPlausible(input: words(120), output: words(114)))
+        #expect(OutputGuard.isPlausible(input: words(120), output: words(120)))
+    }
+
+    @Test("expansion is still bounded at the top")
+    func upperBoundUnchanged() {
+        #expect(OutputGuard.isPlausible(input: words(30), output: words(110)))
+        #expect(!OutputGuard.isPlausible(input: words(30), output: words(130)))
+    }
+}
