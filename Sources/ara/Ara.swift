@@ -153,7 +153,6 @@ struct Run: ParsableCommand {
         // *warmed* under the engines that will consult it: `apple`, `rules` and
         // `off` would otherwise pay a second of startup and 0.9GB of resident
         // memory for a model they never call.
-        let mlx = Pipeline.mlxFormatter()
         let warmsMLX = config.engine == .mlx || config.engine == .cloud
 
         // AppKit before the warm-up, not after it. The status item below must
@@ -257,8 +256,16 @@ struct Run: ParsableCommand {
         // Armed by the ladder if it ever adopts the stand-in model, read by the
         // first hotkey press after that and by no press after it.
         let pressNote = MainActor.assumeIsolated { PressNote() }
+        let mlx = Pipeline.mlxFormatter(
+            timeoutBase: .milliseconds(config.timeoutMs),
+            onOverrun: {
+                Task { @MainActor in
+                    pressNote.arm(FormatterChain.degradedNote(engine: .mlx))
+                }
+            })
         // Who won the warm-up race, for the ladder — see `WarmupLadder`.
         let ladder = MainActor.assumeIsolated { LadderState() }
+        let startupGeneration = MainActor.assumeIsolated { running.generation }
 
         // Declared out here rather than beside the Language submenu it repaints
         // because the warm-up ladder needs it too: adopting the stand-in model
@@ -269,6 +276,21 @@ struct Run: ParsableCommand {
             menuBar.setLanguageMenu(LanguageMenuModel.compute(
                 model: running.model, current: running.language,
                 switching: running.switching))
+        }
+
+        // Opens the gate once. A selected model can beat the startup model, so
+        // both paths use this same handoff. `WarmupState.finish()` returns
+        // false after the first handoff and prevents a later model load from
+        // replacing an active recording overlay with the ready card.
+        let announcedReady = MainActor.assumeIsolated { AnnouncedReady() }
+        let declareReady: @MainActor () -> Void = {
+            guard warmup.finish() else { return }
+            menuBar.setReady()
+            guard !announcedReady.value else { return }
+            announcedReady.value = true
+            FileHandle.standardError.write(Data(
+                "listening on \(chosenHotkey.label) hold · model: \(running.model.id) · ^C to quit\n".utf8
+            ))
         }
 
         // The submenu's contents are computed by `MicrophoneMenuModel.compute`
@@ -441,7 +463,8 @@ struct Run: ParsableCommand {
                 guard let target = ModelRegistry.find(id) else { return }
                 beginModelSwitch(to: target, running: running,
                                  transcriber: transcriber, menuBar: menuBar,
-                                 repaintLanguageMenu: repaintLanguageMenu)
+                                 repaintLanguageMenu: repaintLanguageMenu,
+                                 declareReady: declareReady)
             }
 
             menuBar.setHotkeyMenu(HotkeyMenuModel.compute(current: chosenHotkey))
@@ -812,28 +835,6 @@ struct Run: ParsableCommand {
             throw ExitCode(1)
         }
 
-        // Opens the warm-up gate: from here a press records. Runs on the main
-        // actor only once *a* transcriber is warm — never before. Dictating
-        // into a cold transcriber is the reason startup used to block, and
-        // that ordering is the part of the old design worth keeping; only the
-        // *feedback* moved earlier, never the recording.
-        //
-        // "A" transcriber, not "the" one: the ladder can open this gate on the
-        // stand-in model minutes before the chosen one lands, so the call is
-        // reachable twice and reports whichever model is actually serving.
-        // Idempotent for that reason — the second call would otherwise print a
-        // second "listening on…" line naming a state that has not changed.
-        let announcedReady = MainActor.assumeIsolated { AnnouncedReady() }
-        let declareReady: @MainActor () -> Void = {
-            warmup.finish()
-            menuBar.setReady()
-            guard !announcedReady.value else { return }
-            announcedReady.value = true
-            FileHandle.standardError.write(Data(
-                "listening on \(chosenHotkey.label) hold · model: \(running.model.id) · ^C to quit\n".utf8
-            ))
-        }
-
         // The warm-up itself, off the main thread so the status item stays
         // alive and responsive while models load — a cold download takes
         // minutes, and the old semaphore here froze the process through all
@@ -855,7 +856,7 @@ struct Run: ParsableCommand {
         // abandonment. Failure precedence is unchanged: fatal transcriber
         // first, formatter warning second.
         Task.detached {
-            async let transcriberResult: Error? = {
+            async let transcriberResult: (error: Error?, superseded: Bool) = {
                 do {
                     // `buildPipeline` + `adopt` rather than `warmUp`, which is
                     // the same load with the swap point hidden inside the
@@ -877,12 +878,22 @@ struct Run: ParsableCommand {
                     // Claimed before the adopt, not after: a stand-in whose
                     // own load returns in this same instant must see that it
                     // has lost, or it downgrades the user it was there to help.
-                    await MainActor.run { ladder.targetDidLand() }
+                    guard await MainActor.run(resultType: Bool.self, body: {
+                        guard running.generation == startupGeneration else { return false }
+                        ladder.targetDidLand()
+                        return true
+                    }) else { return (nil, true) }
+                    guard await MainActor.run(resultType: Bool.self, body: {
+                        running.generation == startupGeneration
+                    }) else { return (nil, true) }
                     await transcriber.adopt(pipeline, model: chosenModel)
                     // The transcriber is warm *before* the gate opens, and
                     // that gap is the point: the formatting model may still be
                     // loading, and the pill should say so rather than keep
                     // naming a model that is already in memory.
+                    guard await MainActor.run(resultType: Bool.self, body: {
+                        running.generation == startupGeneration
+                    }) else { return (nil, true) }
                     await MainActor.run {
                         running.model = chosenModel
                         running.switching = .settled
@@ -890,9 +901,9 @@ struct Run: ParsableCommand {
                         repaintLanguageMenu()
                         warmup.setTranscriber(nil)
                     }
-                    return nil
+                    return (nil, false)
                 } catch {
-                    return error
+                    return (error, false)
                 }
             }()
             // The ladder. Dictation on a small model while the chosen one is
@@ -910,7 +921,9 @@ struct Run: ParsableCommand {
                 // returns inside it and the check below ends this task before
                 // it costs anything.
                 try? await Task.sleep(for: WarmupLadder.bootstrapDelay)
-                if await MainActor.run(resultType: Bool.self, body: { ladder.targetLanded }) {
+                if await MainActor.run(resultType: Bool.self, body: {
+                    running.generation != startupGeneration || ladder.targetLanded
+                }) {
                     return
                 }
                 FileHandle.standardError.write(Data(
@@ -918,15 +931,21 @@ struct Run: ParsableCommand {
                         + "to dictate on in the meantime...\n").utf8))
                 guard let pipeline = try? await WhisperKitTranscriber
                     .buildPipeline(model: bootstrap) else { return }
-                guard await MainActor.run(resultType: Bool.self,
-                                          body: { ladder.claimBootstrap() }) else {
+                guard await MainActor.run(resultType: Bool.self, body: {
+                    guard running.generation == startupGeneration else { return false }
+                    return ladder.claimBootstrap()
+                }) else {
                     FileHandle.standardError.write(Data(
                         ("\(bootstrap.id) is ready, but \(chosenModel.id) got there "
                             + "first; discarding it\n").utf8))
                     return
                 }
+                guard await MainActor.run(resultType: Bool.self, body: {
+                    running.generation == startupGeneration
+                }) else { return }
                 await transcriber.adopt(pipeline, model: bootstrap)
                 await MainActor.run {
+                    guard running.generation == startupGeneration else { return }
                     running.model = bootstrap
                     running.switching = .loading(target: chosenModel.id)
                     menuBar.setModelLabel(running: bootstrap.id,
@@ -960,14 +979,16 @@ struct Run: ParsableCommand {
                     return error
                 }
             }()
-            let warmupError = await transcriberResult
+            let startupResult = await transcriberResult
             let mlxWarmupError = await mlxResult
             // Awaited so this block owns every task it started, the reason the
             // MLX result is awaited even on a fatal path. By now it has either
             // adopted, lost the race, or given up.
             await bootstrapDone
             await MainActor.run {
-                if let warmupError {
+                if running.generation == startupGeneration,
+                   !startupResult.superseded,
+                   let warmupError = startupResult.error {
                     FileHandle.standardError.write(Data("warmup failed: \(warmupError)\n".utf8))
                     // Fatal only when nothing is serving. With the stand-in
                     // live the user has working dictation, and exiting would
@@ -1003,7 +1024,9 @@ struct Run: ParsableCommand {
                     FileHandle.standardError.write(Data(
                         "  dictation will use rule-based cleanup until then\n".utf8))
                 }
-                declareReady()
+                if running.generation == startupGeneration, !startupResult.superseded {
+                    declareReady()
+                }
             }
         }
 
@@ -1034,7 +1057,8 @@ struct Run: ParsableCommand {
 private func beginModelSwitch(
     to target: TranscriptionModel, running: RunningModel,
     transcriber: WhisperKitTranscriber, menuBar: MenuBarController,
-    repaintLanguageMenu: @escaping @MainActor () -> Void
+    repaintLanguageMenu: @escaping @MainActor () -> Void,
+    declareReady: @escaping @MainActor () -> Void
 ) {
     guard target.id != running.model.id else { return }
     running.generation += 1
@@ -1059,6 +1083,7 @@ private func beginModelSwitch(
             running.model = target
             running.switching = .settled
             menuBar.setModelLabel(running: target.id, switching: .settled)
+            declareReady()
             repaintLanguageMenu()
             FileHandle.standardError.write(Data(
                 "✓ now transcribing with \(target.id)\n".utf8))
@@ -1307,21 +1332,22 @@ private final class WarmupState {
 
     /// The warm-up is over and a press records from here.
     ///
-    /// Reachable twice — the ladder opens the gate on the stand-in model and
-    /// the chosen model's own completion calls it again — so everything here
-    /// is idempotent. The second call re-shows the same ready line and
-    /// re-arms the same delayed hide, which is harmless.
+    /// Reachable more than once — the ladder, startup model, or a selected
+    /// model can open the gate. Only the first call changes UI state.
     ///
     /// The card is not torn down on the spot. A user holding the key at the
     /// moment the wait ends would see it vanish under their thumb, which reads
     /// as a crash; a user who walked away deserves to find out it worked. So
     /// it says the wait is over, names the key, and clears itself.
-    func finish() {
+    @discardableResult
+    func finish() -> Bool {
+        guard !handedOver else { return false }
         transcriberSettled = true
         handedOver = true
         status.transcriber = nil
         overlay?.show(.warmingUp(title: readyMessage, detail: nil))
         overlay?.hide(after: Self.readyLingerSeconds)
+        return true
     }
 
     private func repaint() {

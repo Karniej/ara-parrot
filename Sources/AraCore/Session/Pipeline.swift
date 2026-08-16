@@ -43,8 +43,11 @@ public enum Pipeline {
     /// Nor is it gated on macOS version. `MLXFormatter` refuses the work
     /// itself below macOS 15.4 — see `runOffCooperativePool` — which keeps the
     /// reason next to the constraint instead of duplicating it here.
-    public static func mlxFormatter() -> MLXFormatter {
-        MLXFormatter()
+    public static func mlxFormatter(
+        timeoutBase: Duration = .milliseconds(FormatterDeadline.defaultBaseMs),
+        onOverrun: (@Sendable () -> Void)? = nil
+    ) -> MLXFormatter {
+        MLXFormatter(deadlineBase: timeoutBase, onOverrun: onOverrun)
     }
 
     /// Builds the formatter chain described by `config`.

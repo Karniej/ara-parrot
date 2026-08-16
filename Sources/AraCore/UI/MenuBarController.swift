@@ -70,8 +70,9 @@ public final class MenuBarController {
     /// AppKit.
     public var onModelPicked: ((String) -> Void)?
 
-    /// The user picked a key in the Hotkey submenu. Persists and applies on
-    /// restart — see `HotkeyMenuModel`. Invoked on the main thread by AppKit.
+    /// The user picked a key in the Hotkey submenu. Applies immediately to the
+    /// running monitor and persists across restarts — see `HotkeyMenuModel`.
+    /// Invoked on the main thread by AppKit.
     public var onHotkeyPicked: ((Hotkey) -> Void)?
 
     /// The user picked an engine in the Engine submenu. Persists and applies

@@ -260,7 +260,7 @@ public final class AudioCapture {
             backend = fresh
             // state stays .recording; the tap appends to the same buffer.
         } catch {
-            fresh.tearDown()
+            retire(fresh)
             state = .degraded
             lost = true
         }

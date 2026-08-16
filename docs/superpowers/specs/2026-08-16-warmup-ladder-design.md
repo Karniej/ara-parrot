@@ -139,7 +139,7 @@ message — the gate is open and the audio is being captured.
 |------|----------------|
 | `ModelRegistry.bootstrap` | the one small multilingual model, outside `shared` |
 | `WarmupLadder` | pure policy: the delay, whether a bootstrap helps, which result may be adopted, when a failure is fatal |
-| `WarmupStatus.serving` | whether the bootstrap is serving, so `blocksDictation` and `message` agree with the gate |
+| `WarmupState.finish()` / `LadderState.bootstrapServing` | open the dictation gate and record whether the fallback model is serving |
 | `RecordingOverlay.State.recording(note:)` | the one-time pill line |
 | `Ara.run`'s warm-up task | the concurrency: two loads, whichever-first adoption, generation discipline |
 

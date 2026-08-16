@@ -100,19 +100,27 @@ struct FormatterDeadlineTests {
         #expect(Duration.milliseconds(FormatterDeadline.defaultBaseMs) == base)
     }
 
+    @Test("diagnostics follow tighter and looser configured timeouts")
+    func diagnosticsUseConfiguredBase() {
+        let elapsed = Duration.seconds(3)
+        #expect(FormatterDeadline.overran(
+            elapsed: elapsed, base: .milliseconds(500), characters: 52))
+        #expect(!FormatterDeadline.overran(
+            elapsed: elapsed, base: .milliseconds(4_000), characters: 52))
+    }
     /// A generation inside its budget is the ordinary case and says nothing.
     /// The chain returned its rewrite; there is nothing to diagnose.
     @Test("a generation inside its budget has not overrun")
     func withinBudgetIsSilent() {
         // 52 characters — one of the field timeouts — gets 2500 + 338 ms.
-        #expect(!FormatterDeadline.overran(elapsed: .milliseconds(1_000), characters: 52))
-        #expect(!FormatterDeadline.overran(elapsed: .milliseconds(2_837), characters: 52))
+        #expect(!FormatterDeadline.overran(elapsed: .milliseconds(1_000), base: base, characters: 52))
+        #expect(!FormatterDeadline.overran(elapsed: .milliseconds(2_837), base: base, characters: 52))
     }
 
     @Test("a generation past its budget has overrun")
     func pastBudgetIsReported() {
-        #expect(FormatterDeadline.overran(elapsed: .milliseconds(2_839), characters: 52))
-        #expect(FormatterDeadline.overran(elapsed: .seconds(30), characters: 52))
+        #expect(FormatterDeadline.overran(elapsed: .milliseconds(2_839), base: base, characters: 52))
+        #expect(FormatterDeadline.overran(elapsed: .seconds(30), base: base, characters: 52))
     }
 
     /// The whole point: the same elapsed time is a different verdict depending
@@ -121,22 +129,22 @@ struct FormatterDeadlineTests {
     /// field — it is comfortably inside.
     @Test("the verdict scales with the transcript, like the budget does")
     func verdictScalesWithLength() {
-        #expect(FormatterDeadline.overran(elapsed: .seconds(3), characters: 52))
-        #expect(!FormatterDeadline.overran(elapsed: .seconds(3), characters: 279))
+        #expect(FormatterDeadline.overran(elapsed: .seconds(3), base: base, characters: 52))
+        #expect(!FormatterDeadline.overran(elapsed: .seconds(3), base: base, characters: 279))
     }
 
     /// It must not go quiet on a stall just because the transcript was long:
     /// the ceiling bounds the budget, so past the ceiling everything overruns.
     @Test("a stall is reported at any transcript length")
     func stallIsAlwaysReported() {
-        #expect(FormatterDeadline.overran(elapsed: .seconds(60), characters: 5_000))
+        #expect(FormatterDeadline.overran(elapsed: .seconds(60), base: base, characters: 5_000))
     }
 
     // MARK: - what the overrun actually says
 
     @Test("a generation inside its budget produces no note")
     func noNoteWhenInsideBudget() {
-        #expect(FormatterDeadline.overrunNote(elapsed: .seconds(1), characters: 52) == nil)
+        #expect(FormatterDeadline.overrunNote(elapsed: .seconds(1), base: base, characters: 52) == nil)
     }
 
     /// All three numbers, because none of them means anything alone: the
@@ -145,7 +153,7 @@ struct FormatterDeadlineTests {
     @Test("the note carries the elapsed time, the overshoot, the budget and the length")
     func noteCarriesEveryNumber() {
         // 52 characters → 2500 + 338 = 2838 ms of budget.
-        let note = FormatterDeadline.overrunNote(elapsed: .milliseconds(8_838),
+        let note = FormatterDeadline.overrunNote(elapsed: .milliseconds(8_838), base: base,
                                                  characters: 52)
         #expect(note == "generation ran 8.8s, 6.0s past its 2.8s budget on 52 "
                 + "characters — the transcript was delivered with rule-based "
@@ -156,7 +164,7 @@ struct FormatterDeadlineTests {
     /// their words; the chain fell through to the rules floor.
     @Test("the note says the transcript still arrived")
     func noteSaysTheTranscriptArrived() {
-        let note = FormatterDeadline.overrunNote(elapsed: .seconds(30), characters: 100)
+        let note = FormatterDeadline.overrunNote(elapsed: .seconds(30), base: base, characters: 100)
         #expect(note?.contains("delivered") == true)
     }
 }

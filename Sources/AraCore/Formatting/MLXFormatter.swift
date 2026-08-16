@@ -61,6 +61,8 @@ public final class MLXFormatter: AraEngine.Formatter, @unchecked Sendable {
 
     private let isModelPresent: @Sendable () -> Bool
     private let load: Load
+    private let deadlineBase: Duration
+    private let onOverrun: (@Sendable () -> Void)?
 
     /// The loaded model, as the closure that uses it. `nil` until `warmUp()`
     /// succeeds. Guarded by a lock rather than an actor for the reason in the
@@ -72,13 +74,22 @@ public final class MLXFormatter: AraEngine.Formatter, @unchecked Sendable {
     /// for why this exists and what happens without it.
     private var isGenerating = false
 
-    public convenience init() {
-        self.init(isModelPresent: { MLXModel.isPresent }, load: Self.loadBundledModel)
+    public convenience init(
+        deadlineBase: Duration = .milliseconds(FormatterDeadline.defaultBaseMs),
+        onOverrun: (@Sendable () -> Void)? = nil
+    ) {
+        self.init(isModelPresent: { MLXModel.isPresent }, load: Self.loadBundledModel,
+                  deadlineBase: deadlineBase, onOverrun: onOverrun)
     }
 
-    init(isModelPresent: @escaping @Sendable () -> Bool, load: @escaping Load) {
+    init(isModelPresent: @escaping @Sendable () -> Bool,
+         load: @escaping Load,
+         deadlineBase: Duration = .milliseconds(FormatterDeadline.defaultBaseMs),
+         onOverrun: (@Sendable () -> Void)? = nil) {
         self.isModelPresent = isModelPresent
         self.load = load
+        self.deadlineBase = deadlineBase
+        self.onOverrun = onOverrun
     }
 
     /// Whether a model has been loaded and `format` can do anything.
@@ -158,8 +169,8 @@ public final class MLXFormatter: AraEngine.Formatter, @unchecked Sendable {
         let started = ContinuousClock.now
         defer {
             lock.withLock { self.isGenerating = false }
-            Self.noteOverrun(elapsed: ContinuousClock.now - started,
-                             characters: text.count)
+            noteOverrun(elapsed: ContinuousClock.now - started,
+                        characters: text.count)
         }
 
         let raw: String
@@ -184,11 +195,13 @@ public final class MLXFormatter: AraEngine.Formatter, @unchecked Sendable {
     /// on the case worth reading about. The wording is
     /// `FormatterDeadline.overrunNote`, where a test can reach it; the prefix
     /// matches `FormatterChain`'s own notes so the two read as one log.
-    private static func noteOverrun(elapsed: Duration, characters: Int) {
+    private func noteOverrun(elapsed: Duration, characters: Int) {
         guard let note = FormatterDeadline.overrunNote(elapsed: elapsed,
+                                                       base: deadlineBase,
                                                        characters: characters)
         else { return }
         FileHandle.standardError.write(Data("formatting: mlx \(note)\n".utf8))
+        onOverrun?()
     }
 
     static var missingModelMessage: String {

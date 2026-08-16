@@ -185,6 +185,15 @@ public struct FormatterChain: Formatter {
                 // on stderr, matching how the rest of the daemon reports.
                 Self.note("\(candidate.label.rawValue) formatter failed "
                           + "(\(Self.describe(error))); falling back")
+                // An unwarmed or missing model is a standing configuration
+                // fault. Startup and `ara doctor` report it once; do not arm a
+                // per-utterance degradation notice forever. Keep an earlier
+                // failure under `.cloud`, because that attempted engine did
+                // fail for this utterance.
+                if let formatterError = error as? FormatterError,
+                   formatterError == .unavailable {
+                    continue
+                }
                 lastFailure = candidate.label
             }
         }

@@ -61,7 +61,7 @@ public enum FormatterDeadline {
         return grown > ceiling ? max(base, ceiling) : grown
     }
 
-    /// `Config.timeoutMs`'s default, and the base `overran` assumes.
+    /// `Config.timeoutMs`'s default.
     public static let defaultBaseMs = 2_500
 
     /// Whether a generation that took `elapsed` on `characters` of transcript
@@ -81,17 +81,12 @@ public enum FormatterDeadline {
     /// tight and `perCharacterMs` is the lever; many seconds past it means the
     /// engine stalled and no budget would have helped.
     ///
-    /// ## Why the base is assumed rather than passed
-    ///
-    /// The engine does not know the user's `timeoutMs` — `Formatter` takes a
-    /// transcript and a mode, and threading a budget through it to serve a log
-    /// line would put the chain's configuration into every engine's signature.
-    /// So this assumes the default. A user who *raised* `timeoutMs` gets a few
-    /// notes for generations that did not really overrun, which is the right
-    /// direction to be wrong in for a diagnostic: it over-reports rather than
-    /// going quiet on the case it exists to catch.
-    public static func overran(elapsed: Duration, characters: Int) -> Bool {
-        elapsed > budget(base: .milliseconds(defaultBaseMs), characters: characters)
+    /// `base` is the configured per-attempt timeout. Diagnostics must use the
+    /// same value as the chain or they can report a successful generation as a
+    /// fallback, or miss a real fallback under a tighter setting.
+    public static func overran(elapsed: Duration, base: Duration,
+                               characters: Int) -> Bool {
+        elapsed > budget(base: base, characters: characters)
     }
 
     /// The line an engine writes when its generation outlived the chain's
@@ -106,8 +101,9 @@ public enum FormatterDeadline {
     /// It ends by saying the transcript was still delivered. An overrun reads
     /// like data loss otherwise, and it is not: `FormatterChain` fell through
     /// to the rules floor and the user got their words, just less tidy.
-    public static func overrunNote(elapsed: Duration, characters: Int) -> String? {
-        let budget = budget(base: .milliseconds(defaultBaseMs), characters: characters)
+    public static func overrunNote(elapsed: Duration, base: Duration,
+                                   characters: Int) -> String? {
+        let budget = budget(base: base, characters: characters)
         guard elapsed > budget else { return nil }
         return String(
             format: "generation ran %.1fs, %.1fs past its %.1fs budget on %d "

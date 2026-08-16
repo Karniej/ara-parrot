@@ -63,10 +63,10 @@ observable and were actually observed.
 
 ## 0bis. First launch shows its warm-up
 
-The menu bar item is created **before** the models load, and the hotkey arms
-only **after** they are warm. Between the two, the state line is the only
-indication the daemon is alive — for a LaunchAgent user with no terminal it is
-the whole first-launch experience.
+The menu bar item and `HotkeyMonitor` start **before** the models load. During
+warm-up, `WarmupState.consumesPress()` consumes hotkey presses so they cannot
+start a recording. The state line explains the wait — for a LaunchAgent user
+with no terminal it is the whole first-launch experience.
 
 - [ ] 👤 **0bis-a.** Start the daemon. The menu bar bird must appear
       immediately — before any `✓ … ready` line — and its state line must

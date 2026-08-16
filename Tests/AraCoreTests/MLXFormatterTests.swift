@@ -458,6 +458,35 @@ struct MLXFormatterConcurrencyTests {
         released.signal()
         _ = try await first.value
     }
+
+    @Test("overrun callbacks use the configured timeout base")
+    func overrunCallbackUsesConfiguredBase() async throws {
+        guard #available(macOS 15.4, *) else { return }
+        let tight = Counter()
+        let tightFormatter = MLXFormatter(
+            isModelPresent: { true },
+            load: {
+                { _, _ in
+                    try await Task.sleep(for: .milliseconds(80))
+                    return "cleaned"
+                }
+            },
+            deadlineBase: .milliseconds(10),
+            onOverrun: tight.bump)
+        try await tightFormatter.warmUp()
+        _ = try await tightFormatter.format("short", mode: mode)
+        #expect(tight.count == 1)
+
+        let loose = Counter()
+        let looseFormatter = MLXFormatter(
+            isModelPresent: { true },
+            load: { { _, _ in "cleaned" } },
+            deadlineBase: .seconds(1),
+            onOverrun: loose.bump)
+        try await looseFormatter.warmUp()
+        _ = try await looseFormatter.format("short", mode: mode)
+        #expect(loose.count == 0)
+    }
 }
 
 /// The token budget, which is the whole of the "long dictation loses words"
