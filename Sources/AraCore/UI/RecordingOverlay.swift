@@ -7,7 +7,13 @@ import SwiftUI
 public final class RecordingOverlay {
     public enum State: Equatable {
         case hidden
-        case recording
+        /// Capturing audio. `note` is a quiet second line under the waveform,
+        /// used by the warm-up ladder to say once — on the first press only —
+        /// that this utterance is going through the fast stand-in model
+        /// (`WarmupLadder`). It is `nil` for every ordinary recording, and
+        /// `nil` again for every press after the first, because repeating it
+        /// would be the friction the ladder exists to remove.
+        case recording(note: String?)
         case transcribing
         /// The daemon is not ready to dictate yet, and this is what it is
         /// doing about it — "downloading whisper-large-v3-turbo… 45%". Shown
@@ -39,7 +45,7 @@ public final class RecordingOverlay {
     public func show(_ state: State) {
         ensureWindow()
         showToken += 1
-        if state == .recording {
+        if case .recording = state {
             model.resetLevels()
         }
         guard let window else { return }
@@ -203,9 +209,24 @@ private struct OverlayPill: View {
     @ViewBuilder
     private var content: some View {
         switch model.state {
-        case .hidden, .recording:
+        case .hidden, .recording(nil):
             Waveform(levels: model.levels)
                 .frame(width: 54, height: 22)
+        case .recording(let note?):
+            // The waveform keeps the headline slot — this is a recording, not
+            // a status message, and the bars are what say the audio is going
+            // in. The note takes `warmingUp`'s quiet second line, at the same
+            // size and opacity, because it is the same kind of sentence: the
+            // particular, one size down from what is happening.
+            HStack(spacing: 11) {
+                Waveform(levels: model.levels)
+                    .frame(width: 54, height: 22)
+                Text(note)
+                    .font(.system(size: 11.5, weight: .regular))
+                    .foregroundStyle(Color.white.opacity(0.5))
+                    .frame(maxWidth: 330, alignment: .leading)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
         case .transcribing:
             ProgressView()
                 .controlSize(.small)

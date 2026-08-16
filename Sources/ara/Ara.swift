@@ -254,6 +254,22 @@ struct Run: ParsableCommand {
         // session override, and `config.mode` stays the startup default.
         let manualMode = MainActor.assumeIsolated { ManualMode() }
         let running = MainActor.assumeIsolated { RunningModel(model: chosenModel, language: config.language) }
+        // Armed by the ladder if it ever adopts the stand-in model, read by the
+        // first hotkey press after that and by no press after it.
+        let pressNote = MainActor.assumeIsolated { PressNote() }
+        // Who won the warm-up race, for the ladder — see `WarmupLadder`.
+        let ladder = MainActor.assumeIsolated { LadderState() }
+
+        // Declared out here rather than beside the Language submenu it repaints
+        // because the warm-up ladder needs it too: adopting the stand-in model
+        // changes which languages the *running* model can produce, and a
+        // Language submenu still describing the chosen model would be locked to
+        // English while a multilingual stand-in was serving.
+        let repaintLanguageMenu: @MainActor () -> Void = {
+            menuBar.setLanguageMenu(LanguageMenuModel.compute(
+                model: running.model, current: running.language,
+                switching: running.switching))
+        }
 
         // The submenu's contents are computed by `MicrophoneMenuModel.compute`
         // (unit-tested); this closure only ferries store state to the shell.
@@ -361,11 +377,6 @@ struct Run: ParsableCommand {
             // like the microphone for the same reason: the live apply cannot
             // fail, so it happens first and holds until quit even when the
             // file cannot be written.
-            let repaintLanguageMenu: @MainActor () -> Void = {
-                menuBar.setLanguageMenu(LanguageMenuModel.compute(
-                    model: running.model, current: running.language,
-                    switching: running.switching))
-            }
             repaintLanguageMenu()
             menuBar.onLanguagePicked = { setting in
                 Task { await transcriber.setLanguage(setting) }
@@ -435,14 +446,23 @@ struct Run: ParsableCommand {
 
             menuBar.setHotkeyMenu(HotkeyMenuModel.compute(current: chosenHotkey))
             menuBar.onHotkeyPicked = { picked in
+                // The re-arm comes first and is not conditional on the save.
+                // A pick is an instruction about the key the user is about to
+                // hold; a config file that could not be written is a separate
+                // problem, reported below, and refusing to change the running
+                // hotkey over it would answer the wrong question — the user
+                // would press the new key and get nothing.
+                monitor.rearm(to: picked)
+                menuBar.setHotkeyMenu(HotkeyMenuModel.compute(current: picked))
+                menuBar.setHotkeyLabel(picked.label)
+                warmup.setHotkeyLabel(picked.label)
                 do {
                     try Config.persistHotkey(picked)
-                    menuBar.setHotkeyMenu(HotkeyMenuModel.compute(current: picked))
                 } catch {
                     let reason = (error as? Config.PersistError)?.description
                         ?? "\(type(of: error))"
                     FileHandle.standardError.write(Data(
-                        "config: hotkey choice not saved (\(reason)); the saved setting is unchanged\n"
+                        "config: hotkey choice not saved (\(reason)); it is live now but reverts on restart\n"
                             .utf8))
                 }
             }
@@ -548,7 +568,9 @@ struct Run: ParsableCommand {
                     overlay?.show(.error("no microphone"))
                     menuBar.setNoMicrophone()
                 case .resumed:
-                    overlay?.show(.recording)
+                    // No ladder note: this utterance already showed whatever
+                    // it had to say when it started.
+                    overlay?.show(.recording(note: nil))
                     menuBar.setRecording(true)
                 }
             }
@@ -567,6 +589,17 @@ struct Run: ParsableCommand {
             },
             onModeResolved: { resolved in
                 Task { @MainActor in menuBar.setMode(resolved.id) }
+            },
+            // The transcript arrived — the chain guarantees that — but plainer
+            // than this user configured, and the daemon is the only layer that
+            // can say so where they will see it. Armed rather than shown: the
+            // fall-through happens while the text is being injected, seconds
+            // after the pill for this utterance came down, so the sentence
+            // rides the next press.
+            onDegrade: { engine in
+                Task { @MainActor in
+                    pressNote.arm(FormatterChain.degradedNote(engine: engine))
+                }
             })
 
         // Installed before the warm-up rather than after the hotkey arms, so a
@@ -605,7 +638,10 @@ struct Run: ParsableCommand {
                         try capture.start()
                         FileHandle.standardError.write(Data("● recording\n".utf8))
                         MainActor.assumeIsolated {
-                            overlay?.show(.recording)
+                            // `take()` answers non-nil at most once, on the
+                            // first press while the fast stand-in model is
+                            // serving — see `LadderNote`.
+                            overlay?.show(.recording(note: pressNote.take()))
                             menuBar.setRecording(true)
                         }
                     } catch {
@@ -777,15 +813,24 @@ struct Run: ParsableCommand {
         }
 
         // Opens the warm-up gate: from here a press records. Runs on the main
-        // actor only once the transcriber is warm — never before. Dictating
+        // actor only once *a* transcriber is warm — never before. Dictating
         // into a cold transcriber is the reason startup used to block, and
         // that ordering is the part of the old design worth keeping; only the
         // *feedback* moved earlier, never the recording.
+        //
+        // "A" transcriber, not "the" one: the ladder can open this gate on the
+        // stand-in model minutes before the chosen one lands, so the call is
+        // reachable twice and reports whichever model is actually serving.
+        // Idempotent for that reason — the second call would otherwise print a
+        // second "listening on…" line naming a state that has not changed.
+        let announcedReady = MainActor.assumeIsolated { AnnouncedReady() }
         let declareReady: @MainActor () -> Void = {
             warmup.finish()
             menuBar.setReady()
+            guard !announcedReady.value else { return }
+            announcedReady.value = true
             FileHandle.standardError.write(Data(
-                "listening on \(chosenHotkey.label) hold · model: \(chosenModel.id) · ^C to quit\n".utf8
+                "listening on \(chosenHotkey.label) hold · model: \(running.model.id) · ^C to quit\n".utf8
             ))
         }
 
@@ -812,21 +857,86 @@ struct Run: ParsableCommand {
         Task.detached {
             async let transcriberResult: Error? = {
                 do {
-                    // Already coalesced to one report per whole percent by the
-                    // transcriber, so this is one hop per visible change and
-                    // not one per byte. The callback itself arrives on a
-                    // URLSession thread; the hop is the whole body.
-                    try await transcriber.warmUp { phase in
-                        Task { @MainActor in warmup.setTranscriber(phase) }
-                    }
+                    // `buildPipeline` + `adopt` rather than `warmUp`, which is
+                    // the same load with the swap point hidden inside the
+                    // actor. The ladder needs the swap point: this pipeline may
+                    // be replacing a stand-in that is already serving
+                    // utterances, and `adopt` is what lands it between two of
+                    // them instead of inside one.
+                    //
+                    // The phase reports are already coalesced to one per whole
+                    // percent by the transcriber, so this is one hop per
+                    // visible change and not one per byte. The callback itself
+                    // arrives on a URLSession thread; the hop is the whole
+                    // body.
+                    let pipeline = try await WhisperKitTranscriber.buildPipeline(
+                        model: chosenModel,
+                        onPhase: { phase in
+                            Task { @MainActor in warmup.setTranscriber(phase) }
+                        })
+                    // Claimed before the adopt, not after: a stand-in whose
+                    // own load returns in this same instant must see that it
+                    // has lost, or it downgrades the user it was there to help.
+                    await MainActor.run { ladder.targetDidLand() }
+                    await transcriber.adopt(pipeline, model: chosenModel)
                     // The transcriber is warm *before* the gate opens, and
                     // that gap is the point: the formatting model may still be
                     // loading, and the pill should say so rather than keep
                     // naming a model that is already in memory.
-                    await MainActor.run { warmup.setTranscriber(nil) }
+                    await MainActor.run {
+                        running.model = chosenModel
+                        running.switching = .settled
+                        menuBar.setModelLabel(running: chosenModel.id, switching: .settled)
+                        repaintLanguageMenu()
+                        warmup.setTranscriber(nil)
+                    }
                     return nil
                 } catch {
                     return error
+                }
+            }()
+            // The ladder. Dictation on a small model while the chosen one is
+            // still loading — the whole of `WarmupLadder`'s reason to exist.
+            //
+            // Nothing here is reported to the user when it fails. It is an
+            // optimisation that did not happen, and the chosen model's own wait
+            // and its own messages are unchanged by it; a second error about a
+            // model nobody asked for would only be noise on top of the wait
+            // they are already being told about.
+            async let bootstrapDone: Void = {
+                guard let bootstrap = WarmupLadder.bootstrap(for: chosenModel) else { return }
+                // The delay is the whole trigger — see `bootstrapDelay` for why
+                // it is measured rather than probed. A warm chosen model
+                // returns inside it and the check below ends this task before
+                // it costs anything.
+                try? await Task.sleep(for: WarmupLadder.bootstrapDelay)
+                if await MainActor.run(resultType: Bool.self, body: { ladder.targetLanded }) {
+                    return
+                }
+                FileHandle.standardError.write(Data(
+                    ("\(chosenModel.id) is still loading; bringing up \(bootstrap.id) "
+                        + "to dictate on in the meantime...\n").utf8))
+                guard let pipeline = try? await WhisperKitTranscriber
+                    .buildPipeline(model: bootstrap) else { return }
+                guard await MainActor.run(resultType: Bool.self,
+                                          body: { ladder.claimBootstrap() }) else {
+                    FileHandle.standardError.write(Data(
+                        ("\(bootstrap.id) is ready, but \(chosenModel.id) got there "
+                            + "first; discarding it\n").utf8))
+                    return
+                }
+                await transcriber.adopt(pipeline, model: bootstrap)
+                await MainActor.run {
+                    running.model = bootstrap
+                    running.switching = .loading(target: chosenModel.id)
+                    menuBar.setModelLabel(running: bootstrap.id,
+                                          switching: running.switching)
+                    repaintLanguageMenu()
+                    pressNote.arm(WarmupLadder.servingNote(target: chosenModel))
+                    // The gate opens here, minutes early. Everything the chosen
+                    // model's load still has to do now happens behind a daemon
+                    // that dictates.
+                    declareReady()
                 }
             }()
             async let mlxResult: Error? = {
@@ -852,10 +962,29 @@ struct Run: ParsableCommand {
             }()
             let warmupError = await transcriberResult
             let mlxWarmupError = await mlxResult
+            // Awaited so this block owns every task it started, the reason the
+            // MLX result is awaited even on a fatal path. By now it has either
+            // adopted, lost the race, or given up.
+            await bootstrapDone
             await MainActor.run {
                 if let warmupError {
                     FileHandle.standardError.write(Data("warmup failed: \(warmupError)\n".utf8))
-                    Darwin.exit(1)
+                    // Fatal only when nothing is serving. With the stand-in
+                    // live the user has working dictation, and exiting would
+                    // take it away to punish a failure that cost them nothing
+                    // — see `WarmupLadder.isFatal`. The menu says which model
+                    // failed, exactly as a failed live switch does.
+                    if WarmupLadder.isFatal(targetFailed: true,
+                                            bootstrapServing: ladder.bootstrapServing) {
+                        Darwin.exit(1)
+                    }
+                    running.switching = .failed(target: chosenModel.id)
+                    menuBar.setModelLabel(running: running.model.id,
+                                          switching: running.switching)
+                    repaintLanguageMenu()
+                    FileHandle.standardError.write(Data(
+                        ("still dictating with \(running.model.id); pick the model "
+                            + "again from the menu to retry\n").utf8))
                 }
                 // A warning, not a failure. Transcription without formatting
                 // is the whole app minus its polish; formatting without
@@ -946,6 +1075,76 @@ private func beginModelSwitch(
     }
 }
 
+/// Whether the "listening on…" line has been printed. A one-field class rather
+/// than a captured `var` because `declareReady` is a `@MainActor` closure and
+/// has to mutate it from inside itself.
+@MainActor
+private final class AnnouncedReady {
+    var value = false
+}
+
+/// Who won the warm-up race.
+///
+/// The chosen model and the stand-in load concurrently and either may return
+/// first, so "may I adopt this?" is a question with a shared answer and it is
+/// answered here — on the main actor, where the two hops that ask it are
+/// already serialised. The *rules* are `WarmupLadder`'s, where a test can
+/// reach them; this is the mutable slot they read.
+@MainActor
+private final class LadderState {
+    /// Read by the stand-in's load before it spends a second on anything: if
+    /// the chosen model is already home there is nothing to stand in for.
+    private(set) var targetLanded = false
+    private(set) var bootstrapServing = false
+
+    /// Claimed *before* `adopt`, not after, so a stand-in finishing in the
+    /// same instant loses the race rather than tying it.
+    func targetDidLand() { targetLanded = true }
+
+    /// Answers `true` at most once, and only while the chosen model is still
+    /// out. The caller adopts only on `true`.
+    func claimBootstrap() -> Bool {
+        guard !bootstrapServing,
+              WarmupLadder.adoptsBootstrap(targetLanded: targetLanded)
+        else { return false }
+        bootstrapServing = true
+        return true
+    }
+}
+
+/// One sentence for the next hotkey press, shown once and then forgotten.
+///
+/// Two things arm it, and both are the same shape of problem: something about
+/// this dictation is worse than the user configured, they cannot see why, and
+/// the overlay is the only surface they are reliably looking at.
+///
+/// - The warm-up ladder, when a stand-in model is serving
+///   (`WarmupLadder.servingNote`).
+/// - The formatter chain, when it fell through to the rules floor
+///   (`FormatterChain.degradedNote`).
+///
+/// The wordings live with the components that know the facts, where tests can
+/// read them. What lives here is only the *once*: `take()` hands the note to
+/// the first press that asks and `nil` to every press after it, so a user who
+/// dictates six times through a bad patch is told once rather than six times.
+/// A newer note replaces an unread older one — the last thing to go wrong is
+/// the one that describes the transcript they are about to get.
+///
+/// Main-actor for `ManualMode`'s reason: written by the ladder's adoption and
+/// by the formatting task hopping in, read by the hotkey's press handler,
+/// which AppKit already delivers there.
+@MainActor
+private final class PressNote {
+    private var pending: String?
+
+    func arm(_ note: String) { pending = note }
+
+    func take() -> String? {
+        defer { pending = nil }
+        return pending
+    }
+}
+
 /// The Mode submenu's session override: `nil` is Auto (the resolver's
 /// frontmost-app rule decides), a mode id pins every following utterance
 /// until changed or quit. Main-actor because both its writer (the menu) and
@@ -1003,7 +1202,10 @@ private final class WarmupState {
     private var status: WarmupStatus
     private let overlay: RecordingOverlay?
     private let menuBar: MenuBarController
-    private let readyMessage: String
+    /// Names the hotkey, so a pick made *during* the warm-up has to move it —
+    /// which is exactly when a user is most likely to be poking at the menu,
+    /// because the daemon is not yet doing anything else.
+    private var readyMessage: String
     /// Whether the pill is currently showing warm-up status. Set by a press
     /// the gate turned away and cleared by that press's release — so it is
     /// also the latch that tells the release handler the press was never a
@@ -1044,6 +1246,11 @@ private final class WarmupState {
         showingStatus = false
         overlay?.hide()
         return true
+    }
+
+    /// The Hotkey submenu re-armed the monitor mid-warm-up.
+    func setHotkeyLabel(_ label: String) {
+        readyMessage = WarmupStatus.readyMessage(hotkeyLabel: label)
     }
 
     /// `nil` means the transcriber is warm — see `WarmupStatus.transcriber`.
@@ -1217,7 +1424,11 @@ struct Models: ParsableCommand {
         @Argument(help: "Model id to download.") var id: String
 
         func run() throws {
-            guard let m = ModelRegistry.find(id) else {
+            // `resolve`, not `find`: this command may also pre-fetch the warm-up
+            // ladder's stand-in model, which `ara models list` does not offer
+            // and `--model` will not accept. Downloading it early is the one
+            // useful thing a user can do about a first cold start.
+            guard let m = ModelRegistry.resolve(id) else {
                 print("unknown model: \(id)")
                 throw ExitCode(1)
             }

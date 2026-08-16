@@ -21,9 +21,14 @@ struct WhisperLoadBenchmark {
         ProcessInfo.processInfo.environment["ARA_WHISPER_LOAD_BENCH"] == "1"
     }
 
+    /// `ModelRegistry.find` deliberately does not resolve the warm-up ladder's
+    /// stand-in model — nothing a user can type should select it — but the
+    /// numbers this benchmark produces are the reason the ladder exists, so it
+    /// has to be measurable alongside the models it stands in for.
     static var model: TranscriptionModel {
         let id = ProcessInfo.processInfo.environment["ARA_WHISPER_LOAD_MODEL"]
             ?? "whisper-large-v3-turbo"
+        if id == ModelRegistry.bootstrap.id { return ModelRegistry.bootstrap }
         return ModelRegistry.find(id)!
     }
 

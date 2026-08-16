@@ -25,12 +25,12 @@ struct HotkeyMenuModelTests {
         }
     }
 
-    /// The event tap is armed with one hotkey at startup and nothing re-arms
-    /// it live (a known follow-up — see the model's doc), so the caption has
-    /// to say a pick waits for the next launch.
-    @Test("the caption says a pick applies on restart")
-    func restartCaption() {
-        #expect(HotkeyMenuModel.compute(current: .rightCommand).caption
-                == "applies on restart")
+    /// A pick re-arms the running detector, so there is nothing left to
+    /// caption. The caption row used to say "applies on restart"; keeping it
+    /// after the behaviour changed would be the same lie in the other
+    /// direction.
+    @Test("there is no caption, because a pick applies immediately")
+    func noCaption() {
+        #expect(HotkeyMenuModel.compute(current: .rightCommand).caption == nil)
     }
 }

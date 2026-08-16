@@ -10,8 +10,9 @@ public final class HotkeyMonitor {
     public enum Event { case pressed, released }
     enum HotkeyError: Error { case tapCreateFailed }
 
-    /// The modifier we treat as the hotkey. Defaults to Fn.
-    private let hotkey: Hotkey
+    /// The modifier we treat as the hotkey. Defaults to Fn. Changes when the
+    /// Hotkey submenu picks another one — see `rearm(to:)`.
+    private var hotkey: Hotkey
     private let debug: Bool
     private var onEvent: ((Event) -> Void)?
     private var tap: CFMachPort?
@@ -69,6 +70,33 @@ public final class HotkeyMonitor {
 
         self.tap = tap
         self.runLoopSource = source
+    }
+
+    /// Switches the hotkey on a running tap, for a pick made in the Hotkey
+    /// submenu.
+    ///
+    /// The tap is not touched, and that is not a shortcut: `eventMask`
+    /// subscribes to every `flagsChanged` event on the session and the
+    /// callback forwards all of them, so the tap has no idea which key is the
+    /// hotkey. `ModifierEdgeDetector` is the only thing that does, and
+    /// swapping it is the entire change — no teardown, no second
+    /// `AXIsProcessTrusted` check, and no window in which the key is dead.
+    ///
+    /// A hold in flight on the old key ends as a synthesized `.released`,
+    /// delivered through the same handler a real release uses. That is
+    /// `handleTapDisabled`'s discipline and it is here for the same reason:
+    /// the daemon may be recording right now, and a swap that dropped the
+    /// release would leave the capture running with nothing left that could
+    /// stop it.
+    ///
+    /// Main-thread only, like every other event this class emits: AppKit
+    /// delivers the menu click there and `hotkeyCallback` hops there.
+    public func rearm(to hotkey: Hotkey) {
+        guard hotkey != self.hotkey else { return }
+        self.hotkey = hotkey
+        if edges.rearm(to: hotkey) == .released {
+            onEvent?(.released)
+        }
     }
 
     public func stop() {

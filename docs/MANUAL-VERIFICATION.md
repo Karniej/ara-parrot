@@ -86,11 +86,65 @@ the whole first-launch experience.
 - [ ] 👤 **0bis-c.** The moment `listening on …` prints, the state line must
       flip to `idle · hold … to dictate`, and the next hotkey hold must record
       normally.
-- [ ] **0bis-d.** Transcriber warm-up failure is still fatal: with the whisper
-      model absent and the network off, the daemon must print
-      `warmup failed: …` and exit nonzero (the menu bar item disappears with
-      it). A failed *formatter* warm-up must instead print the
+- [ ] **0bis-d.** Transcriber warm-up failure is fatal **only when nothing is
+      serving**: with the whisper model absent and the network off, the daemon
+      must print `warmup failed: …` and exit nonzero (the menu bar item
+      disappears with it). If the warm-up ladder has already adopted
+      `whisper-base` it must instead print `still dictating with whisper-base;
+      pick the model again from the menu to retry` and keep running — see
+      0ter-d. A failed *formatter* warm-up must print the
       `! local formatting unavailable:` warning and keep running — see 2bis-c.
+
+## 0ter. The warm-up ladder: dictating before the chosen model lands
+
+`WarmupLadder` gives the chosen model 5 seconds on its own and then brings up
+`whisper-base` alongside it, so a cold start dictates in seconds instead of
+minutes. Every box here needs a *cold* chosen model — a fresh download, or a
+Neural Engine cache invalidated by a macOS update or a rebuilt binary.
+
+- [x] **0ter-a.** With a cold chosen model, the log must show, in order:
+      `downloading whisper-small.en …`, then five seconds later
+      `whisper-small.en is still loading; bringing up whisper-base to dictate
+      on in the meantime…`. Observed on an M3 Pro, 2026-08-16, with
+      `ara run --model whisper-small.en` against an undownloaded model.
+- [x] **0ter-b.** The gate must open on the stand-in while the chosen model is
+      still coming: `listening on … · model: whisper-base` printed **17 s**
+      after launch, against a 488 MB download that had not finished and a
+      Neural Engine compile that had not started. Same run.
+- [x] **0ter-c.** The swap must land: `✓ whisper-small.en ready` after the
+      compile, with no `discarding` line. Same run.
+- [ ] 👤 **0ter-d.** The half 0ter-b cannot show without a human: a hotkey hold
+      during the ladder must record and produce a transcript, and the state
+      line must read `idle · hold … to dictate` throughout.
+- [ ] 👤 **0ter-e.** The menu's model line must read `model: whisper-base →
+      loading whisper-large-v3-turbo…` throughout, and flip to `model:
+      whisper-large-v3-turbo` when the swap lands. The **first** hold after the
+      stand-in comes up — and only the first — must show `fast model ·
+      whisper-large-v3-turbo still loading` beside the waveform in the overlay.
+- [x] **0ter-f.** Warm start does **not** ladder: with `whisper-large-v3-turbo`
+      already on disk and specialised, the gate opened in 6 s and the
+      `bringing up whisper-base` line never printed. Observed on an M3 Pro,
+      2026-08-16.
+
+> **Measuring this on a `swift build` binary:** set `"engine": "rules"` in
+> `config.json` first. A SwiftPM debug build has no `mlx.metallib`, and the MLX
+> formatter's failure path burns ~180 s of CPU that starves both Whisper loads
+> — which makes every model load look like a Neural Engine compile. It cost one
+> wrong diagnosis already. Either use `scripts/build-metallib.sh` or take MLX
+> out of the run.
+>
+> **And expect the ladder to lose here.** The Neural Engine cache is keyed on
+> the running binary's identity, so *every* `swift build` invalidates both
+> models and the stand-in has to compile alongside the model it is standing in
+> for. Observed repeatedly: `whisper-base is ready, but whisper-large-v3-turbo
+> got there first; discarding it`. That is the race guard working, not the
+> ladder failing — on a signed, installed app the stand-in is compiled once and
+> stays compiled, which is the case 0ter-a through 0ter-c measure. Do not judge
+> the ladder from a rebuild.
+- [ ] 👤 **0ter-e.** A non-English dictation during the ladder must come out in
+      the right language. This is the whole reason the stand-in is
+      `openai_whisper-base` rather than `base.en`; an `.en` stand-in would
+      return English nonsense here.
 
 ## 1. Verbatim mode does no rewriting
 
@@ -119,6 +173,41 @@ the whole first-launch experience.
       Both are correct behaviour; note which you saw. When there is no
       `formatting:` line, `ara doctor` is where the explanation lives — see
       5e, which is the only place this state is reported.
+
+## 2ante. Cleanup that silently degraded now says so
+
+`FormatterChain` guarantees a transcript, and that guarantee used to hide its
+own cost: when an engine failed, the chain fell through to the rule-based floor
+and returned a `String` exactly as it does on success. The user got a plainer
+transcript with no way to tell why, and the only report was a `formatting: …
+falling back` line on a stderr no menu-bar user reads.
+
+Two things changed. `FormatterChain.onDegrade` tells the daemon which engine
+lost, and the daemon arms a one-time overlay note for the next hotkey press.
+Separately, `MLXFormatter` now measures how long an *abandoned* generation
+really ran — the number `FormatterDeadline`'s doc says it does not have.
+
+- [ ] 👤 **2ante-a.** Force a fall-through (easiest: a `swift build` binary,
+      which has no `mlx.metallib`, so every MLX call fails). Dictate once. The
+      transcript must still arrive. Then dictate again: the **second** press —
+      and only it — must show `mlx cleanup unavailable · basic punctuation`
+      beside the waveform.
+- [ ] 👤 **2ante-b.** Dictate a third time. The note must be gone. It is
+      one-shot: repeating it every utterance is what trains a user to ignore it.
+- [ ] 👤 **2ante-c.** With a working MLX engine, no note may ever appear on a
+      successful utterance.
+- [ ] **2ante-d.** `engine: "rules"` in `config.json` must never produce the
+      note, and neither may verbatim mode. Both reach the floor because the
+      user asked them to. ✅ covered by `FormatterChainTests`.
+- [ ] 👤 **2ante-e.** The overrun diagnostic: with a real MLX model, reproduce
+      a timeout (the field case is short transcripts — 52, 111 and 143
+      characters have all done it while 200- and 279-character ones succeeded
+      in the same session). Expect a line of the form
+      `formatting: mlx generation ran 8.8s, 6.0s past its 2.8s budget on 52
+      characters — …`. **Record the number.** Just past the budget means
+      `FormatterDeadline.perCharacterMs` is the lever; many seconds past it
+      means the engine stalls and no budget would have helped. Nothing in the
+      project knows which yet.
 
 ## 2bis. The default MLX engine — the first check this machine can actually pass
 

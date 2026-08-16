@@ -199,6 +199,54 @@ struct ModifierEdgeDetectorTests {
         #expect(d.handle(keyCode: Keys.rightShift, flags: Flags.leftShift) == .released)
     }
 
+    // MARK: - rearm, for a live hotkey pick
+
+    /// Picking a hotkey from the menu changes which key this detector watches,
+    /// without tearing down the event tap — the tap subscribes to every
+    /// `flagsChanged` event and never knew which key mattered. So the whole of
+    /// a live switch is here, and it is `reset()` plus a new key: everything
+    /// learned belonged to the old key and none of it describes the new one.
+    @Test("rearming to another key ends a tracked hold on the old one")
+    func rearmEndsATrackedHold() {
+        var d = ModifierEdgeDetector(hotkey: .rightShift)
+        #expect(d.handle(keyCode: Keys.rightShift, flags: Flags.rightShift) == .pressed)
+        #expect(d.rearm(to: .rightCommand) == .released)
+    }
+
+    @Test("rearming with nothing tracked is silent")
+    func rearmWithoutAHoldIsSilent() {
+        var d = ModifierEdgeDetector(hotkey: .rightShift)
+        #expect(d.rearm(to: .rightCommand) == nil)
+    }
+
+    /// The point of the whole change: after the pick, the new key is the
+    /// hotkey and the old one is just another modifier.
+    @Test("after rearming the new key emits edges and the old key does not")
+    func rearmSwitchesWhichKeyIsWatched() {
+        var d = ModifierEdgeDetector(hotkey: .rightShift)
+        #expect(d.rearm(to: .rightCommand) == nil)
+        #expect(d.handle(keyCode: Keys.rightShift, flags: Flags.rightShift) == nil)
+        #expect(d.handle(keyCode: Keys.rightShift, flags: Flags.idle) == nil)
+        #expect(d.handle(keyCode: Keys.rightCommand, flags: Flags.rightCommand) == .pressed)
+        #expect(d.handle(keyCode: Keys.rightCommand, flags: Flags.idle) == .released)
+    }
+
+    /// `reset()`'s hazard, with the key changed underneath it: a device bit
+    /// learned for the old key must not decide anything about the new one.
+    @Test("state learned before the rearm cannot fabricate an edge after it")
+    func rearmClearsLearnedState() {
+        var d = ModifierEdgeDetector(hotkey: .rightShift)
+        #expect(d.handle(keyCode: Keys.leftShift, flags: Flags.leftShift) == nil)
+        #expect(d.handle(keyCode: Keys.rightShift, flags: Flags.bothShifts) == .pressed)
+        #expect(d.rearm(to: .rightCommand) == .released)
+        // Both shifts are still physically down and now belong to nobody.
+        #expect(d.handle(keyCode: Keys.rightShift, flags: Flags.leftShift) == nil)
+        #expect(d.handle(keyCode: Keys.leftShift, flags: Flags.idle) == nil)
+        // And the new key works from a stale baseline.
+        #expect(d.handle(keyCode: Keys.rightCommand, flags: Flags.rightCommand) == .pressed)
+        #expect(d.handle(keyCode: Keys.rightCommand, flags: Flags.idle) == .released)
+    }
+
     // MARK: - reset, for tap recovery
 
     /// When macOS disables the event tap (Secure Input, a timeout) the events
