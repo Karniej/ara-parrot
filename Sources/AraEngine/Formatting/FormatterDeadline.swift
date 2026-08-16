@@ -22,11 +22,14 @@ import Foundation
 ///
 /// **What this does not explain.** Formatter timeouts have been observed on
 /// transcripts of 4 and 51 characters, which the fit above puts at well under a
-/// second. Those have another cause — the leading candidate is contention with
-/// a Whisper model still loading in the background — and scaling the deadline
-/// neither fixes nor hides them: the chain still falls through to the rules
-/// floor exactly as before. This type buys headroom for long dictation. It is
-/// not a fix for a stalled engine.
+/// second — and again in the field on 52, 111 and 143 characters in one
+/// session, while 200- and 279-character transcripts in the same session
+/// formatted in about a second each. Those have another cause, and scaling the
+/// deadline neither fixes nor hides them: the chain still falls through to the
+/// rules floor exactly as before. This type buys headroom for long dictation.
+/// It is not a fix for a stalled engine.
+///
+/// `overran` exists to find out which it is — see its doc.
 public enum FormatterDeadline {
     /// Milliseconds of budget per character of transcript.
     ///
@@ -56,5 +59,66 @@ public enum FormatterDeadline {
         let grown = base + .milliseconds(Int((Double(characters) * perCharacterMs).rounded()))
         let ceiling = Duration.milliseconds(ceilingMs)
         return grown > ceiling ? max(base, ceiling) : grown
+    }
+
+    /// `Config.timeoutMs`'s default, and the base `overran` assumes.
+    public static let defaultBaseMs = 2_500
+
+    /// Whether a generation that took `elapsed` on `characters` of transcript
+    /// ran past the budget it would have been given.
+    ///
+    /// ## Why an engine measures this at all
+    ///
+    /// `FormatterChain.withDeadline` abandons the *wait*, not the work, so the
+    /// only elapsed time the chain can report on a timeout is the budget
+    /// itself — the number it already knew. Whether the generation then
+    /// finished at 3.5 s or at 30 s is the whole question, and nothing was
+    /// asking it. That is why the note above has to say the short-transcript
+    /// timeouts have "another cause" without naming one.
+    ///
+    /// An engine that keeps running after the chain has given up is the one
+    /// place the answer exists. Just past the budget means the budget is too
+    /// tight and `perCharacterMs` is the lever; many seconds past it means the
+    /// engine stalled and no budget would have helped.
+    ///
+    /// ## Why the base is assumed rather than passed
+    ///
+    /// The engine does not know the user's `timeoutMs` — `Formatter` takes a
+    /// transcript and a mode, and threading a budget through it to serve a log
+    /// line would put the chain's configuration into every engine's signature.
+    /// So this assumes the default. A user who *raised* `timeoutMs` gets a few
+    /// notes for generations that did not really overrun, which is the right
+    /// direction to be wrong in for a diagnostic: it over-reports rather than
+    /// going quiet on the case it exists to catch.
+    public static func overran(elapsed: Duration, characters: Int) -> Bool {
+        elapsed > budget(base: .milliseconds(defaultBaseMs), characters: characters)
+    }
+
+    /// The line an engine writes when its generation outlived the chain's
+    /// patience, or `nil` when it did not and there is nothing to say.
+    ///
+    /// Both numbers are here because neither means anything alone. "5.9s" is
+    /// not a fault on a long transcript and is a serious one on a short
+    /// transcript, and the budget is what makes the difference legible without
+    /// the reader having to know `perCharacterMs`. The character count is the
+    /// third number because it is the one that would let someone reproduce it.
+    ///
+    /// It ends by saying the transcript was still delivered. An overrun reads
+    /// like data loss otherwise, and it is not: `FormatterChain` fell through
+    /// to the rules floor and the user got their words, just less tidy.
+    public static func overrunNote(elapsed: Duration, characters: Int) -> String? {
+        let budget = budget(base: .milliseconds(defaultBaseMs), characters: characters)
+        guard elapsed > budget else { return nil }
+        return String(
+            format: "generation ran %.1fs, %.1fs past its %.1fs budget on %d "
+                + "characters — the transcript was delivered with rule-based "
+                + "cleanup instead",
+            seconds(elapsed), seconds(elapsed - budget), seconds(budget),
+            characters)
+    }
+
+    private static func seconds(_ duration: Duration) -> Double {
+        let (whole, attoseconds) = duration.components
+        return Double(whole) + Double(attoseconds) / 1e18
     }
 }

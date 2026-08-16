@@ -29,6 +29,16 @@ private actor CancellationProbe {
     }
 }
 
+/// Collects the engines the chain reported as degraded.
+private final class DegradeProbe: @unchecked Sendable {
+    private let lock = NSLock()
+    private var engines: [Engine] = []
+    var recorded: [Engine] { lock.withLock { engines } }
+    var record: @Sendable (Engine) -> Void {
+        { [self] engine in lock.withLock { engines.append(engine) } }
+    }
+}
+
 @Suite("FormatterChain")
 struct FormatterChainTests {
     let mode = Mode(id: "default", name: "Default", prompt: "p",
@@ -491,5 +501,95 @@ struct FormatterChainTests {
             rules: RuleBasedFormatter())
         #expect(try await chain.format("um so I think uh we should go", mode: mode)
                 == "so I think we should go")
+    }
+
+    // MARK: - reporting a degraded result
+
+    /// The gap this closes: `format` returns a `String` either way, so before
+    /// this signal existed nothing above the chain could tell a cleaned
+    /// transcript from a floor-formatted one, and "why is this one untidy?" had
+    /// no answer outside a stderr line a menu-bar user never sees.
+    @Test("a failed engine is reported as a degradation")
+    func failureIsReported() async throws {
+        let probe = DegradeProbe()
+        let chain = FormatterChain(
+            engine: .mlx, timeout: .seconds(1),
+            mlx: StubFormatter { _ in throw FormatterError.timedOut },
+            apple: nil, cloud: nil, rules: rules, onDegrade: probe.record)
+        #expect(try await chain.format("hello there friend", mode: mode) == "RULES")
+        #expect(probe.recorded == [.mlx])
+    }
+
+    @Test("a successful engine reports nothing")
+    func successIsSilent() async throws {
+        let probe = DegradeProbe()
+        let chain = FormatterChain(
+            engine: .mlx, timeout: .seconds(1),
+            mlx: StubFormatter { _ in "cleaned up" },
+            apple: nil, cloud: nil, rules: rules, onDegrade: probe.record)
+        #expect(try await chain.format("hello there friend", mode: mode) == "cleaned up")
+        #expect(probe.recorded.isEmpty)
+    }
+
+    /// The user configured the floor. Announcing it as a failure every time
+    /// would be crying wolf on the behaviour they asked for.
+    @Test("the rules engine is not a degradation")
+    func rulesEngineIsSilent() async throws {
+        let probe = DegradeProbe()
+        let chain = FormatterChain(
+            engine: .rules, timeout: .seconds(1),
+            mlx: nil, apple: nil, cloud: nil, rules: rules, onDegrade: probe.record)
+        #expect(try await chain.format("hello there friend", mode: mode) == "RULES")
+        #expect(probe.recorded.isEmpty)
+    }
+
+    /// Same argument: the user asked for their words, not a rewrite of them.
+    @Test("a verbatim mode is not a degradation")
+    func verbatimModeIsSilent() async throws {
+        let probe = DegradeProbe()
+        let verbatim = Mode(id: "verbatim", name: "Verbatim", prompt: "",
+                            appBundleIDs: [], usesLLM: false)
+        let chain = FormatterChain(
+            engine: .mlx, timeout: .seconds(1),
+            mlx: StubFormatter { _ in throw FormatterError.timedOut },
+            apple: nil, cloud: nil, rules: rules, onDegrade: probe.record)
+        #expect(try await chain.format("hello there friend", mode: verbatim) == "RULES")
+        #expect(probe.recorded.isEmpty)
+    }
+
+    /// A standing configuration fault — engine `.mlx` with no model on disk —
+    /// is already reported at startup and by `ara doctor`. Repeating it on
+    /// every utterance forever would train the user to ignore the notice.
+    @Test("an engine that was never there is not reported per utterance")
+    func missingEngineIsSilent() async throws {
+        let probe = DegradeProbe()
+        let chain = FormatterChain(
+            engine: .mlx, timeout: .seconds(1),
+            mlx: nil, apple: nil, cloud: nil, rules: rules, onDegrade: probe.record)
+        #expect(try await chain.format("hello there friend", mode: mode) == "RULES")
+        #expect(probe.recorded.isEmpty)
+    }
+
+    /// Under `.cloud` two engines can fail. The one worth naming is the last —
+    /// the one still standing between the user and their cleanup.
+    @Test("the last engine to fail is the one reported")
+    func lastFailureWins() async throws {
+        let probe = DegradeProbe()
+        let chain = FormatterChain(
+            engine: .cloud, timeout: .seconds(1),
+            mlx: StubFormatter { _ in throw FormatterError.timedOut },
+            apple: nil,
+            cloud: StubFormatter { _ in throw FormatterError.transportFailure("offline") },
+            rules: rules, onDegrade: probe.record)
+        #expect(try await chain.format("hello there friend", mode: mode) == "RULES")
+        #expect(probe.recorded == [.mlx])
+    }
+
+    @Test("the note names the engine and the consequence")
+    func degradedNoteWording() {
+        let note = FormatterChain.degradedNote(engine: .mlx)
+        #expect(note == "mlx cleanup unavailable · basic punctuation")
+        // Short enough to sit beside the overlay's waveform.
+        #expect(note.count <= 60)
     }
 }

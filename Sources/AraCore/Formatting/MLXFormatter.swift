@@ -144,7 +144,23 @@ public final class MLXFormatter: AraEngine.Formatter, @unchecked Sendable {
         // Cleared when the work *actually* finishes, which is the point: an
         // abandoned generation holds the claim for as long as it holds the GPU,
         // not until the caller stopped waiting for it.
-        defer { lock.withLock { self.isGenerating = false } }
+        //
+        // The same moment is the only place the *true* cost of an overrun can
+        // be measured, and it is a number nothing else in the daemon can see.
+        // `FormatterChain.withDeadline` abandons the wait at the budget, so the
+        // elapsed time it could report is always the budget — which is why
+        // `FormatterDeadline`'s doc has to say the short-transcript timeouts
+        // have "another cause" and leave it there. This says how long the
+        // generation the chain gave up on actually ran, and that separates the
+        // two candidate explanations: finishing just past the budget means the
+        // budget is too tight, finishing many seconds past it means the engine
+        // stalled and no budget would have helped.
+        let started = ContinuousClock.now
+        defer {
+            lock.withLock { self.isGenerating = false }
+            Self.noteOverrun(elapsed: ContinuousClock.now - started,
+                             characters: text.count)
+        }
 
         let raw: String
         do {
@@ -158,6 +174,21 @@ public final class MLXFormatter: AraEngine.Formatter, @unchecked Sendable {
         let cleaned = TranscriptPrompt.clean(raw)
         guard !cleaned.isEmpty else { throw FormatterError.implausibleOutput }
         return cleaned
+    }
+
+    /// One line when a generation ran past the budget the chain would have
+    /// given it — which means the chain already abandoned it and returned the
+    /// rules floor, and the user has a transcript that was not cleaned up.
+    ///
+    /// Silent for every generation that finished in time, so this appears only
+    /// on the case worth reading about. The wording is
+    /// `FormatterDeadline.overrunNote`, where a test can reach it; the prefix
+    /// matches `FormatterChain`'s own notes so the two read as one log.
+    private static func noteOverrun(elapsed: Duration, characters: Int) {
+        guard let note = FormatterDeadline.overrunNote(elapsed: elapsed,
+                                                       characters: characters)
+        else { return }
+        FileHandle.standardError.write(Data("formatting: mlx \(note)\n".utf8))
     }
 
     static var missingModelMessage: String {

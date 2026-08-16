@@ -84,7 +84,8 @@ public enum Pipeline {
                           mlx: (any AraEngine.Formatter)?,
                           apple: (any AraEngine.Formatter)?,
                           rules: any AraEngine.Formatter = RuleBasedFormatter(),
-                          cloudTransport: CloudFormatter.Transport? = nil)
+                          cloudTransport: CloudFormatter.Transport? = nil,
+                          onDegrade: (@Sendable (Engine) -> Void)? = nil)
         -> FormatterChain
     {
         var cloud: (any AraEngine.Formatter)?
@@ -98,7 +99,8 @@ public enum Pipeline {
         }
         return FormatterChain(engine: config.engine,
                               timeout: .milliseconds(config.timeoutMs),
-                              mlx: mlx, apple: apple, cloud: cloud, rules: rules)
+                              mlx: mlx, apple: apple, cloud: cloud, rules: rules,
+                              onDegrade: onDegrade)
     }
 
     /// Builds the session the daemon routes every transcript through.
@@ -136,7 +138,8 @@ public enum Pipeline {
                                    dictionary: (@Sendable () -> LocalDictionary)? = nil,
                                    snippetsURL: URL? = nil,
                                    snippets: (@Sendable () -> Snippets)? = nil,
-                                   onModeResolved: (@Sendable (Mode) -> Void)? = nil)
+                                   onModeResolved: (@Sendable (Mode) -> Void)? = nil,
+                                   onDegrade: (@Sendable (Engine) -> Void)? = nil)
         -> DictationSession
     {
         let dictionaryURL = dictionaryURL ?? LocalDictionary.defaultURL
@@ -144,7 +147,8 @@ public enum Pipeline {
         return DictationSession(
             formatter: makeChain(config: config, apiKey: apiKey, mlx: mlx,
                                  apple: apple, rules: rules,
-                                 cloudTransport: cloudTransport),
+                                 cloudTransport: cloudTransport,
+                                 onDegrade: onDegrade),
             resolver: ModeResolver(registry: registry, defaultID: config.mode),
             dictionary: dictionary ?? { LocalDictionary.load(from: dictionaryURL) },
             snippets: snippets ?? { Snippets.load(from: snippetsURL) },
