@@ -52,6 +52,12 @@ struct AudioCaptureTests {
                     self.order.append("start")
                     if let error = self.startError { throw error }
                     self.started = true
+                    // A restarted engine is running again. Modelling this
+                    // matters now that a backend is reused across recordings:
+                    // without it `isEngineRunning` stays false after the
+                    // second start, and `handleConfigurationChange` would read
+                    // a healthy engine as a dead device.
+                    self.engineStopped = false
                 },
                 stopEngine: { self.engineStopped = true },
                 isEngineRunning: { self.started && !self.engineStopped && !self.deviceDied },
@@ -188,27 +194,102 @@ struct AudioCaptureTests {
         #expect(samples.count > 1200 && samples.count < 1700)
         #expect(engine.tapRemoved)
         #expect(engine.engineStopped)
-        #expect(engine.toreDown)
-    }
-
-    @Test("each recording starts from an empty buffer")
-    func freshBufferPerRecording() throws {
-        let first = FakeEngine(format: Self.live48kMono)
-        let second = FakeEngine(format: Self.live48kMono)
-        let capture = Harness([first, second]).capture()
-        try capture.start()
-        feed(first, frames: 4800)
-        _ = capture.stop()
-        try capture.start()
-        feed(second, frames: 2400)  // 50 ms → ~800 samples minus priming
-        let samples = capture.stop()
-        #expect(samples.count > 500 && samples.count < 900)
+        // Stopped, not torn down: `stop()` keeps the engine alive so an
+        // AVFAudio property block already in flight cannot outlive it. See
+        // `AudioCapture.retire`.
+        #expect(!engine.toreDown)
     }
 
     @Test("stop while idle returns nothing")
     func stopWhileIdle() {
         let capture = Harness([]).capture()
         #expect(capture.stop().isEmpty)
+    }
+
+    // MARK: - The engine outlives the recording
+
+    /// The use-after-free this exists to prevent, caught under lldb on
+    /// 2026-08-16:
+    ///
+    /// ```
+    /// thread #27, queue = 'AVAudioIOUnit', EXC_BAD_ACCESS (code=1)
+    ///   frame #0: libobjc.A.dylib`objc_msgSend + 32
+    ///   frame #1: AVFAudio`invocation function for block in
+    ///             AVAudioIOUnit::IOUnitPropertyListener(...)
+    /// ```
+    ///
+    /// AVFAudio installs an AudioUnit property listener on the input unit and
+    /// *dispatches a block* to the `AVAudioIOUnit` queue when a property
+    /// changes. `engine.stop()` does not drain that queue. The daemon used to
+    /// build an engine per recording and release it inside `stop()`, so a
+    /// block dispatched a moment earlier ran against freed memory — once per
+    /// utterance's worth of exposure, and a USB microphone (which renegotiates
+    /// far more than a built-in one) fires those properties often.
+    ///
+    /// So `stop()` stops the engine and keeps it. One engine, reused: nothing
+    /// is freed under the callback because nothing is freed at all.
+    @Test("stop keeps the engine so an in-flight AVFAudio callback cannot outlive it")
+    func stopDoesNotReleaseTheEngine() throws {
+        let engine = FakeEngine(format: Self.live48kMono)
+        let harness = Harness([engine])
+        let capture = harness.capture()
+        try capture.start()
+        _ = capture.stop()
+        #expect(engine.engineStopped)
+        #expect(engine.tapRemoved)
+        // The teardown is what releases the engine's registrations, and it
+        // must NOT have happened: the object has to stay alive and usable.
+        #expect(!engine.toreDown)
+    }
+
+    /// The same fact from the other side, and the one the `Harness` can prove
+    /// on its own: a second recording reuses the first engine rather than
+    /// building another. Before the fix this indexed a second engine — which
+    /// is exactly the per-utterance create-and-destroy that was crashing.
+    @Test("a second recording reuses the engine rather than building one")
+    func engineIsReusedAcrossRecordings() throws {
+        let engine = FakeEngine(format: Self.live48kMono)
+        let harness = Harness([engine])
+        let capture = harness.capture()
+        try capture.start()
+        _ = capture.stop()
+        try capture.start()
+        _ = capture.stop()
+        #expect(harness.built == 1)
+    }
+
+    /// Reuse must not leak audio between utterances — the buffer reset lives
+    /// in `start()`, not in the backend, and this pins that it still happens
+    /// when the backend is the same object. Replaces an earlier version that
+    /// fed a *second* fake engine, which only worked while every recording
+    /// built its own.
+    @Test("each recording starts from an empty buffer, engine reused")
+    func freshBufferPerRecording() throws {
+        let engine = FakeEngine(format: Self.live48kMono)
+        let capture = Harness([engine]).capture()
+        try capture.start()
+        feed(engine, frames: 4800)
+        _ = capture.stop()
+        try capture.start()
+        feed(engine, frames: 2400)
+        let samples = capture.stop()
+        #expect(samples.count > 500 && samples.count < 900)
+    }
+
+    /// A rebuild still replaces the engine — a dead device's engine is not
+    /// reusable — and the one it replaces is torn down. Retirement is where
+    /// the release happens, deferred; see `AudioCapture.retire`.
+    @Test("a rebuild still retires the engine it replaces")
+    func rebuildRetiresTheOldEngine() throws {
+        let first = FakeEngine(format: Self.live48kMono)
+        let second = FakeEngine(format: Self.live48kMono)
+        let harness = Harness([first, second])
+        let capture = harness.capture()
+        try capture.start()
+        first.deviceDied = true
+        capture.handleConfigurationChange()
+        #expect(harness.built == 2)
+        #expect(first.toreDown)
     }
 
     // MARK: - Mid-recording device loss
@@ -470,29 +551,34 @@ struct AudioCaptureTests {
 
     // MARK: - Stale notifications
 
-    /// A dying engine's notification is *enqueued* before `stop()` removes
-    /// the observer; by the time the hop runs, a new utterance may already be
-    /// recording on a fresh healthy engine. The stale hop must not tear that
-    /// engine down.
-    @Test("a stale notification from a torn-down backend cannot disturb the next recording")
+    /// An engine's notification is *enqueued* during one utterance and its hop
+    /// may not run until the next one has already started. The stale hop must
+    /// not tear the live recording down.
+    ///
+    /// The engine is now reused across utterances, so `generation` — which
+    /// identifies the *backend*, not the recording — no longer separates these
+    /// two. The discriminator that does is `isEngineRunning`: a restarted
+    /// engine is running, and a running engine means the device did not die,
+    /// which is the same check that already stops a routed engine's
+    /// notification about its own healthy start from causing a rebuild.
+    @Test("a notification enqueued in an earlier recording cannot disturb the next one")
     func staleNotificationIsIgnored() throws {
-        let first = FakeEngine(format: Self.live48kMono)
-        let second = FakeEngine(format: Self.live48kMono)
-        let third = FakeEngine(format: Self.live48kMono)
-        let harness = Harness([first, second, third])
+        let engine = FakeEngine(format: Self.live48kMono)
+        let spare = FakeEngine(format: Self.live48kMono)
+        let harness = Harness([engine, spare])
         let capture = harness.capture()
         try capture.start()
-        let stale = first.onConfigurationChange!  // delivered, its hop not yet run
+        let stale = engine.onConfigurationChange!  // delivered, its hop not yet run
         _ = capture.stop()
-        try capture.start()  // the next utterance, on the second engine
+        try capture.start()  // the next utterance, on the same engine
 
         stale()
 
         // The hop is async; give it ample time, then prove it did nothing.
         Thread.sleep(forTimeInterval: 0.3)
-        #expect(harness.built == 2)
-        #expect(!second.toreDown)
-        feed(second, frames: 4800)
+        #expect(harness.built == 1)     // nothing was rebuilt
+        #expect(!engine.toreDown)       // and the live engine was not retired
+        feed(engine, frames: 4800)
         #expect(capture.stop().count > 1200)  // the live tap was never replaced
     }
 

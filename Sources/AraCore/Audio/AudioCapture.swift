@@ -160,11 +160,21 @@ public final class AudioCapture {
         samples.removeAll(keepingCapacity: true)
         lock.unlock()
 
-        let backend = newBackend()
+        // Reused, not rebuilt. Building an `AVAudioEngine` per recording is
+        // what made `stop()` release one per utterance, and releasing one is
+        // the use-after-free documented on `retire`. The engine a previous
+        // recording left stopped is a perfectly good engine.
+        let backend = self.backend ?? newBackend()
         do {
             try startRecording(on: backend, device: deviceProvider?())
         } catch {
-            backend.tearDown()
+            // A backend that could not start may be wedged — a reused one
+            // whose device changed shape underneath it, say — so it does not
+            // get a second chance. Retiring it also clears the slot, and the
+            // next `start` builds fresh rather than retrying a known-bad
+            // engine forever.
+            self.backend = nil
+            retire(backend)
             throw error
         }
         self.backend = backend
@@ -181,14 +191,20 @@ public final class AudioCapture {
             return []
         }
         if let backend {
-            // Observer first: a stopping engine may post a configuration
-            // change, and a rebuild triggered by our own teardown would
-            // resurrect the recording `stop` is ending.
-            backend.tearDown()
             backend.removeTap()
             backend.stopEngine()
         }
-        backend = nil
+        // The backend is deliberately KEPT. It used to be torn down and
+        // released here, which released an `AVAudioEngine` on every utterance
+        // — see `retire` for the crash that caused. Nothing is lost by
+        // holding it: `start()` re-routes, re-probes and re-taps it.
+        //
+        // The observer stays registered too. It used to be removed first, so
+        // that a configuration change posted by our own stopping engine could
+        // not resurrect the recording being ended. That guard is now the state
+        // machine's: `handleConfigurationChange` takes `stateLock` and returns
+        // unless `state == .recording`, and `state` is `.idle` before this
+        // method releases the lock.
         state = .idle
         stateLock.unlock()
 
@@ -229,10 +245,10 @@ public final class AudioCapture {
             return
         }
 
-        old.tearDown()
         old.removeTap()
         old.stopEngine()
         backend = nil
+        retire(old)
 
         let fresh = newBackend()
         var lost = false
@@ -284,12 +300,69 @@ public final class AudioCapture {
             state = .recording
             resumed = true
         } catch {
-            fresh.tearDown()
+            retire(fresh)
             // Still degraded; the next store change retries.
         }
         // Outside the lock, same reason as in `handleConfigurationChange`.
         stateLock.unlock()
         if resumed { onTransition?(.resumed) }
+    }
+
+    // MARK: - Retirement
+
+    /// How long a replaced backend is held before it is allowed to die.
+    ///
+    /// A guess, and the only one in this file — which is why the common path
+    /// no longer depends on it. See `retire`.
+    private static let retirementHold: DispatchTimeInterval = .seconds(10)
+
+    /// Finishes with a backend that is never going to record again, without
+    /// freeing its `AVAudioEngine` on the spot.
+    ///
+    /// ## The crash
+    ///
+    /// Caught under lldb on 2026-08-16, after a field report of a segfault
+    /// mid-session:
+    ///
+    /// ```
+    /// thread #27, queue = 'AVAudioIOUnit', EXC_BAD_ACCESS (code=1)
+    ///   frame #0: libobjc.A.dylib`objc_msgSend + 32
+    ///   frame #1: AVFAudio`invocation function for block in
+    ///             AVAudioIOUnit::IOUnitPropertyListener(...)
+    /// ```
+    ///
+    /// AVFAudio installs an AudioUnit property listener on the input unit, and
+    /// when a property changes it **dispatches a block** to the
+    /// `AVAudioIOUnit` queue. That block messages the engine. `engine.stop()`
+    /// does not drain the queue and `AudioUnitRemovePropertyListener` is
+    /// AVFAudio's to call, not ours — so a block dispatched a moment before
+    /// the engine is released runs against freed memory. `objc_msgSend` on a
+    /// wild pointer is what that looks like.
+    ///
+    /// The daemon's exposure used to be one released engine **per utterance**,
+    /// because `start` built a backend and `stop` freed it. The stack trace's
+    /// timing matched exactly: the crash landed just after `capture.stop()`
+    /// returned.
+    ///
+    /// ## Why this is not the fix
+    ///
+    /// The fix is that `stop()` no longer releases anything — one engine is
+    /// built and reused for as long as it works, so the every-utterance window
+    /// is gone rather than narrowed. This handles the leftover: a backend that
+    /// genuinely cannot be reused, because its device died or it failed to
+    /// start. Those are rare — bounded by hardware events, not by how much the
+    /// user dictates — and for them a delay is an honest trade where it would
+    /// not have been for the common path.
+    ///
+    /// Ten seconds is far beyond any plausible dispatch latency for a block
+    /// already queued, and holding a stopped engine for ten seconds costs
+    /// nothing a user can notice. It is not provable, and no unit test can
+    /// reach it: the race is inside AVFAudio.
+    private func retire(_ backend: Backend) {
+        backend.tearDown()
+        rebuildQueue.asyncAfter(deadline: .now() + Self.retirementHold) {
+            withExtendedLifetime(backend) {}
+        }
     }
 
     // MARK: - Shared start path
