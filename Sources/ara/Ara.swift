@@ -631,7 +631,7 @@ struct Run: ParsableCommand {
                     // The warm-up answer, and nothing else: no capture, no
                     // recording sound, no menu state change beyond the line
                     // the warm-up already owns.
-                    if MainActor.assumeIsolated({ warmup.showStatusIfWarming() }) {
+                    if MainActor.assumeIsolated({ warmup.consumesPress() }) {
                         return
                     }
                     do {
@@ -666,7 +666,7 @@ struct Run: ParsableCommand {
                     // then fell through would stop a capture that was never
                     // started. The press that was turned away owns this
                     // release; it takes the pill down and returns.
-                    if MainActor.assumeIsolated({ warmup.hideStatusIfShowing() }) {
+                    if MainActor.assumeIsolated({ warmup.consumesRelease() }) {
                         return
                     }
                     let samples = capture.stop()
@@ -1197,8 +1197,30 @@ private final class RunningModel {
 /// `finish()`, which only the warm-up task's completion calls, and phase
 /// updates are ignored afterwards so an out-of-order hop from a `URLSession`
 /// thread cannot close it again behind a recording.
+///
+/// ## It owns the startup card
+///
+/// The overlay used to be driven by the *press handler*: a press put the
+/// warm-up pill up, the release took it down, and `repaint` touched the pill
+/// only while that was true. So a user who launched the daemon and did not
+/// press anything saw nothing at all — and launched from Finder there is
+/// nothing else to see, because the app is `LSUIElement` with no window and no
+/// Dock icon. A first run spends over a minute downloading in total silence.
+///
+/// The card is now shown from `init` and belongs to this type for as long as
+/// the warm-up does: every phase change repaints it, `finish()` swaps it to
+/// the ready line, and it clears itself a few seconds later. The press handler
+/// stops showing and hiding it and keeps only the one thing it actually knows
+/// — whether *this* press was turned away, which its release needs.
 @MainActor
 private final class WarmupState {
+    /// How long the ready line stays up before the card clears itself.
+    ///
+    /// Long enough to read a short sentence, short enough that it is gone
+    /// before it becomes furniture. A dictation started inside it supersedes
+    /// it immediately — see `RecordingOverlay.hide(after:)`.
+    private static let readyLingerSeconds = 3.0
+
     private var status: WarmupStatus
     private let overlay: RecordingOverlay?
     private let menuBar: MenuBarController
@@ -1206,14 +1228,21 @@ private final class WarmupState {
     /// which is exactly when a user is most likely to be poking at the menu,
     /// because the daemon is not yet doing anything else.
     private var readyMessage: String
-    /// Whether the pill is currently showing warm-up status. Set by a press
-    /// the gate turned away and cleared by that press's release — so it is
-    /// also the latch that tells the release handler the press was never a
-    /// recording, which `isWarming` cannot: the warm-up may have finished
-    /// while the key was held.
-    private var showingStatus = false
+    /// Whether a press was turned away by the gate, so its release knows the
+    /// press was never a recording — which `isWarming` cannot tell it, because
+    /// the warm-up may have finished while the key was held. Nothing to do
+    /// with the card any more; the card is up regardless of who is pressing
+    /// what.
+    private var pressWasTurnedAway = false
     /// One-way, for the reason in the type's doc.
     private var transcriberSettled = false
+    /// Whether `finish()` has handed the card and the state line over. Both
+    /// belong to the dictation lifecycle from that moment — `setReady()` has
+    /// put the idle line up and the card is clearing itself — so a late phase
+    /// report must not paint either one again. Reachable in practice: the
+    /// ladder opens the gate while the formatting model is still loading, and
+    /// its `setFormatter` lands afterwards.
+    private var handedOver = false
 
     init(status: WarmupStatus, overlay: RecordingOverlay?,
          menuBar: MenuBarController, readyMessage: String) {
@@ -1223,28 +1252,30 @@ private final class WarmupState {
         self.readyMessage = readyMessage
         // The state line's first value. From here the warm-up owns it until
         // `MenuBarController.setReady()`.
-        if let message = status.message { menuBar.setWarmingUp(message) }
+        if let message = status.message {
+            menuBar.setWarmingUp(message)
+            // And the card, unprompted. This is the whole point: the answer to
+            // "is it doing anything?" should not require guessing that holding
+            // a key will tell you.
+            overlay?.show(.warmingUp(title: message, detail: status.detail))
+        }
     }
 
-    /// A hotkey press. Answers `true` when it was consumed as a status
-    /// display — which is exactly when recording is not allowed yet.
-    func showStatusIfWarming() -> Bool {
+    /// A hotkey press. Answers `true` when recording is not allowed yet, which
+    /// is also when the card on screen is already saying why.
+    func consumesPress() -> Bool {
         // `blocksDictation`, not `message`: the formatting model may still be
         // loading and still have a line to show, but it does not gate speech.
-        guard status.blocksDictation, let message = status.message else {
-            return false
-        }
-        showingStatus = true
-        overlay?.show(.warmingUp(title: message, detail: status.detail))
+        guard status.blocksDictation else { return false }
+        pressWasTurnedAway = true
         return true
     }
 
     /// The matching release. Answers `true` when it belonged to a press the
     /// gate turned away, and so must not reach the capture.
-    func hideStatusIfShowing() -> Bool {
-        guard showingStatus else { return false }
-        showingStatus = false
-        overlay?.hide()
+    func consumesRelease() -> Bool {
+        guard pressWasTurnedAway else { return false }
+        pressWasTurnedAway = false
         return true
     }
 
@@ -1275,21 +1306,28 @@ private final class WarmupState {
     }
 
     /// The warm-up is over and a press records from here.
+    ///
+    /// Reachable twice — the ladder opens the gate on the stand-in model and
+    /// the chosen model's own completion calls it again — so everything here
+    /// is idempotent. The second call re-shows the same ready line and
+    /// re-arms the same delayed hide, which is harmless.
+    ///
+    /// The card is not torn down on the spot. A user holding the key at the
+    /// moment the wait ends would see it vanish under their thumb, which reads
+    /// as a crash; a user who walked away deserves to find out it worked. So
+    /// it says the wait is over, names the key, and clears itself.
     func finish() {
         transcriberSettled = true
+        handedOver = true
         status.transcriber = nil
-        status.formatter = .ready
-        // Only if the user is watching: they are holding the key at the moment
-        // the wait ended, and the pill vanishing under their thumb would read
-        // as a crash while a stale "loading…" would be a lie. Their release
-        // takes it down through the ordinary path.
-        if showingStatus { overlay?.show(.warmingUp(title: readyMessage, detail: nil)) }
+        overlay?.show(.warmingUp(title: readyMessage, detail: nil))
+        overlay?.hide(after: Self.readyLingerSeconds)
     }
 
     private func repaint() {
-        guard let message = status.message else { return }
+        guard !handedOver, let message = status.message else { return }
         menuBar.setWarmingUp(message)
-        if showingStatus { overlay?.show(.warmingUp(title: message, detail: status.detail)) }
+        overlay?.show(.warmingUp(title: message, detail: status.detail))
     }
 }
 

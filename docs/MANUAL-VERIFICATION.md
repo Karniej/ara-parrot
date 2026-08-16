@@ -69,10 +69,22 @@ indication the daemon is alive — for a LaunchAgent user with no terminal it is
 the whole first-launch experience.
 
 - [ ] 👤 **0bis-a.** Start the daemon. The menu bar bird must appear
-      immediately — before any `✓ … ready` line — and its state line must read
-      `warming up models…`. Holding the hotkey during this window must do
-      nothing (no `● recording`, no overlay): the hotkey is not armed until
-      warm-up completes, by design.
+      immediately — before any `✓ … ready` line — and its state line must
+      carry the warm-up phase. **The overlay card must appear on its own**,
+      without any key being pressed: launched from Finder the app is
+      `LSUIElement` with no window and no Dock icon, so before this the whole
+      of a first run was silent. Holding the hotkey during this window must not
+      record; the card is already saying why.
+- [ ] 👤 **0bis-a2.** The card must track the warm-up, not freeze on its first
+      frame: a cold start steps through the download percentage and, on a long
+      first specialisation, `Preparing the Neural Engine` with its second line.
+- [ ] 👤 **0bis-a3.** When dictation opens, the card must swap to
+      `ready — hold <key> to dictate` and clear itself about three seconds
+      later. Starting a dictation inside those three seconds must replace it
+      with the recording pill and **must not** have the pill yanked away when
+      the hide fires — the delayed hide is token-guarded for exactly this.
+      Not covered by a test: the harness never fires the dispatch timers the
+      hide depends on, so `swift test` cannot reach it.
 - [ ] 👤 **0bis-b.** With the default `mlx` engine and both models on disk,
       the log must show both `loading whisper-…` and `loading
       mlx-community/… (formatting — the first run can take a while)...`

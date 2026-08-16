@@ -85,6 +85,22 @@ struct OverlayVisualCheck {
         }
     }
 
+
+
+    /// The panel a freshly built overlay creates. Every `RecordingOverlay`
+    /// makes its own, and earlier tests leave theirs in `NSApplication.shared.windows` — some
+    /// still ordered out asynchronously — so "the last panel" is not reliably
+    /// this test's. Identity is.
+    @MainActor
+    static func newPanel(besides existing: Set<ObjectIdentifier>) -> NSPanel? {
+        NSApplication.shared.windows.first { !existing.contains(ObjectIdentifier($0)) } as? NSPanel
+    }
+
+    @MainActor
+    static func windowIdentities() -> Set<ObjectIdentifier> {
+        Set(NSApplication.shared.windows.map { ObjectIdentifier($0) })
+    }
+
     /// What the REAL panel gives the pill, as opposed to what the pill wants.
     ///
     /// `idealSize` measures an unconstrained view and says everything fits.
@@ -95,13 +111,14 @@ struct OverlayVisualCheck {
     @MainActor
     @Test("the live panel proposes its full width to the pill")
     func livePanelProposesItsFullWidth() {
+        let existing = Self.windowIdentities()
         let overlay = RecordingOverlay()
         overlay.show(.hidden)
         overlay.show(.error("no audio captured"))
         RunLoop.main.run(until: Date().addingTimeInterval(0.5))
 
-        let panels = NSApp.windows.compactMap { $0 as? NSPanel }
-        guard let panel = panels.last, let content = panel.contentView else {
+        guard let panel = Self.newPanel(besides: existing),
+              let content = panel.contentView else {
             Issue.record("no panel was created")
             return
         }

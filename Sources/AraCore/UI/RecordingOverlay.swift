@@ -71,12 +71,22 @@ public final class RecordingOverlay {
         } else {
             model.state = state
         }
-        if case .error = state {
-            let token = showToken
-            DispatchQueue.main.asyncAfter(deadline: .now() + 1.6) { [weak self] in
-                guard let self, self.showToken == token else { return }
-                self.hide()
-            }
+        if case .error = state { hide(after: 1.6) }
+    }
+
+    /// Hide after `seconds`, unless something newer has been shown first.
+    ///
+    /// The token check is the whole point: a dictation started inside the
+    /// delay must not have its pill yanked off screen by a hide that was
+    /// scheduled for a message nobody is looking at any more. `.error` has
+    /// always self-hidden this way; the startup card uses the same mechanism
+    /// to clear itself once the daemon is ready, rather than owning a second
+    /// timer with the same bug to get wrong.
+    public func hide(after seconds: Double) {
+        let token = showToken
+        DispatchQueue.main.asyncAfter(deadline: .now() + seconds) { [weak self] in
+            guard let self, self.showToken == token else { return }
+            self.hide()
         }
     }
 
