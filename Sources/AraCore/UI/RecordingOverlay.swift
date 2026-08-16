@@ -123,7 +123,26 @@ public final class RecordingOverlay {
         panel.hidesOnDeactivate = false
 
         let host = NSHostingView(rootView: OverlayPill(model: model))
-        host.frame = panel.contentView?.bounds ?? .zero
+        // Without this the panel above is decoration. `NSHostingView` reports
+        // an intrinsic content size by default, and as a window's contentView
+        // that size wins: measured, a panel built at 520x84 came up 362x44 —
+        // the pill's own size for whatever it happened to be showing.
+        //
+        // Two things follow, and both were reported from the field. A pill
+        // 44pt tall clips the two-line warm-up states, which want 54. And
+        // because the resize races the state change, the new text is laid out
+        // against the *old*, smaller width — "no audio captured" came out as
+        // three lines with "captured" broken across two of them, which needs a
+        // proposed width near sixty points.
+        //
+        // Emptying `sizingOptions` gives the panel its size back. The pill
+        // hugs its own content and centres inside, which is what it looked
+        // like all along when the race happened to go the other way; the panel
+        // is transparent and click-through, so the spare room costs nothing.
+        // `OverlayVisualCheck` pins both halves: that every message fits
+        // 520x84, and that the live panel actually proposes it.
+        host.sizingOptions = []
+        host.frame = NSRect(origin: .zero, size: panel.frame.size)
         host.autoresizingMask = [.width, .height]
         panel.contentView = host
 
@@ -180,7 +199,11 @@ private let errorTone = Color(red: 255/255.0, green: 163/255.0, blue: 150/255.0)
 /// still has a shape against a dark wallpaper.
 private let pillFill = Color(red: 10/255.0, green: 10/255.0, blue: 11/255.0)
 
-private struct OverlayPill: View {
+/// Internal rather than private so `OverlayVisualCheck` can render it offscreen
+/// at the panel's own proposed size. Its layout is not reasoned about well —
+/// a field screenshot showed this view's text overflowing its own background —
+/// and rendering it is the only way to check without a screen.
+struct OverlayPill: View {
     @ObservedObject var model: OverlayModel
 
     var body: some View {
@@ -225,7 +248,7 @@ private struct OverlayPill: View {
                     .font(.system(size: 11.5, weight: .regular))
                     .foregroundStyle(Color.white.opacity(0.5))
                     .frame(maxWidth: 330, alignment: .leading)
-                    .fixedSize(horizontal: false, vertical: true)
+                    .fixedSize(horizontal: true, vertical: true)
             }
         case .transcribing:
             ProgressView()
@@ -261,14 +284,14 @@ private struct OverlayPill: View {
                 // pill off the edge of a small screen; `fixedSize` then lets it
                 // take the second line it needs rather than truncating.
                 .frame(maxWidth: 330, alignment: .leading)
-                .fixedSize(horizontal: false, vertical: true)
+                .fixedSize(horizontal: true, vertical: true)
             }
         case .error(let message):
             Text(message)
                 .font(.system(size: 13, weight: .semibold))
                 .foregroundStyle(errorTone)
                 .frame(maxWidth: 330, alignment: .leading)
-                .fixedSize(horizontal: false, vertical: true)
+                .fixedSize(horizontal: true, vertical: true)
                 .frame(minHeight: 22)
         }
     }
