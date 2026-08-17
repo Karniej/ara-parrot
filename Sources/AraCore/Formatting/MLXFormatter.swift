@@ -62,6 +62,11 @@ public final class MLXFormatter: AraEngine.Formatter, @unchecked Sendable {
     private let isModelPresent: @Sendable () -> Bool
     private let load: Load
     private let deadlineBase: Duration
+    /// How long a generation is allowed to keep running after the chain has
+    /// abandoned it — `FormatterDeadline.stallCeiling` in production, and
+    /// injectable only so tests do not have to spend twenty seconds proving
+    /// that the bound exists.
+    private let stallCeiling: Duration
     private let onOverrun: (@Sendable () -> Void)?
 
     /// The loaded model, as the closure that uses it. `nil` until `warmUp()`
@@ -85,10 +90,12 @@ public final class MLXFormatter: AraEngine.Formatter, @unchecked Sendable {
     init(isModelPresent: @escaping @Sendable () -> Bool,
          load: @escaping Load,
          deadlineBase: Duration = .milliseconds(FormatterDeadline.defaultBaseMs),
+         stallCeiling: Duration = FormatterDeadline.stallCeiling,
          onOverrun: (@Sendable () -> Void)? = nil) {
         self.isModelPresent = isModelPresent
         self.load = load
         self.deadlineBase = deadlineBase
+        self.stallCeiling = stallCeiling
         self.onOverrun = onOverrun
     }
 
@@ -152,35 +159,72 @@ public final class MLXFormatter: AraEngine.Formatter, @unchecked Sendable {
         }) else {
             throw isLoaded ? FormatterError.busy : FormatterError.unavailable
         }
-        // Cleared when the work *actually* finishes, which is the point: an
-        // abandoned generation holds the claim for as long as it holds the GPU,
-        // not until the caller stopped waiting for it.
-        //
-        // The same moment is the only place the *true* cost of an overrun can
-        // be measured, and it is a number nothing else in the daemon can see.
-        // `FormatterChain.withDeadline` abandons the wait at the budget, so the
-        // elapsed time it could report is always the budget — which is why
-        // `FormatterDeadline`'s doc has to say the short-transcript timeouts
-        // have "another cause" and leave it there. This says how long the
-        // generation the chain gave up on actually ran, and that separates the
-        // two candidate explanations: finishing just past the budget means the
-        // budget is too tight, finishing many seconds past it means the engine
-        // stalled and no budget would have helped.
         let started = ContinuousClock.now
+
+        // Unstructured on purpose, and this line is the whole fix.
+        //
+        // `FormatterChain.withDeadline` cancels the task `format` runs in when
+        // the budget expires. An unstructured `Task` does not inherit that
+        // cancellation, so the generation runs on to its natural end even
+        // though nothing is waiting for its output any more. Two things that
+        // are documented in this file depended on that and were quietly false
+        // without it:
+        //
+        // - `isGenerating` is described above as held for as long as the
+        //   generation holds the GPU. It was not. mlx-swift's token loop *does*
+        //   observe cancellation, so the claim was released a couple of hundred
+        //   milliseconds after the chain gave up, and the pile-up guard was
+        //   guarding a moment that had already passed.
+        // - `noteOverrun` is the only measurement of what an overrun really
+        //   costs, and cancelling the work made it measure the deadline instead
+        //   of the generation. Every overrun observed in the field read
+        //   "0.1–0.4 s past its budget" — at every budget, on every length,
+        //   because that is the cancellation latency and nothing else. It was
+        //   read as "the budget is nearly right" and `perCharacterMs` was
+        //   doubled on the strength of it. See `FormatterDeadline`.
+        //
+        // Awaiting `value` is not interruptible by our own cancellation, so
+        // `format` now returns only when the generation is genuinely over. Its
+        // caller stopped listening long ago and the chain has already delivered
+        // the rules floor; the only thing this return produces is the number
+        // below.
+        let work = Task {
+            try await Self.runOffCooperativePool {
+                try await generate(instructions, prompt)
+            }
+        }
+        // And a bound on it, because the engine is not free while it runs: one
+        // generation at a time means a measurement that never ended would take
+        // formatting offline permanently. See `FormatterDeadline.stallCeiling`
+        // for why twenty seconds is past every rewrite ever seen to succeed.
+        let stallCeiling = self.stallCeiling
+        let watchdog = Task {
+            do { try await Task.sleep(for: stallCeiling) }
+            catch { return } // Cancelled because the generation finished.
+            work.cancel()
+        }
+
         defer {
+            watchdog.cancel()
             lock.withLock { self.isGenerating = false }
-            noteOverrun(elapsed: ContinuousClock.now - started,
+            noteOutcome(elapsed: ContinuousClock.now - started,
                         characters: text.count)
         }
 
         let raw: String
         do {
-            raw = try await Self.runOffCooperativePool {
-                try await generate(instructions, prompt)
-            }
+            raw = try await work.value
         } catch {
             throw Self.translate(error)
         }
+
+        // The generation is shielded from cancellation; the *result* is not.
+        // Without this a request withdrawn while the model was finishing would
+        // come back as a perfectly good rewrite, and the chain's whole reason
+        // for propagating cancellation is that such a rewrite gets typed at the
+        // user's cursor. `FormatterChain` checks again on the way out; this is
+        // the check that makes `format` honest on its own.
+        try Task.checkCancellation()
 
         let cleaned = TranscriptPrompt.clean(raw)
         guard !cleaned.isEmpty else { throw FormatterError.implausibleOutput }
@@ -191,15 +235,29 @@ public final class MLXFormatter: AraEngine.Formatter, @unchecked Sendable {
     /// given it — which means the chain already abandoned it and returned the
     /// rules floor, and the user has a transcript that was not cleaned up.
     ///
+    /// Two outcomes, kept apart because the responses are opposite. A
+    /// generation that *finished* late says how much more budget would have
+    /// saved it, and `perCharacterMs` is the lever. A generation still running
+    /// at `stallCeiling` never produced a cost at all, and no budget would have
+    /// caught it — reporting that one as though it were merely slow is exactly
+    /// the confusion that got the curve doubled for nothing.
+    ///
     /// Silent for every generation that finished in time, so this appears only
-    /// on the case worth reading about. The wording is
-    /// `FormatterDeadline.overrunNote`, where a test can reach it; the prefix
-    /// matches `FormatterChain`'s own notes so the two read as one log.
-    private func noteOverrun(elapsed: Duration, characters: Int) {
-        guard let note = FormatterDeadline.overrunNote(elapsed: elapsed,
-                                                       base: deadlineBase,
-                                                       characters: characters)
-        else { return }
+    /// on the case worth reading about. Both wordings live in
+    /// `FormatterDeadline`, where a test can reach them; the prefix matches
+    /// `FormatterChain`'s own notes so the two read as one log.
+    private func noteOutcome(elapsed: Duration, characters: Int) {
+        let note: String
+        if elapsed >= stallCeiling {
+            note = FormatterDeadline.stallNote(elapsed: elapsed,
+                                               base: deadlineBase,
+                                               characters: characters)
+        } else if let overrun = FormatterDeadline.overrunNote(
+            elapsed: elapsed, base: deadlineBase, characters: characters) {
+            note = overrun
+        } else {
+            return
+        }
         FileHandle.standardError.write(Data("formatting: mlx \(note)\n".utf8))
         onOverrun?()
     }

@@ -58,7 +58,8 @@ struct FormatterDeadlineTests {
     /// has to come back through this file and the doc comment together.
     ///
     /// 13 ms/char on the default 2500 ms base. The old numbers were half
-    /// these; see `perCharacterMs` for the field measurement that moved them.
+    /// these; see `perCharacterMs` for what these are worth, which is less than
+    /// the last version of this comment claimed.
     @Test("the measured curve, at the default base")
     func pinnedCurve() {
         #expect(FormatterDeadline.budget(base: base, characters: 60)
@@ -69,15 +70,19 @@ struct FormatterDeadlineTests {
                 == .milliseconds(7700))
     }
 
-    /// The case that moved the curve: a 304-character transcript whose
-    /// generation ran 4.6 s. It has to fit now, with room — the point was not
-    /// to scrape past one sample but to stop losing to the variance around it.
-    @Test("the field overrun now fits, with margin")
-    func fieldOverrunFits() {
-        let budget = FormatterDeadline.budget(base: base, characters: 304)
-        #expect(budget >= .milliseconds(6_000))
-        #expect(!FormatterDeadline.overran(elapsed: .milliseconds(4_600), base: base,
-                                           characters: 304))
+    /// The one honest long measurement there is: a 280-character transcript
+    /// whose rewrite genuinely *completed* in about 5.5 s. It has to fit, and
+    /// it is the only reason `perCharacterMs` was not simply put back.
+    ///
+    /// The 304-character "4.6 s" sample this test used to cite was not a
+    /// generation time at all — it was the moment cancellation took effect at
+    /// a 4.5 s budget. See `FormatterDeadline`.
+    @Test("a long rewrite that really did finish still fits")
+    func measuredLongRewriteFits() {
+        let budget = FormatterDeadline.budget(base: base, characters: 280)
+        #expect(budget > .milliseconds(5_500))
+        #expect(!FormatterDeadline.overran(elapsed: .milliseconds(5_500), base: base,
+                                           characters: 280))
     }
 
     // MARK: - The ceiling
@@ -180,5 +185,42 @@ struct FormatterDeadlineTests {
     func noteSaysTheTranscriptArrived() {
         let note = FormatterDeadline.overrunNote(elapsed: .seconds(30), base: base, characters: 100)
         #expect(note?.contains("delivered") == true)
+    }
+
+    // MARK: - the stall, kept apart from the overrun
+
+    /// The ceiling has to sit past every rewrite ever seen to succeed, or a
+    /// slow-but-working generation gets reported as a stall and the next person
+    /// to read the log draws the same wrong conclusion again. The slowest
+    /// honest success on record is 5.5 s.
+    @Test("the stall ceiling clears every observed success by a wide margin")
+    func stallCeilingClearsRealWork() {
+        #expect(FormatterDeadline.stallCeiling > .milliseconds(5_500) * 2)
+        // And it still has to end: the engine takes one generation at a time,
+        // so this is how long formatting stays offline after a stall.
+        #expect(FormatterDeadline.stallCeiling <= .seconds(30))
+    }
+
+    /// It must be past the largest budget the curve can produce, or the two
+    /// diagnostics overlap and a generation could be called stalled before it
+    /// had even been given up on.
+    @Test("the stall ceiling is past the largest possible budget")
+    func stallCeilingIsPastTheCeiling() {
+        #expect(FormatterDeadline.stallCeiling > .milliseconds(FormatterDeadline.ceilingMs))
+    }
+
+    /// The distinction this pair of notes exists to make. One says how much
+    /// more budget would have been enough; the other says budget is not the
+    /// lever. Conflating them is what cost a tuning decision.
+    @Test("the stall note refuses to be read as a near miss")
+    func stallNoteIsNotAnOverrun() {
+        let note = FormatterDeadline.stallNote(
+            elapsed: FormatterDeadline.stallCeiling, base: base, characters: 270)
+        #expect(note.contains("did not finish"))
+        #expect(note.contains("no budget would have caught it"))
+        #expect(note.contains("270 characters"))
+        #expect(note.contains("delivered"))
+        // The overrun wording promises a cost; this one has none to report.
+        #expect(!note.contains("past its"))
     }
 }

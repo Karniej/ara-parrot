@@ -44,9 +44,11 @@ struct MLXFormatterTests {
     /// A formatter whose model is present and whose load is instant, so a test
     /// can reach the post-warm-up state without touching a real model.
     private func loaded(
-        generate: @escaping MLXFormatter.Generate
+        generate: @escaping MLXFormatter.Generate,
+        stallCeiling: Duration = FormatterDeadline.stallCeiling
     ) async throws -> MLXFormatter {
-        let formatter = MLXFormatter(isModelPresent: { true }, load: { generate })
+        let formatter = MLXFormatter(isModelPresent: { true }, load: { generate },
+                                     stallCeiling: stallCeiling)
         try await formatter.warmUp()
         return formatter
     }
@@ -284,15 +286,19 @@ struct MLXFormatterTests {
     }
 
     /// The chain decides cancellation by `Task.isCancelled`, never by error
-    /// type — but it can only do that if `format` stops and reports instead of
-    /// absorbing the withdrawal into a rewrite.
+    /// type — but it can only do that if `format` reports the withdrawal
+    /// instead of absorbing it into a rewrite.
+    ///
+    /// The generation itself is *not* stopped — see
+    /// `cancellationDoesNotStopTheGeneration` — so what propagates here is the
+    /// stall ceiling firing on a generation that was never going to finish.
     @Test("cancellation propagates out of format")
     func cancellationPropagates() async throws {
         guard #available(macOS 15.4, *) else { return }
         let formatter = try await loaded(generate: { _, _ in
             try await Task.sleep(for: .seconds(30))
             return "never"
-        })
+        }, stallCeiling: .milliseconds(200))
         let mode = mode
         let task = Task {
             try await formatter.format("hello there friend", mode: mode)
@@ -308,6 +314,80 @@ struct MLXFormatterTests {
             #expect(error is CancellationError,
                     "a withdrawn request was reported as \(type(of: error))")
         }
+    }
+
+    /// The same guarantee on the other branch: the generation finishes while
+    /// the caller is gone. A completed rewrite for a withdrawn request must
+    /// still not come back, because the chain's caller types whatever it is
+    /// handed.
+    @Test("a rewrite that completes after the request was withdrawn is not returned")
+    func completedRewriteIsWithheldAfterCancellation() async throws {
+        guard #available(macOS 15.4, *) else { return }
+        let formatter = try await loaded(generate: { _, _ in
+            try await Task.sleep(for: .milliseconds(150))
+            return "a perfectly good rewrite"
+        }, stallCeiling: .seconds(5))
+        let mode = mode
+        let task = Task {
+            try await formatter.format("hello there friend", mode: mode)
+        }
+        try await Task.sleep(for: .milliseconds(20))
+        task.cancel()
+        switch await task.result {
+        case .success(let out):
+            Issue.record("a cancelled format returned \(out)")
+        case .failure(let error):
+            #expect(error is CancellationError,
+                    "a withdrawn request was reported as \(type(of: error))")
+        }
+    }
+
+    /// The change that makes `noteOutcome` mean anything.
+    ///
+    /// `FormatterChain.withDeadline` cancels this task at the budget. While the
+    /// generation observed that cancellation, the only elapsed time the engine
+    /// could ever measure was the budget plus the cancellation latency — which
+    /// is what the field logs showed, on every length and every budget, and
+    /// which was mistaken for "the budget is nearly right".
+    ///
+    /// So the generation now runs on. It is the one place the true cost of an
+    /// overrun exists.
+    @Test("cancelling format does not stop the generation")
+    func cancellationDoesNotStopTheGeneration() async throws {
+        guard #available(macOS 15.4, *) else { return }
+        let finished = Counter()
+        let formatter = try await loaded(generate: { _, _ in
+            try await Task.sleep(for: .milliseconds(150))
+            finished.bump()
+            return "done"
+        }, stallCeiling: .seconds(5))
+        let mode = mode
+        let task = Task {
+            try await formatter.format("hello there friend", mode: mode)
+        }
+        try await Task.sleep(for: .milliseconds(20))
+        task.cancel()
+        _ = await task.result
+        // `format` returns only once the generation is genuinely over, so by
+        // here the stub has either run to its end or been stopped. It must be
+        // the former: a sleep that observed cancellation would never bump.
+        #expect(finished.count == 1,
+                "the generation was cancelled along with its caller")
+    }
+
+    /// And the bound on it, because one generation at a time means a
+    /// measurement that never ended would take formatting offline for good.
+    @Test("a generation that never finishes is stopped at the stall ceiling")
+    func stallCeilingBoundsTheMeasurement() async throws {
+        guard #available(macOS 15.4, *) else { return }
+        let formatter = try await loaded(generate: { _, _ in
+            try await Task.sleep(for: .seconds(30))
+            return "never"
+        }, stallCeiling: .milliseconds(200))
+        let started = ContinuousClock.now
+        _ = try? await formatter.format("hello there friend", mode: mode)
+        let elapsed = ContinuousClock.now - started
+        #expect(elapsed < .seconds(5), "the stall ceiling did not fire")
     }
 
     /// MLX's default error handler prints and calls `exit(-1)`, so every

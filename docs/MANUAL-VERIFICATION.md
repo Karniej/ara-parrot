@@ -629,6 +629,49 @@ error, so this needs to be a known state rather than a surprise.
       already served by paste — see 9pent — so 9b/9d need `--inject type` to
       exercise the typing path in them at all.
 
+## 9bis-a. Long typed text arrives in the order it was sent
+
+The defect this section exists for, captured from a real dictation. The
+transcript that reached the formatter was 186 characters and so was the text in
+the field, but one 20-character chunk had been overtaken by the rest and
+committed at the end:
+
+```
+chunk 5: ' I think people will'
+chunk 7: 'oo. And I want to so'   ← chunk 6 skipped
+...
+chunk 6: " think that's cool t"   ← arrived last
+```
+
+Nothing was lost or duplicated — identical length both sides — so this is
+purely an ordering failure between separately posted events, and it can only
+happen on text long enough to need more than one of them.
+
+`TextInjector.chunks` is unit-tested: the split never cuts a character in half
+and always reassembles to the original. The **ordering** is not testable
+without a real text field and a real event tap, so it is here.
+
+- [ ] 👤 **9b-a1.** With `--inject type`, dictate a paragraph of **200
+      characters or more** into a plain field (TextEdit, Notes, a browser text
+      area). Compare it against the `↦` line character for character. Use
+      `--echo-transcripts` so the log is ground truth for what was sent.
+      Repeat five times: this was intermittent, not constant.
+- [ ] 👤 **9b-a2.** Repeat in the app where it was first seen. A single
+      reordering is a failure — record the app, the text sent, and the text
+      received.
+- [ ] 👤 **9b-a3.** Check the pacing is not perceptible. 3 ms per 20 characters
+      is about 60 ms across a 400-character paragraph; the text should still
+      appear to land at once. If long text now visibly types itself out, the
+      value is wrong.
+- [ ] 👤 **9b-a4.** Dictate something with Polish diacritics and something with
+      an emoji, both long enough to split. No replacement glyphs (`�`): the
+      split refuses to cut a grapheme, and this is the check that it holds
+      through a real event rather than only in the unit test.
+
+If a reordering survives this, pacing is not the answer and the fix is
+`inject: paste` for that app — one event cannot be reordered. Add its bundle
+ID to `InjectionPolicy.pastePreferredBundleIDs`.
+
 ## 9pent. Paste injection: terminals, Electron apps, and the pasteboard
 
 The selection logic (`InjectionPolicy`), the snapshot/restore ordering, the
