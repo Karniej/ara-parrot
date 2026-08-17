@@ -62,11 +62,11 @@ struct StartupResolutionTests {
     @Test("the model flag outranks the config")
     func modelFlagWins() {
         let warnings = Warnings()
-        let choice = StartupResolution.model(flag: "whisper-small.en",
+        let choice = StartupResolution.model(flag: "whisper-small",
                                              config: "whisper-large-v3-turbo",
                                              warn: warnings.sink)
         guard case .chosen(let model) = choice else { Issue.record("not chosen"); return }
-        #expect(model.id == "whisper-small.en")
+        #expect(model.id == "whisper-small")
         #expect(warnings.lines.isEmpty)
     }
 

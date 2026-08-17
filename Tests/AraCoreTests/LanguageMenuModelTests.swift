@@ -8,7 +8,15 @@ import Testing
 @Suite("LanguageMenuModel")
 struct LanguageMenuModelTests {
     private let multilingual = ModelRegistry.find("whisper-large-v3-turbo")!
-    private let englishOnly = ModelRegistry.find("whisper-base.en")!
+    /// Built rather than looked up: the registry offers no English-only model
+    /// any more — both `.en` entries were dropped, because picking one
+    /// silently turned language detection off. The submenu's English-only
+    /// branch is still live code and still has to be right, so the test brings
+    /// its own model instead of losing the coverage with the registry entry.
+    private let englishOnly = TranscriptionModel(
+        id: "whisper-base.en", displayName: "Whisper Base (English)",
+        engine: .whisperKit, whisperKitID: "openai_whisper-base.en",
+        sizeMB: 145, languages: ["en"], recommended: false)
 
     private func model(_ current: LanguageSetting,
                        on model: TranscriptionModel? = nil) -> LanguageMenuModel {

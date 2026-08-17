@@ -41,6 +41,19 @@ private final class DegradeProbe: @unchecked Sendable {
 
 @Suite("FormatterChain")
 struct FormatterChainTests {
+    /// The two floor-deadline tests below prove one thing: the wait ends at
+    /// the budget rather than at the 400 ms the stub sleeps. Both numbers used
+    /// to be literals — a 60 ms base and a 300 ms bound — which quietly encoded
+    /// `perCharacterMs`, and both tests failed the day it was re-set on field
+    /// data. The bound is derived now, and the text is short so the budget
+    /// stays far below the sleep it has to beat.
+    static let shortText = "hi"
+    static let floorTimeout = Duration.milliseconds(60)
+    static var deadlineBound: Duration {
+        FormatterDeadline.budget(base: floorTimeout, characters: shortText.count)
+            + .milliseconds(200)
+    }
+
     let mode = Mode(id: "default", name: "Default", prompt: "p",
                     appBundleIDs: [], usesLLM: true)
     fileprivate let rules = StubFormatter { _ in "RULES" }
@@ -372,16 +385,15 @@ struct FormatterChainTests {
     @Test("a hung rule-based floor cannot hang the dictation")
     func rulesFloorIsDeadlined() async throws {
         let chain = FormatterChain(
-            engine: .rules, timeout: .milliseconds(60),
+            engine: .rules, timeout: Self.floorTimeout,
             mlx: nil, apple: nil, cloud: nil,
             rules: StubFormatter { _ in
                 usleep(400_000)
                 return "RULES"
             })
         let started = ContinuousClock.now
-        #expect(try await chain.format("hello there friend", mode: mode)
-                == "hello there friend")
-        #expect(ContinuousClock.now - started < .milliseconds(300))
+        #expect(try await chain.format(Self.shortText, mode: mode) == Self.shortText)
+        #expect(ContinuousClock.now - started < Self.deadlineBound)
     }
 
     /// The same protection on the verbatim fast path, which reaches the floor by
@@ -392,16 +404,15 @@ struct FormatterChainTests {
         let verbatim = Mode(id: "verbatim", name: "V", prompt: "",
                             appBundleIDs: [], usesLLM: false)
         let chain = FormatterChain(
-            engine: .apple, timeout: .milliseconds(60),
+            engine: .apple, timeout: Self.floorTimeout,
             mlx: nil, apple: nil, cloud: nil,
             rules: StubFormatter { _ in
                 usleep(400_000)
                 return "RULES"
             })
         let started = ContinuousClock.now
-        #expect(try await chain.format("hello there friend", mode: verbatim)
-                == "hello there friend")
-        #expect(ContinuousClock.now - started < .milliseconds(300))
+        #expect(try await chain.format(Self.shortText, mode: verbatim) == Self.shortText)
+        #expect(ContinuousClock.now - started < Self.deadlineBound)
     }
 
     @Test("a throwing rules formatter is survivable on the rules-only branch too")

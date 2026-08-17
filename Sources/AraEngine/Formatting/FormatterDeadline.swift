@@ -20,34 +20,58 @@ import Foundation
 /// characters and no further — a dictated paragraph is where it runs out, which
 /// is the wrong place for cleanup to silently stop happening.
 ///
-/// **What this does not explain.** Formatter timeouts have been observed on
-/// transcripts of 4 and 51 characters, which the fit above puts at well under a
-/// second — and again in the field on 52, 111 and 143 characters in one
-/// session, while 200- and 279-character transcripts in the same session
-/// formatted in about a second each. Those have another cause, and scaling the
-/// deadline neither fixes nor hides them: the chain still falls through to the
-/// rules floor exactly as before. This type buys headroom for long dictation.
-/// It is not a fix for a stalled engine.
+/// **The fit is no longer what sets the budget, and this is why.** Timeouts
+/// were seen on transcripts of 4 and 51 characters, which the fit puts at well
+/// under a second, and again on 52, 111 and 143 characters in a session where
+/// 200- and 279-character ones formatted in about a second each. That looked
+/// like "another cause" until `overrunNote` measured one: 304 characters took
+/// 4.6 s against a 4.5 s budget, where the fit predicts 1.6 s.
 ///
-/// `overran` exists to find out which it is — see its doc.
+/// So the fit describes the median and the daemon lives with the tail. Real
+/// generations scatter several times either side of this curve, which makes a
+/// budget derived from it lose regularly — and losing means a silently worse
+/// transcript. `perCharacterMs` is set generously against that spread rather
+/// than fitted to the points above, which are kept because they are still the
+/// only measured shape anyone has.
 public enum FormatterDeadline {
     /// Milliseconds of budget per character of transcript.
     ///
-    /// Twice the measured 3.26 ms/char slope. The doubling is for machine
-    /// variance — a slower GPU has a steeper slope, not merely a higher
-    /// intercept — and the base absorbs the intercept and the residual on top
-    /// of that. Cutting it to the raw slope would put a slower Mac's long
-    /// dictation back on the rules floor, which is the failure being fixed.
-    public static let perCharacterMs: Double = 6.5
+    /// **Four times the measured 3.26 ms/char slope, and no longer fitted.**
+    /// It was twice the slope, on the reasoning that a slower GPU has a
+    /// steeper one. Then `overrunNote` answered the question this type could
+    /// not: a 304-character transcript's generation ran 4.6 s against a 4.5 s
+    /// budget — 0.1 s over. A near miss, not a stall, so the budget was the
+    /// problem and the engine was not.
+    ///
+    /// The same number breaks the fit above. It predicts 1.6 s for 304
+    /// characters; the truth was 4.6 s, and in the same session a
+    /// 279-character transcript formatted in about a second. Near-identical
+    /// lengths, four times apart. What this curve is fighting is **variance,
+    /// not slope**, and a budget set near the median loses to the tail every
+    /// time — which is exactly the reported symptom, cleanup that works until
+    /// suddenly it does not.
+    ///
+    /// So this is deliberately generous rather than fitted. Being too generous
+    /// costs a longer wait on an engine that is genuinely hung, bounded by
+    /// `ceilingMs`; being too tight costs a silently worse transcript with no
+    /// second chance. The second is the failure worth avoiding.
+    ///
+    /// One measurement is not a curve. `overrunNote` makes more of them free,
+    /// and this should be re-set once there are several.
+    public static let perCharacterMs: Double = 13
 
     /// The most the budget can reach, base included.
     ///
     /// The deadline exists so a hung engine cannot hold the cursor; without a
     /// ceiling, a long enough transcript would grow the budget until "abandon
-    /// the stall" stopped meaning anything. At the default base this is reached
-    /// around 850 characters — past where generation actually finishes, so it
-    /// binds on hangs and not on real work.
-    public static let ceilingMs = 8_000
+    /// the stall" stopped meaning anything.
+    ///
+    /// Raised from 8 000 with `perCharacterMs`, and by less than the slope
+    /// was: the ceiling is the one number a user actually waits out, so it is
+    /// the one to keep tight. At the default base it now binds around 575
+    /// characters — a long dictated paragraph — and everything past that gets
+    /// ten seconds rather than a budget that keeps growing.
+    public static let ceilingMs = 10_000
 
     /// `base` plus the per-character allowance, clamped to `ceilingMs`.
     ///

@@ -39,11 +39,11 @@ struct ModelMenuModelTests {
     func checkmarkPlacement() {
         let model = ModelMenuModel.compute(
             models: ModelRegistry.shared,
-            currentID: "whisper-small.en",
+            currentID: "whisper-small",
             downloaded: { _ in true },
             formatterDownloaded: true)
         #expect(model.items.map(\.checked)
-                == ModelRegistry.shared.map { $0.id == "whisper-small.en" })
+                == ModelRegistry.shared.map { $0.id == "whisper-small" })
         #expect(model.items.filter(\.checked).count == 1)
     }
 
@@ -57,7 +57,7 @@ struct ModelMenuModelTests {
     @Test("the caption names all three costs of a pick")
     func restartCaption() {
         let model = ModelMenuModel.compute(
-            models: ModelRegistry.shared, currentID: "whisper-base.en",
+            models: ModelRegistry.shared, currentID: "whisper-small",
             downloaded: { _ in true }, formatterDownloaded: true)
         #expect(model.caption.contains("applies on restart"))
         #expect(model.caption.contains("downloads if not on disk"))
@@ -71,7 +71,7 @@ struct ModelMenuModelTests {
     @Test("a downloaded formatting model is stated, not offered")
     func formatterDownloaded() {
         let model = ModelMenuModel.compute(
-            models: ModelRegistry.shared, currentID: "whisper-base.en",
+            models: ModelRegistry.shared, currentID: "whisper-small",
             downloaded: { _ in true }, formatterDownloaded: true)
         #expect(model.formatter.title == "Formatting model: ✓ downloaded")
         #expect(!model.formatter.offersDownload)
@@ -83,7 +83,7 @@ struct ModelMenuModelTests {
     @Test("a missing formatting model is offered, size and restart named")
     func formatterMissing() {
         let model = ModelMenuModel.compute(
-            models: ModelRegistry.shared, currentID: "whisper-base.en",
+            models: ModelRegistry.shared, currentID: "whisper-small",
             downloaded: { _ in true }, formatterDownloaded: false)
         #expect(model.formatter.title
                 == "Download formatting model… (900 MB, applies on restart)")
@@ -97,8 +97,8 @@ struct ModelMenuModelTests {
     @Test("the running model reads as on disk")
     func runningModelIsOnDisk() {
         let model = ModelMenuModel.compute(
-            models: ModelRegistry.shared, currentID: "whisper-base.en",
-            downloaded: { $0.id == "whisper-base.en" },
+            models: ModelRegistry.shared, currentID: "whisper-small",
+            downloaded: { $0.id == "whisper-small" },
             formatterDownloaded: true)
         let running = model.items.first { $0.checked }
         #expect(running?.title.hasSuffix("· on disk") == true)

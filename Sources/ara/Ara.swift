@@ -69,6 +69,11 @@ struct Run: ParsableCommand {
     var inject: InjectionSetting?
 
     func run() throws {
+        // First line of the daemon, because a crash before it is a crash with
+        // nothing to look at — which is the state a reported segfault was
+        // found in. See `CrashBacktrace`.
+        CrashBacktrace.install()
+
         if !skipDoctor {
             let checks = DoctorReport.run()
             if !DoctorReport.allOK(checks) {

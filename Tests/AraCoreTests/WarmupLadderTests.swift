@@ -19,13 +19,20 @@ struct WarmupLadderTests {
 
     /// A second load of the same size buys nothing and, on a first run, costs a
     /// download to buy it.
+    ///
+    /// Built here rather than looked up: since the registry went down to
+    /// `whisper-small` and `whisper-large-v3-turbo`, nothing offered is small
+    /// enough to exercise this rule. That is a fact about today's list, not
+    /// about the rule — a smaller model added tomorrow must still be refused,
+    /// so the test carries its own.
     @Test("a model no larger than the bootstrap gets none")
     func smallModelsDoNotLadder() {
-        for id in ["whisper-base.en"] {
-            let target = ModelRegistry.find(id)!
-            #expect(target.sizeMB <= ModelRegistry.bootstrap.sizeMB)
-            #expect(WarmupLadder.bootstrap(for: target) == nil)
-        }
+        let target = TranscriptionModel(
+            id: "whisper-tiny", displayName: "Whisper Tiny",
+            engine: .whisperKit, whisperKitID: "openai_whisper-tiny",
+            sizeMB: 78, languages: ["multi"], recommended: false)
+        #expect(target.sizeMB <= ModelRegistry.bootstrap.sizeMB)
+        #expect(WarmupLadder.bootstrap(for: target) == nil)
     }
 
     @Test("the bootstrap does not bootstrap itself")
@@ -33,12 +40,11 @@ struct WarmupLadderTests {
         #expect(WarmupLadder.bootstrap(for: ModelRegistry.bootstrap) == nil)
     }
 
-    /// whisper-small.en is 488 MB against the bootstrap's 145: bigger, so the
-    /// ladder applies, and English-only, which does not matter — the bootstrap
-    /// is multilingual and can serve any language setting the chosen model can.
+    /// whisper-small is 488 MB against the bootstrap's 145: bigger, so the
+    /// ladder applies to it as well as to the large model.
     @Test("a middling model still ladders")
     func middlingModelLadders() {
-        let target = ModelRegistry.find("whisper-small.en")!
+        let target = ModelRegistry.find("whisper-small")!
         #expect(WarmupLadder.bootstrap(for: target)?.id == ModelRegistry.bootstrap.id)
     }
 

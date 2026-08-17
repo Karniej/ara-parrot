@@ -54,16 +54,30 @@ struct FormatterDeadlineTests {
         }
     }
 
-    /// Pinned rather than derived from the constants, so re-measuring the
-    /// model has to come back through this file and the doc comment together.
+    /// Pinned rather than derived from the constants, so re-setting the curve
+    /// has to come back through this file and the doc comment together.
+    ///
+    /// 13 ms/char on the default 2500 ms base. The old numbers were half
+    /// these; see `perCharacterMs` for the field measurement that moved them.
     @Test("the measured curve, at the default base")
     func pinnedCurve() {
         #expect(FormatterDeadline.budget(base: base, characters: 60)
-                == .milliseconds(2890))
+                == .milliseconds(3280))
         #expect(FormatterDeadline.budget(base: base, characters: 200)
-                == .milliseconds(3800))
-        #expect(FormatterDeadline.budget(base: base, characters: 400)
                 == .milliseconds(5100))
+        #expect(FormatterDeadline.budget(base: base, characters: 400)
+                == .milliseconds(7700))
+    }
+
+    /// The case that moved the curve: a 304-character transcript whose
+    /// generation ran 4.6 s. It has to fit now, with room — the point was not
+    /// to scrape past one sample but to stop losing to the variance around it.
+    @Test("the field overrun now fits, with margin")
+    func fieldOverrunFits() {
+        let budget = FormatterDeadline.budget(base: base, characters: 304)
+        #expect(budget >= .milliseconds(6_000))
+        #expect(!FormatterDeadline.overran(elapsed: .milliseconds(4_600), base: base,
+                                           characters: 304))
     }
 
     // MARK: - The ceiling
@@ -112,25 +126,25 @@ struct FormatterDeadlineTests {
     /// The chain returned its rewrite; there is nothing to diagnose.
     @Test("a generation inside its budget has not overrun")
     func withinBudgetIsSilent() {
-        // 52 characters — one of the field timeouts — gets 2500 + 338 ms.
+        // 52 characters — one of the field timeouts — gets 2500 + 676 ms.
         #expect(!FormatterDeadline.overran(elapsed: .milliseconds(1_000), base: base, characters: 52))
-        #expect(!FormatterDeadline.overran(elapsed: .milliseconds(2_837), base: base, characters: 52))
+        #expect(!FormatterDeadline.overran(elapsed: .milliseconds(3_175), base: base, characters: 52))
     }
 
     @Test("a generation past its budget has overrun")
     func pastBudgetIsReported() {
-        #expect(FormatterDeadline.overran(elapsed: .milliseconds(2_839), base: base, characters: 52))
+        #expect(FormatterDeadline.overran(elapsed: .milliseconds(3_177), base: base, characters: 52))
         #expect(FormatterDeadline.overran(elapsed: .seconds(30), base: base, characters: 52))
     }
 
     /// The whole point: the same elapsed time is a different verdict depending
-    /// on how much there was to rewrite. Three seconds on 52 characters is an
+    /// on how much there was to rewrite. Four seconds on 52 characters is an
     /// overrun; on 279 characters — which formatted in about a second in the
     /// field — it is comfortably inside.
     @Test("the verdict scales with the transcript, like the budget does")
     func verdictScalesWithLength() {
-        #expect(FormatterDeadline.overran(elapsed: .seconds(3), base: base, characters: 52))
-        #expect(!FormatterDeadline.overran(elapsed: .seconds(3), base: base, characters: 279))
+        #expect(FormatterDeadline.overran(elapsed: .seconds(4), base: base, characters: 52))
+        #expect(!FormatterDeadline.overran(elapsed: .seconds(4), base: base, characters: 279))
     }
 
     /// It must not go quiet on a stall just because the transcript was long:
@@ -152,10 +166,10 @@ struct FormatterDeadlineTests {
     /// reproducible without the length it came from.
     @Test("the note carries the elapsed time, the overshoot, the budget and the length")
     func noteCarriesEveryNumber() {
-        // 52 characters → 2500 + 338 = 2838 ms of budget.
-        let note = FormatterDeadline.overrunNote(elapsed: .milliseconds(8_838), base: base,
+        // 52 characters → 2500 + 676 = 3176 ms of budget.
+        let note = FormatterDeadline.overrunNote(elapsed: .milliseconds(9_176), base: base,
                                                  characters: 52)
-        #expect(note == "generation ran 8.8s, 6.0s past its 2.8s budget on 52 "
+        #expect(note == "generation ran 9.2s, 6.0s past its 3.2s budget on 52 "
                 + "characters — the transcript was delivered with rule-based "
                 + "cleanup instead")
     }
