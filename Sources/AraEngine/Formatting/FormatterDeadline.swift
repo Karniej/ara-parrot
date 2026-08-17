@@ -114,11 +114,16 @@ public enum FormatterDeadline {
     ///
     /// **It is bounded because the engine is not free while it runs.**
     /// `MLXFormatter` allows one generation at a time, so a measurement that
-    /// ran forever would take the formatting engine offline forever. Twenty
-    /// seconds is far past every rewrite ever observed to succeed — the slowest
-    /// was 5.5 s — so a generation that reaches it is stalled by definition,
-    /// and no budget short of absurd would have caught it.
-    public static let stallCeilingMs = 20_000
+    /// ran forever would take the formatting engine offline forever. This is
+    /// how long formatting stays on the rules floor after one stall, which is
+    /// the whole cost of the bound and the reason it is not larger.
+    ///
+    /// Thirty seconds, raised from twenty on the first measurement this
+    /// instrument ever produced: a 444-character rewrite that finished on its
+    /// own at **19.9 s**. A tenth of a second the other way and the one sample
+    /// that mattered would have been cut off and filed as a stall. The bound
+    /// has to sit past the slow tail it is trying to measure, not inside it.
+    public static let stallCeilingMs = 30_000
 
     public static var stallCeiling: Duration { .milliseconds(stallCeilingMs) }
 
@@ -187,6 +192,31 @@ public enum FormatterDeadline {
                 + "was delivered with rule-based cleanup instead",
             seconds(elapsed), characters,
             seconds(budget(base: base, characters: characters)))
+    }
+
+    /// The line for a generation that overran and then stopped only because it
+    /// hit its token cap.
+    ///
+    /// The third outcome, and the one that says the curve is not the lever
+    /// either way. A rewrite is about as long as the transcript it rewrites, so
+    /// a copy-edit that runs to a cap sized at half the transcript again was
+    /// not copy-editing — it was running away, which a small model does on
+    /// repetitive dictation. The output is discarded as `.truncated` whatever
+    /// happens, so every second of it was spent on nothing.
+    ///
+    /// Worth its own wording because raising the budget for this case is the
+    /// worst possible response: it would make the user wait longer for text
+    /// that is thrown away by contract.
+    public static func runawayNote(elapsed: Duration, base: Duration,
+                                   characters: Int, tokenCap: Int) -> String {
+        String(
+            format: "generation ran %.1fs on %d characters (%.1fs budget) and "
+                + "stopped only on its %d-token cap — the rewrite was running "
+                + "away, not working, and would have been discarded as "
+                + "truncated; the transcript was delivered with rule-based "
+                + "cleanup instead",
+            seconds(elapsed), characters,
+            seconds(budget(base: base, characters: characters)), tokenCap)
     }
 
     private static func seconds(_ duration: Duration) -> Double {

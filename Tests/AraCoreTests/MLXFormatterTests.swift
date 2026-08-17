@@ -298,13 +298,13 @@ struct MLXFormatterTests {
         let formatter = try await loaded(generate: { _, _ in
             try await Task.sleep(for: .seconds(30))
             return "never"
-        }, stallCeiling: .milliseconds(200))
+        }, stallCeiling: .milliseconds(100))
         let mode = mode
         let task = Task {
             try await formatter.format("hello there friend", mode: mode)
         }
         // Give the generate stub time to reach its suspension point.
-        try await Task.sleep(for: .milliseconds(50))
+        try await Task.sleep(for: .milliseconds(10))
         task.cancel()
         let result = await task.result
         switch result {
@@ -324,14 +324,14 @@ struct MLXFormatterTests {
     func completedRewriteIsWithheldAfterCancellation() async throws {
         guard #available(macOS 15.4, *) else { return }
         let formatter = try await loaded(generate: { _, _ in
-            try await Task.sleep(for: .milliseconds(150))
+            try await Task.sleep(for: .milliseconds(60))
             return "a perfectly good rewrite"
-        }, stallCeiling: .seconds(5))
+        }, stallCeiling: .seconds(2))
         let mode = mode
         let task = Task {
             try await formatter.format("hello there friend", mode: mode)
         }
-        try await Task.sleep(for: .milliseconds(20))
+        try await Task.sleep(for: .milliseconds(10))
         task.cancel()
         switch await task.result {
         case .success(let out):
@@ -357,15 +357,15 @@ struct MLXFormatterTests {
         guard #available(macOS 15.4, *) else { return }
         let finished = Counter()
         let formatter = try await loaded(generate: { _, _ in
-            try await Task.sleep(for: .milliseconds(150))
+            try await Task.sleep(for: .milliseconds(60))
             finished.bump()
             return "done"
-        }, stallCeiling: .seconds(5))
+        }, stallCeiling: .seconds(2))
         let mode = mode
         let task = Task {
             try await formatter.format("hello there friend", mode: mode)
         }
-        try await Task.sleep(for: .milliseconds(20))
+        try await Task.sleep(for: .milliseconds(10))
         task.cancel()
         _ = await task.result
         // `format` returns only once the generation is genuinely over, so by
@@ -383,11 +383,11 @@ struct MLXFormatterTests {
         let formatter = try await loaded(generate: { _, _ in
             try await Task.sleep(for: .seconds(30))
             return "never"
-        }, stallCeiling: .milliseconds(200))
+        }, stallCeiling: .milliseconds(100))
         let started = ContinuousClock.now
         _ = try? await formatter.format("hello there friend", mode: mode)
         let elapsed = ContinuousClock.now - started
-        #expect(elapsed < .seconds(5), "the stall ceiling did not fire")
+        #expect(elapsed < .seconds(2), "the stall ceiling did not fire")
     }
 
     /// MLX's default error handler prints and calls `exit(-1)`, so every

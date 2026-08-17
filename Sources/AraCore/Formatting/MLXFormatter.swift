@@ -195,26 +195,48 @@ public final class MLXFormatter: AraEngine.Formatter, @unchecked Sendable {
         }
         // And a bound on it, because the engine is not free while it runs: one
         // generation at a time means a measurement that never ended would take
-        // formatting offline permanently. See `FormatterDeadline.stallCeiling`
-        // for why twenty seconds is past every rewrite ever seen to succeed.
+        // formatting offline permanently. See `FormatterDeadline.stallCeiling`.
+        //
+        // The latch, rather than comparing the elapsed time against the ceiling
+        // afterwards, because that comparison was already nearly wrong once: a
+        // field generation finished on its own at 19.9 s against a 20 s
+        // ceiling, and a tenth of a second the other way would have had it
+        // reported as a stall it was not. Whether the watchdog fired is a fact,
+        // and facts beat inference — that is the lesson this whole file is
+        // currently paying for.
         let stallCeiling = self.stallCeiling
+        let stalled = Latch()
         let watchdog = Task {
             do { try await Task.sleep(for: stallCeiling) }
             catch { return } // Cancelled because the generation finished.
+            stalled.raise()
             work.cancel()
         }
 
+        var truncated = false
         defer {
             watchdog.cancel()
             lock.withLock { self.isGenerating = false }
             noteOutcome(elapsed: ContinuousClock.now - started,
-                        characters: text.count)
+                        characters: text.count,
+                        stalled: stalled.isRaised, truncated: truncated,
+                        // The cap the generation actually ran under, taken
+                        // from the same value `generateParameters` was given
+                        // rather than recomputed from the transcript — the
+                        // wrapper's own characters count towards it.
+                        tokenCap: Self.maxTokens(forCharacters: prompt.count))
         }
 
         let raw: String
         do {
             raw = try await work.value
         } catch {
+            // Recorded before it is rethrown, because this is the one error the
+            // diagnostic needs to see and the chain has long since stopped
+            // listening for it. A rewrite that stopped only because it ran out
+            // of tokens did not take a long time to *do the work* — it took a
+            // long time going nowhere.
+            truncated = (error as? FormatterError) == .truncated
             throw Self.translate(error)
         }
 
@@ -235,23 +257,39 @@ public final class MLXFormatter: AraEngine.Formatter, @unchecked Sendable {
     /// given it — which means the chain already abandoned it and returned the
     /// rules floor, and the user has a transcript that was not cleaned up.
     ///
-    /// Two outcomes, kept apart because the responses are opposite. A
-    /// generation that *finished* late says how much more budget would have
-    /// saved it, and `perCharacterMs` is the lever. A generation still running
-    /// at `stallCeiling` never produced a cost at all, and no budget would have
-    /// caught it — reporting that one as though it were merely slow is exactly
-    /// the confusion that got the curve doubled for nothing.
+    /// Three outcomes, kept apart because the responses are opposite:
+    ///
+    /// - **finished late.** The rewrite exists; it just missed. How much more
+    ///   budget would have saved it is a real number and `perCharacterMs` is
+    ///   the lever.
+    /// - **stopped at `stallCeiling`.** It never produced a cost at all and no
+    ///   budget would have caught it. Reporting this one as though it were
+    ///   merely slow is exactly the confusion that got the curve doubled for
+    ///   nothing.
+    /// - **ran out of tokens.** The model was generating right up to the cap,
+    ///   which for dictation means it stopped copy-editing and started running
+    ///   away — repeating itself, usually, on a repetitive transcript. The time
+    ///   was spent producing output that would have been thrown away as
+    ///   `.truncated` anyway. Neither the budget nor the ceiling is the lever
+    ///   here; the prompt or the model is.
     ///
     /// Silent for every generation that finished in time, so this appears only
-    /// on the case worth reading about. Both wordings live in
+    /// on the case worth reading about. The wordings live in
     /// `FormatterDeadline`, where a test can reach them; the prefix matches
     /// `FormatterChain`'s own notes so the two read as one log.
-    private func noteOutcome(elapsed: Duration, characters: Int) {
+    private func noteOutcome(elapsed: Duration, characters: Int,
+                             stalled: Bool, truncated: Bool, tokenCap: Int) {
         let note: String
-        if elapsed >= stallCeiling {
+        if stalled {
             note = FormatterDeadline.stallNote(elapsed: elapsed,
                                                base: deadlineBase,
                                                characters: characters)
+        } else if truncated,
+                  FormatterDeadline.overran(elapsed: elapsed, base: deadlineBase,
+                                            characters: characters) {
+            note = FormatterDeadline.runawayNote(
+                elapsed: elapsed, base: deadlineBase, characters: characters,
+                tokenCap: tokenCap)
         } else if let overrun = FormatterDeadline.overrunNote(
             elapsed: elapsed, base: deadlineBase, characters: characters) {
             note = overrun
@@ -260,6 +298,16 @@ public final class MLXFormatter: AraEngine.Formatter, @unchecked Sendable {
         }
         FileHandle.standardError.write(Data("formatting: mlx \(note)\n".utf8))
         onOverrun?()
+    }
+
+    /// A one-way flag, set from the watchdog task and read from the generation
+    /// task. Small enough to be obvious; a lock rather than an actor because
+    /// the reader is inside a `defer` and cannot `await`.
+    private final class Latch: @unchecked Sendable {
+        private let lock = NSLock()
+        private var raised = false
+        func raise() { lock.lock(); raised = true; lock.unlock() }
+        var isRaised: Bool { lock.lock(); defer { lock.unlock() }; return raised }
     }
 
     static var missingModelMessage: String {

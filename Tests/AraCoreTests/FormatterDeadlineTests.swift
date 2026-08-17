@@ -192,13 +192,33 @@ struct FormatterDeadlineTests {
     /// The ceiling has to sit past every rewrite ever seen to succeed, or a
     /// slow-but-working generation gets reported as a stall and the next person
     /// to read the log draws the same wrong conclusion again. The slowest
-    /// honest success on record is 5.5 s.
+    /// honest success on record is **19.9 s**, measured in the field on 444
+    /// characters — 0.1 s inside the twenty-second ceiling that was in place
+    /// when it happened.
     @Test("the stall ceiling clears every observed success by a wide margin")
     func stallCeilingClearsRealWork() {
-        #expect(FormatterDeadline.stallCeiling > .milliseconds(5_500) * 2)
+        #expect(FormatterDeadline.stallCeiling > .milliseconds(19_900) * 3 / 2)
         // And it still has to end: the engine takes one generation at a time,
         // so this is how long formatting stays offline after a stall.
-        #expect(FormatterDeadline.stallCeiling <= .seconds(30))
+        #expect(FormatterDeadline.stallCeiling <= .seconds(45))
+    }
+
+    /// The third outcome. Raising the budget for a runaway generation is the
+    /// worst available response — the output is discarded by contract, so the
+    /// extra wait buys a longer wait and nothing else. The wording has to make
+    /// that unmistakable to whoever reads the log next.
+    @Test("the runaway note blames the cap, not the budget")
+    func runawayNoteBlamesTheCap() {
+        let note = FormatterDeadline.runawayNote(
+            elapsed: .milliseconds(19_900), base: base, characters: 444,
+            tokenCap: 512)
+        #expect(note.contains("512-token cap"))
+        #expect(note.contains("running away"))
+        #expect(note.contains("truncated"))
+        #expect(note.contains("444 characters"))
+        #expect(note.contains("delivered"))
+        // It must not read as a near miss the curve could have covered.
+        #expect(!note.contains("past its"))
     }
 
     /// It must be past the largest budget the curve can produce, or the two
