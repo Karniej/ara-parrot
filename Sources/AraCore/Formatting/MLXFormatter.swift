@@ -204,10 +204,18 @@ public final class MLXFormatter: AraEngine.Formatter, @unchecked Sendable {
         // reported as a stall it was not. Whether the watchdog fired is a fact,
         // and facts beat inference — that is the lesson this whole file is
         // currently paying for.
-        let stallCeiling = self.stallCeiling
+        //
+        // Bounded below by the attempt's own budget so the watchdog can never
+        // end a generation the chain is still waiting for — see
+        // `FormatterDeadline.stallDeadline`. `stallCeiling` is injected only
+        // by tests, which set it below every budget on purpose, so the max is
+        // taken against the injected value rather than the global one.
+        let stallDeadline = max(
+            self.stallCeiling,
+            FormatterDeadline.budget(base: deadlineBase, characters: text.count))
         let stalled = Latch()
         let watchdog = Task {
-            do { try await Task.sleep(for: stallCeiling) }
+            do { try await Task.sleep(for: stallDeadline) }
             catch { return } // Cancelled because the generation finished.
             stalled.raise()
             work.cancel()

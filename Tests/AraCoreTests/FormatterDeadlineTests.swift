@@ -243,4 +243,42 @@ struct FormatterDeadlineTests {
         // The overrun wording promises a cost; this one has none to report.
         #expect(!note.contains("past its"))
     }
+
+    /// At every shipped setting the ceiling is the binding number, and the
+    /// measurement ends where it always did.
+    @Test("at the default base the stall deadline is the ceiling")
+    func stallDeadlineIsTheCeilingByDefault() {
+        #expect(FormatterDeadline.stallDeadline(base: base, characters: 0)
+                == FormatterDeadline.stallCeiling)
+        #expect(FormatterDeadline.stallDeadline(base: base, characters: 5_000)
+                == FormatterDeadline.stallCeiling)
+    }
+
+    /// The case the fixed ceiling got wrong. Someone who configures a 60 s
+    /// timeout has asked the chain to wait a minute; a watchdog that stopped
+    /// the generation at 30 s would throw away a rewrite their own setting
+    /// allowed, and then report it as a stall no budget could have caught —
+    /// which would be false for exactly the person who raised the budget.
+    @Test("a configured timeout past the ceiling outlives the ceiling")
+    func stallDeadlineNeverCutsShortAWaitTheChainIsStillMaking() {
+        let generous = Duration.milliseconds(60_000)
+        #expect(generous > FormatterDeadline.stallCeiling)
+        let deadline = FormatterDeadline.stallDeadline(base: generous, characters: 270)
+        #expect(deadline == FormatterDeadline.budget(base: generous, characters: 270))
+        #expect(deadline >= generous)
+    }
+
+    /// It must never come in *under* the budget at any setting, or the note
+    /// the measurement produces contradicts the wait that produced it.
+    @Test("the stall deadline is never shorter than the budget")
+    func stallDeadlineCoversEveryBudget() {
+        for baseMs in [0, 500, 2_500, 8_000, 30_000, 45_000] {
+            for characters in [0, 100, 444, 5_000] {
+                let base = Duration.milliseconds(baseMs)
+                #expect(FormatterDeadline.stallDeadline(base: base, characters: characters)
+                        >= FormatterDeadline.budget(base: base, characters: characters),
+                        "base \(baseMs) ms, \(characters) characters")
+            }
+        }
+    }
 }

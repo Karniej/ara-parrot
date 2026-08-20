@@ -127,6 +127,24 @@ public enum FormatterDeadline {
 
     public static var stallCeiling: Duration { .milliseconds(stallCeilingMs) }
 
+    /// When the measurement must stop, for a chain configured with `base`.
+    ///
+    /// The ceiling above is a bound on *our* measurement, and it has no
+    /// business ending a generation the user is still waiting for. `budget`
+    /// never returns less than `base`, so someone who sets `timeoutMs: 60000`
+    /// has asked the chain to wait a minute — and a watchdog fixed at thirty
+    /// seconds would cancel the rewrite while the chain still wanted it, throw
+    /// away a result their own configuration allowed, and then report it with
+    /// `stallNote`, which says "no budget would have caught it". That sentence
+    /// would be false for exactly the person who had raised the timeout to
+    /// stop it happening.
+    ///
+    /// So the measurement always outlives the wait. At every default setting
+    /// the ceiling is much the larger of the two and this returns it unchanged.
+    public static func stallDeadline(base: Duration, characters: Int) -> Duration {
+        max(stallCeiling, budget(base: base, characters: characters))
+    }
+
     /// Whether a generation that took `elapsed` on `characters` of transcript
     /// ran past the budget it would have been given.
     ///

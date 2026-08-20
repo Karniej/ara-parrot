@@ -43,11 +43,18 @@ struct MLXFormatterTests {
 
     /// A formatter whose model is present and whose load is instant, so a test
     /// can reach the post-warm-up state without touching a real model.
+    ///
+    /// A test that injects a short `stallCeiling` must inject `deadlineBase`
+    /// with it. The watchdog never fires before the attempt's own budget (see
+    /// `FormatterDeadline.stallDeadline`), so a ceiling left below the default
+    /// 2.5 s base would simply be ignored and the test would measure the base.
     private func loaded(
         generate: @escaping MLXFormatter.Generate,
-        stallCeiling: Duration = FormatterDeadline.stallCeiling
+        stallCeiling: Duration = FormatterDeadline.stallCeiling,
+        deadlineBase: Duration = .milliseconds(FormatterDeadline.defaultBaseMs)
     ) async throws -> MLXFormatter {
         let formatter = MLXFormatter(isModelPresent: { true }, load: { generate },
+                                     deadlineBase: deadlineBase,
                                      stallCeiling: stallCeiling)
         try await formatter.warmUp()
         return formatter
@@ -298,7 +305,7 @@ struct MLXFormatterTests {
         let formatter = try await loaded(generate: { _, _ in
             try await Task.sleep(for: .seconds(30))
             return "never"
-        }, stallCeiling: .milliseconds(100))
+        }, stallCeiling: .milliseconds(100), deadlineBase: .zero)
         let mode = mode
         let task = Task {
             try await formatter.format("hello there friend", mode: mode)
@@ -326,7 +333,7 @@ struct MLXFormatterTests {
         let formatter = try await loaded(generate: { _, _ in
             try await Task.sleep(for: .milliseconds(60))
             return "a perfectly good rewrite"
-        }, stallCeiling: .seconds(2))
+        }, stallCeiling: .seconds(2), deadlineBase: .zero)
         let mode = mode
         let task = Task {
             try await formatter.format("hello there friend", mode: mode)
@@ -360,7 +367,7 @@ struct MLXFormatterTests {
             try await Task.sleep(for: .milliseconds(60))
             finished.bump()
             return "done"
-        }, stallCeiling: .seconds(2))
+        }, stallCeiling: .seconds(2), deadlineBase: .zero)
         let mode = mode
         let task = Task {
             try await formatter.format("hello there friend", mode: mode)
@@ -383,7 +390,7 @@ struct MLXFormatterTests {
         let formatter = try await loaded(generate: { _, _ in
             try await Task.sleep(for: .seconds(30))
             return "never"
-        }, stallCeiling: .milliseconds(100))
+        }, stallCeiling: .milliseconds(100), deadlineBase: .zero)
         let started = ContinuousClock.now
         _ = try? await formatter.format("hello there friend", mode: mode)
         let elapsed = ContinuousClock.now - started

@@ -288,13 +288,14 @@ struct Run: ParsableCommand {
         // false after the first handoff and prevents a later model load from
         // replacing an active recording overlay with the ready card.
         let announcedReady = MainActor.assumeIsolated { AnnouncedReady() }
+        let activeHotkey = MainActor.assumeIsolated { ActiveHotkey(chosenHotkey) }
         let declareReady: @MainActor () -> Void = {
             guard warmup.finish() else { return }
             menuBar.setReady()
             guard !announcedReady.value else { return }
             announcedReady.value = true
             FileHandle.standardError.write(Data(
-                "listening on \(chosenHotkey.label) hold · model: \(running.model.id) · ^C to quit\n".utf8
+                "listening on \(activeHotkey.value.label) hold · model: \(running.model.id) · ^C to quit\n".utf8
             ))
         }
 
@@ -481,6 +482,7 @@ struct Run: ParsableCommand {
                 // hotkey over it would answer the wrong question — the user
                 // would press the new key and get nothing.
                 monitor.rearm(to: picked)
+                activeHotkey.value = picked
                 menuBar.setHotkeyMenu(HotkeyMenuModel.compute(current: picked))
                 menuBar.setHotkeyLabel(picked.label)
                 warmup.setHotkeyLabel(picked.label)
@@ -1112,6 +1114,21 @@ private func beginModelSwitch(
 @MainActor
 private final class AnnouncedReady {
     var value = false
+}
+
+/// The hotkey the monitor is actually armed to, for anything that reports it
+/// after startup.
+///
+/// The chosen hotkey is fixed at launch, but the Hotkey submenu can re-arm the
+/// monitor at any time — including while the model is still warming up, which
+/// is exactly when the user is most likely to go looking through the menu. The
+/// readiness line tells them which key to hold, so it has to read the armed
+/// key rather than the launch one, or it names a key that no longer does
+/// anything.
+@MainActor
+private final class ActiveHotkey {
+    var value: Hotkey
+    init(_ hotkey: Hotkey) { value = hotkey }
 }
 
 /// Who won the warm-up race.
