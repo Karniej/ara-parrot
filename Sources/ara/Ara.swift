@@ -809,7 +809,8 @@ struct Run: ParsableCommand {
                                     // whatever is frontmost seconds later.
                                     switch InjectionPolicy.method(
                                         setting: injectionSetting,
-                                        frontmostBundleID: frontmostBundleID)
+                                        frontmostBundleID: frontmostBundleID,
+                                        text: cleaned)
                                     {
                                     case .type: TextInjector.inject(cleaned)
                                     case .paste: pasteInjector.inject(cleaned)

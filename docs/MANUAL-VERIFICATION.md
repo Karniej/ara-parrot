@@ -636,7 +636,7 @@ transcript that reached the formatter was 186 characters and so was the text in
 the field, but one 20-character chunk had been overtaken by the rest and
 committed at the end:
 
-```
+```text
 chunk 5: ' I think people will'
 chunk 7: 'oo. And I want to so'   ← chunk 6 skipped
 ...

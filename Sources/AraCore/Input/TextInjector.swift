@@ -16,12 +16,12 @@ import Foundation
 /// dictation, the transcript that reached the formatter was 186 characters and
 /// so was the text in the field, but the field's copy read:
 ///
-/// ```
+/// ```text
 /// chunk 5: ' I think people will'
 /// chunk 7: 'oo. And I want to so'   ← chunk 6 skipped
 /// ...
 /// chunk 6: " think that's cool t"   ← arrived last
-/// ```
+/// ```text
 ///
 /// One chunk overtaken by the rest and committed at the end. Identical length,
 /// so nothing was lost or duplicated — the pieces were simply reassembled
@@ -29,10 +29,18 @@ import Foundation
 /// than one event, and why it reads to the user as a sentence fragment moved to
 /// the end.
 ///
-/// `pacing` is the mitigation and `InjectionPolicy` holds the real fix: a paste
-/// is one event and cannot be reordered at all, which is why the apps that
-/// mangle synthesized keystrokes most reliably are on
-/// `InjectionPolicy.pastePreferredBundleIDs`.
+/// **`pacing` did not fix this, and the record should say so.** It was added
+/// as the fix, shipped, and the same failure came back in a second app on the
+/// next long dictation — one whole 20-character chunk, committed last again.
+/// Ordering across separately posted events is not something the API offers,
+/// so spacing them out can only lower the odds.
+///
+/// `InjectionPolicy` holds the actual fix: a paste is one event and has
+/// nothing to reorder, and `InjectionPolicy.pasteAboveCharacters` now routes
+/// anything long enough to need several events down that path in every app.
+/// What reaches this type is short text, where the whole failure mode is out
+/// of reach because there is only one event to order. `pacing` stays for the
+/// few events that remain.
 public enum TextInjector {
     /// The per-event payload limit, in UTF-16 units.
     static let chunkLimit = 20
@@ -52,8 +60,20 @@ public enum TextInjector {
     /// stating because "slow it down to fix ordering" sounds like there is.
     ///
     /// This makes reordering unlikely rather than impossible: ordering across
-    /// separate posted events is not something the API promises. Use `paste`
-    /// where it must not happen at all.
+    /// separate posted events is not something the API promises, and the field
+    /// proved the point after this was added. Use `paste` where it must not
+    /// happen at all — `InjectionPolicy` now does exactly that for any
+    /// transcript long enough for the question to arise.
+    ///
+    /// The sleep runs on whatever thread called `inject`, which in the daemon
+    /// is the main actor. That is a blocking call on the thread the hotkey tap
+    /// is serviced from, so the bound matters: `InjectionPolicy` sends
+    /// everything past `pasteAboveCharacters` to the pasteboard instead, which
+    /// leaves at most five chunks and four gaps here — about twelve
+    /// milliseconds, once per utterance, while nothing else is being asked of
+    /// that thread. Moving the sequence to a serial queue would buy that back
+    /// and cost the ordering guarantee the main actor currently provides for
+    /// free; at twelve milliseconds that is not a trade worth making.
     static let pacing: TimeInterval = 0.003
 
     /// Inject the given text at the current cursor location.
@@ -80,9 +100,14 @@ public enum TextInjector {
     /// routinely.
     ///
     /// A single character whose own encoding exceeds `chunkLimit` — a long
-    /// emoji sequence — gets an event to itself and goes over the limit. The
-    /// alternative is to split it, and a truncated grapheme is not better than
-    /// a whole one the API may truncate.
+    /// emoji sequence, or a stacked run of combining marks — gets an event to
+    /// itself and goes over the limit. The alternative is to split it, and a
+    /// truncated grapheme is not better than a whole one the API may truncate.
+    ///
+    /// Neither is actually acceptable, so it is arranged not to happen:
+    /// `InjectionPolicy.containsUntypableCharacter` spots such a character
+    /// before this is reached and pastes the transcript instead. The behaviour
+    /// here is the floor under a direct caller, not the plan.
     static func chunks(_ text: String) -> [[UniChar]] {
         var chunks: [[UniChar]] = []
         var current: [UniChar] = []

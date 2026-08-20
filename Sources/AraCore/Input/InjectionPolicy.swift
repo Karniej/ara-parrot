@@ -61,17 +61,76 @@ public enum InjectionPolicy {
         "com.apple.dt.Xcode",             // Xcode
     ]
 
-    /// An explicit setting is absolute; `auto` consults the list. An unknown
-    /// or absent frontmost app types — the conservative choice, because typing
-    /// never touches state the user can see, while paste briefly does.
+    /// The transcript length above which `auto` pastes in *any* app.
+    ///
+    /// The list above answers "which apps mangle typing". This answers the
+    /// other half, which the list cannot: **how much** text is being typed.
+    /// `TextInjector` has to split anything past about 20 UTF-16 units across
+    /// several `CGEvent`s, and the order those events are committed in is not
+    /// something the API promises. Two field captures, in two different apps
+    /// neither of which is on the list, each had exactly one whole chunk
+    /// overtaken by the rest and committed at the end:
+    ///
+    /// ```text
+    /// ...everywhere, but not[ from VidNotes web. ]And it looked like...
+    ///                       └──── moved here ────────────────────────┐
+    /// ...my transcribed videos in my library. from VidNotes web.  ←───┘
+    /// ```
+    ///
+    /// Nothing is lost or duplicated, so it never looks like a delivery
+    /// failure — it looks like the user dictated a sentence in the wrong
+    /// order. Pacing the events apart made it rarer and could not make it
+    /// impossible. A paste is one event and has nothing to reorder.
+    ///
+    /// One hundred characters, which is roughly five events: past the point
+    /// where a single misplaced fragment changes what a sentence means, and
+    /// well above the short "yes, do that" utterances that make up most
+    /// dictation. Those keep typing and keep the pasteboard untouched, which
+    /// is the whole reason this is a threshold and not simply "always paste".
+    ///
+    /// It is a judgement, not a measurement: both captures were far above it
+    /// (186 and ~290 characters) and there is no observation at all of what
+    /// two or three events do. Lower it if a shorter transcript ever arrives
+    /// scrambled.
+    public static let pasteAboveCharacters = 100
+
+    /// An explicit setting is absolute; `auto` pastes when the app is known to
+    /// mangle typed events, when there is enough text for the ordering of those
+    /// events to matter, or when a single character cannot survive the typed
+    /// path at all. An unknown or absent frontmost app still types short
+    /// transcripts — the conservative choice, because typing never touches
+    /// state the user can see, while paste briefly does.
+    ///
+    /// `text` is the transcript about to be delivered, passed whole rather than
+    /// as a length because two of the three questions above are about its
+    /// contents.
     public static func method(setting: InjectionSetting,
-                              frontmostBundleID: String?) -> InjectionMethod {
+                              frontmostBundleID: String?,
+                              text: String = "") -> InjectionMethod {
         switch setting {
         case .type: return .type
         case .paste: return .paste
         case .auto:
+            if text.count > pasteAboveCharacters { return .paste }
+            if containsUntypableCharacter(text) { return .paste }
             guard let id = frontmostBundleID else { return .type }
             return pastePreferredBundleIDs.contains(id) ? .paste : .type
         }
+    }
+
+    /// Whether any single character is too large for one keyboard event.
+    ///
+    /// `TextInjector` never splits a character, because half a grapheme is not
+    /// text — so a character whose own UTF-16 encoding is longer than the
+    /// event payload limit is handed to the API oversized, and the API
+    /// truncates it. A long emoji sequence (a family, a flag with a skin-tone
+    /// modifier) or a stacked run of combining marks reaches that size.
+    ///
+    /// Neither splitting nor sending it oversized delivers the character, so
+    /// the only honest answer is to stop typing and paste the transcript. This
+    /// is rare enough to cost nothing and silent enough to be worth catching:
+    /// the user would otherwise see a mangled glyph and no error.
+    static func containsUntypableCharacter(_ text: String) -> Bool {
+        text.contains { $0.utf16.count > TextInjector.chunkLimit }
     }
 }
