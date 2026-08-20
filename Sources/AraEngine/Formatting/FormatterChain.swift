@@ -67,16 +67,47 @@ public struct FormatterChain: Formatter {
     private let apple: (any Formatter)?
     private let cloud: (any Formatter)?
     private let rules: any Formatter
+    private let onDegrade: (@Sendable (Engine) -> Void)?
 
+    /// - Parameter onDegrade: called with the engine that failed when an LLM
+    ///   engine was tried and the chain had to finish on the rule-based floor.
+    ///
+    ///   The transcript still arrives — that is the chain's whole contract —
+    ///   but it arrives *plainer than the user configured*, and until this
+    ///   existed nothing above `FormatterChain` could tell the two apart. The
+    ///   daemon returns a `String` either way, so "why is this one untidy?" had
+    ///   no answer anywhere except a stderr line a menu-bar user never sees.
+    ///
+    ///   A closure rather than a richer return type because the contract above
+    ///   is the valuable thing: `format` returns a `String` and cannot fail,
+    ///   and widening it to a result type to carry a diagnostic would put that
+    ///   promise behind an enum at every call site. It also keeps `AraEngine`
+    ///   free of anything to depend on — a closure is not a dependency.
+    ///
+    ///   Never called for `.rules`, `.off`, or a verbatim mode. Those reach the
+    ///   floor because the user asked them to, and reporting a degradation
+    ///   there would be crying wolf on the configured behaviour.
     public init(engine: Engine, timeout: Duration,
                 mlx: (any Formatter)?, apple: (any Formatter)?,
-                cloud: (any Formatter)?, rules: any Formatter) {
+                cloud: (any Formatter)?, rules: any Formatter,
+                onDegrade: (@Sendable (Engine) -> Void)? = nil) {
         self.engine = engine
         self.timeout = timeout
         self.mlx = mlx
         self.apple = apple
         self.cloud = cloud
         self.rules = rules
+        self.onDegrade = onDegrade
+    }
+
+    /// The one line for a user who just got a plainer transcript than usual.
+    ///
+    /// It names the consequence rather than the cause, because the cause is
+    /// already on stderr in more detail than a pill can hold and the user's
+    /// question is "why does this look different?", not "which engine timed
+    /// out?". Short enough to sit beside the overlay's waveform.
+    public static func degradedNote(engine: Engine) -> String {
+        "\(engine.rawValue) cleanup unavailable · basic punctuation"
     }
 
     public func format(_ text: String, mode: Mode) async throws -> String {
@@ -121,6 +152,10 @@ public struct FormatterChain: Formatter {
             break
         }
 
+        // The engine whose failure is the reason we end up on the floor. Under
+        // `.cloud` two can fail; the *last* one is the one that was still
+        // standing between the user and their cleanup.
+        var lastFailure: Engine?
         for candidate in candidates {
             do {
                 return try await attempt(candidate.formatter, text: text, mode: mode)
@@ -150,8 +185,25 @@ public struct FormatterChain: Formatter {
                 // on stderr, matching how the rest of the daemon reports.
                 Self.note("\(candidate.label.rawValue) formatter failed "
                           + "(\(Self.describe(error))); falling back")
+                // An unwarmed or missing model is a standing configuration
+                // fault. Startup and `ara doctor` report it once; do not arm a
+                // per-utterance degradation notice forever. Keep an earlier
+                // failure under `.cloud`, because that attempted engine did
+                // fail for this utterance.
+                if let formatterError = error as? FormatterError,
+                   formatterError == .unavailable {
+                    continue
+                }
+                lastFailure = candidate.label
             }
         }
+        // Reported only when something was actually *tried* and lost. An empty
+        // candidate list — engine `.mlx` with no model on disk, say — reaches
+        // the floor too, but that is a standing configuration fault already
+        // reported once at startup and by `ara doctor`, and re-announcing it on
+        // every utterance forever would train the user to ignore the notice
+        // that matters.
+        if let lastFailure { onDegrade?(lastFailure) }
         return try await terminalFallback(text, mode: mode)
     }
 

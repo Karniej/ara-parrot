@@ -61,6 +61,13 @@ public final class MLXFormatter: AraEngine.Formatter, @unchecked Sendable {
 
     private let isModelPresent: @Sendable () -> Bool
     private let load: Load
+    private let deadlineBase: Duration
+    /// How long a generation is allowed to keep running after the chain has
+    /// abandoned it — `FormatterDeadline.stallCeiling` in production, and
+    /// injectable only so tests do not have to spend twenty seconds proving
+    /// that the bound exists.
+    private let stallCeiling: Duration
+    private let onOverrun: (@Sendable () -> Void)?
 
     /// The loaded model, as the closure that uses it. `nil` until `warmUp()`
     /// succeeds. Guarded by a lock rather than an actor for the reason in the
@@ -72,13 +79,24 @@ public final class MLXFormatter: AraEngine.Formatter, @unchecked Sendable {
     /// for why this exists and what happens without it.
     private var isGenerating = false
 
-    public convenience init() {
-        self.init(isModelPresent: { MLXModel.isPresent }, load: Self.loadBundledModel)
+    public convenience init(
+        deadlineBase: Duration = .milliseconds(FormatterDeadline.defaultBaseMs),
+        onOverrun: (@Sendable () -> Void)? = nil
+    ) {
+        self.init(isModelPresent: { MLXModel.isPresent }, load: Self.loadBundledModel,
+                  deadlineBase: deadlineBase, onOverrun: onOverrun)
     }
 
-    init(isModelPresent: @escaping @Sendable () -> Bool, load: @escaping Load) {
+    init(isModelPresent: @escaping @Sendable () -> Bool,
+         load: @escaping Load,
+         deadlineBase: Duration = .milliseconds(FormatterDeadline.defaultBaseMs),
+         stallCeiling: Duration = FormatterDeadline.stallCeiling,
+         onOverrun: (@Sendable () -> Void)? = nil) {
         self.isModelPresent = isModelPresent
         self.load = load
+        self.deadlineBase = deadlineBase
+        self.stallCeiling = stallCeiling
+        self.onOverrun = onOverrun
     }
 
     /// Whether a model has been loaded and `format` can do anything.
@@ -141,23 +159,163 @@ public final class MLXFormatter: AraEngine.Formatter, @unchecked Sendable {
         }) else {
             throw isLoaded ? FormatterError.busy : FormatterError.unavailable
         }
-        // Cleared when the work *actually* finishes, which is the point: an
-        // abandoned generation holds the claim for as long as it holds the GPU,
-        // not until the caller stopped waiting for it.
-        defer { lock.withLock { self.isGenerating = false } }
+        let started = ContinuousClock.now
+
+        // Unstructured on purpose, and this line is the whole fix.
+        //
+        // `FormatterChain.withDeadline` cancels the task `format` runs in when
+        // the budget expires. An unstructured `Task` does not inherit that
+        // cancellation, so the generation runs on to its natural end even
+        // though nothing is waiting for its output any more. Two things that
+        // are documented in this file depended on that and were quietly false
+        // without it:
+        //
+        // - `isGenerating` is described above as held for as long as the
+        //   generation holds the GPU. It was not. mlx-swift's token loop *does*
+        //   observe cancellation, so the claim was released a couple of hundred
+        //   milliseconds after the chain gave up, and the pile-up guard was
+        //   guarding a moment that had already passed.
+        // - `noteOverrun` is the only measurement of what an overrun really
+        //   costs, and cancelling the work made it measure the deadline instead
+        //   of the generation. Every overrun observed in the field read
+        //   "0.1–0.4 s past its budget" — at every budget, on every length,
+        //   because that is the cancellation latency and nothing else. It was
+        //   read as "the budget is nearly right" and `perCharacterMs` was
+        //   doubled on the strength of it. See `FormatterDeadline`.
+        //
+        // Awaiting `value` is not interruptible by our own cancellation, so
+        // `format` now returns only when the generation is genuinely over. Its
+        // caller stopped listening long ago and the chain has already delivered
+        // the rules floor; the only thing this return produces is the number
+        // below.
+        let work = Task {
+            try await Self.runOffCooperativePool {
+                try await generate(instructions, prompt)
+            }
+        }
+        // And a bound on it, because the engine is not free while it runs: one
+        // generation at a time means a measurement that never ended would take
+        // formatting offline permanently. See `FormatterDeadline.stallCeiling`.
+        //
+        // The latch, rather than comparing the elapsed time against the ceiling
+        // afterwards, because that comparison was already nearly wrong once: a
+        // field generation finished on its own at 19.9 s against a 20 s
+        // ceiling, and a tenth of a second the other way would have had it
+        // reported as a stall it was not. Whether the watchdog fired is a fact,
+        // and facts beat inference — that is the lesson this whole file is
+        // currently paying for.
+        //
+        // Bounded below by the attempt's own budget so the watchdog can never
+        // end a generation the chain is still waiting for — see
+        // `FormatterDeadline.stallDeadline`. `stallCeiling` is injected only
+        // by tests, which set it below every budget on purpose, so the max is
+        // taken against the injected value rather than the global one.
+        let stallDeadline = max(
+            self.stallCeiling,
+            FormatterDeadline.budget(base: deadlineBase, characters: text.count))
+        let stalled = Latch()
+        let watchdog = Task {
+            do { try await Task.sleep(for: stallDeadline) }
+            catch { return } // Cancelled because the generation finished.
+            stalled.raise()
+            work.cancel()
+        }
+
+        var truncated = false
+        defer {
+            watchdog.cancel()
+            lock.withLock { self.isGenerating = false }
+            noteOutcome(elapsed: ContinuousClock.now - started,
+                        characters: text.count,
+                        stalled: stalled.isRaised, truncated: truncated,
+                        // The cap the generation actually ran under, taken
+                        // from the same value `generateParameters` was given
+                        // rather than recomputed from the transcript — the
+                        // wrapper's own characters count towards it.
+                        tokenCap: Self.maxTokens(forCharacters: prompt.count))
+        }
 
         let raw: String
         do {
-            raw = try await Self.runOffCooperativePool {
-                try await generate(instructions, prompt)
-            }
+            raw = try await work.value
         } catch {
+            // Recorded before it is rethrown, because this is the one error the
+            // diagnostic needs to see and the chain has long since stopped
+            // listening for it. A rewrite that stopped only because it ran out
+            // of tokens did not take a long time to *do the work* — it took a
+            // long time going nowhere.
+            truncated = (error as? FormatterError) == .truncated
             throw Self.translate(error)
         }
+
+        // The generation is shielded from cancellation; the *result* is not.
+        // Without this a request withdrawn while the model was finishing would
+        // come back as a perfectly good rewrite, and the chain's whole reason
+        // for propagating cancellation is that such a rewrite gets typed at the
+        // user's cursor. `FormatterChain` checks again on the way out; this is
+        // the check that makes `format` honest on its own.
+        try Task.checkCancellation()
 
         let cleaned = TranscriptPrompt.clean(raw)
         guard !cleaned.isEmpty else { throw FormatterError.implausibleOutput }
         return cleaned
+    }
+
+    /// One line when a generation ran past the budget the chain would have
+    /// given it — which means the chain already abandoned it and returned the
+    /// rules floor, and the user has a transcript that was not cleaned up.
+    ///
+    /// Three outcomes, kept apart because the responses are opposite:
+    ///
+    /// - **finished late.** The rewrite exists; it just missed. How much more
+    ///   budget would have saved it is a real number and `perCharacterMs` is
+    ///   the lever.
+    /// - **stopped at `stallCeiling`.** It never produced a cost at all and no
+    ///   budget would have caught it. Reporting this one as though it were
+    ///   merely slow is exactly the confusion that got the curve doubled for
+    ///   nothing.
+    /// - **ran out of tokens.** The model was generating right up to the cap,
+    ///   which for dictation means it stopped copy-editing and started running
+    ///   away — repeating itself, usually, on a repetitive transcript. The time
+    ///   was spent producing output that would have been thrown away as
+    ///   `.truncated` anyway. Neither the budget nor the ceiling is the lever
+    ///   here; the prompt or the model is.
+    ///
+    /// Silent for every generation that finished in time, so this appears only
+    /// on the case worth reading about. The wordings live in
+    /// `FormatterDeadline`, where a test can reach them; the prefix matches
+    /// `FormatterChain`'s own notes so the two read as one log.
+    private func noteOutcome(elapsed: Duration, characters: Int,
+                             stalled: Bool, truncated: Bool, tokenCap: Int) {
+        let note: String
+        if stalled {
+            note = FormatterDeadline.stallNote(elapsed: elapsed,
+                                               base: deadlineBase,
+                                               characters: characters)
+        } else if truncated,
+                  FormatterDeadline.overran(elapsed: elapsed, base: deadlineBase,
+                                            characters: characters) {
+            note = FormatterDeadline.runawayNote(
+                elapsed: elapsed, base: deadlineBase, characters: characters,
+                tokenCap: tokenCap)
+        } else if let overrun = FormatterDeadline.overrunNote(
+            elapsed: elapsed, base: deadlineBase, characters: characters) {
+            note = overrun
+        } else {
+            return
+        }
+        FileHandle.standardError.write(Data("formatting: mlx \(note)\n".utf8))
+        onOverrun?()
+    }
+
+    /// A one-way flag, set from the watchdog task and read from the generation
+    /// task. Small enough to be obvious; a lock rather than an actor because
+    /// the reader is inside a `defer` and cannot `await`.
+    private final class Latch: @unchecked Sendable {
+        private let lock = NSLock()
+        private var raised = false
+        func raise() { lock.lock(); raised = true; lock.unlock() }
+        var isRaised: Bool { lock.lock(); defer { lock.unlock() }; return raised }
     }
 
     static var missingModelMessage: String {

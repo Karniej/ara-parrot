@@ -5,23 +5,122 @@ import Foundation
 /// keyboard events with `CGEventKeyboardSetUnicodeString`. Works in nearly
 /// every text field on macOS; some Electron apps and secure password fields
 /// can drop characters (platform constraint).
+///
+/// ## Long text arrives as a sequence, and a sequence can arrive out of order
+///
+/// The event record carries a bounded Unicode payload — about 20 UTF-16 units —
+/// so anything longer than a short phrase is delivered as several events rather
+/// than one, and their order is the order the text ends up in.
+///
+/// It is not always the order they were posted in. Captured from a real
+/// dictation, the transcript that reached the formatter was 186 characters and
+/// so was the text in the field, but the field's copy read:
+///
+/// ```text
+/// chunk 5: ' I think people will'
+/// chunk 7: 'oo. And I want to so'   ← chunk 6 skipped
+/// ...
+/// chunk 6: " think that's cool t"   ← arrived last
+/// ```text
+///
+/// One chunk overtaken by the rest and committed at the end. Identical length,
+/// so nothing was lost or duplicated — the pieces were simply reassembled
+/// wrong, which is why it only ever shows up on text long enough to need more
+/// than one event, and why it reads to the user as a sentence fragment moved to
+/// the end.
+///
+/// **`pacing` did not fix this, and the record should say so.** It was added
+/// as the fix, shipped, and the same failure came back in a second app on the
+/// next long dictation — one whole 20-character chunk, committed last again.
+/// Ordering across separately posted events is not something the API offers,
+/// so spacing them out can only lower the odds.
+///
+/// `InjectionPolicy` holds the actual fix: a paste is one event and has
+/// nothing to reorder, and `InjectionPolicy.pasteAboveCharacters` now routes
+/// anything long enough to need several events down that path in every app.
+/// What reaches this type is short text, where the whole failure mode is out
+/// of reach because there is only one event to order. `pacing` stays for the
+/// few events that remain.
 public enum TextInjector {
+    /// The per-event payload limit, in UTF-16 units.
+    static let chunkLimit = 20
+
+    /// The gap left between posted events.
+    ///
+    /// The receiving app has to consume each event before the next one lands;
+    /// posting twenty of them back to back in a few microseconds is what gives
+    /// its input handling the chance to commit them in the wrong order. A pause
+    /// hands the target's run loop a turn between chunks.
+    ///
+    /// Three milliseconds per chunk is about 60 ms across a 400-character
+    /// paragraph and about 8 ms across a short sentence — below the threshold
+    /// where anyone perceives the text appearing late, and four orders of
+    /// magnitude under the seconds this daemon already spends transcribing and
+    /// formatting. There is no speed being traded away here, which is worth
+    /// stating because "slow it down to fix ordering" sounds like there is.
+    ///
+    /// This makes reordering unlikely rather than impossible: ordering across
+    /// separate posted events is not something the API promises, and the field
+    /// proved the point after this was added. Use `paste` where it must not
+    /// happen at all — `InjectionPolicy` now does exactly that for any
+    /// transcript long enough for the question to arise.
+    ///
+    /// The sleep runs on whatever thread called `inject`, which in the daemon
+    /// is the main actor. That is a blocking call on the thread the hotkey tap
+    /// is serviced from, so the bound matters: `InjectionPolicy` sends
+    /// everything past `pasteAboveCharacters` to the pasteboard instead, which
+    /// leaves at most five chunks and four gaps here — about twelve
+    /// milliseconds, once per utterance, while nothing else is being asked of
+    /// that thread. Moving the sequence to a serial queue would buy that back
+    /// and cost the ordering guarantee the main actor currently provides for
+    /// free; at twelve milliseconds that is not a trade worth making.
+    static let pacing: TimeInterval = 0.003
+
     /// Inject the given text at the current cursor location.
-    /// Splits long strings into chunks because the underlying API has a
-    /// per-event character limit (~20 chars).
     public static func inject(_ text: String) {
         guard !text.isEmpty else { return }
 
-        let utf16 = Array(text.utf16)
-        let chunkSize = 20
-        var index = 0
-
-        while index < utf16.count {
-            let end = min(index + chunkSize, utf16.count)
-            var chunk = Array(utf16[index..<end])
+        let chunks = chunks(text)
+        for (index, chunk) in chunks.enumerated() {
+            var chunk = chunk
             postChunk(&chunk)
-            index = end
+            if index < chunks.count - 1 { Thread.sleep(forTimeInterval: pacing) }
         }
+    }
+
+    /// Splits `text` into per-event payloads without ever cutting a character
+    /// in half.
+    ///
+    /// Pure, and separated from the posting for that reason: the split is the
+    /// part with a rule in it, and the rule is not "every 20 UTF-16 units".
+    /// Slicing a UTF-16 array at a fixed stride lands inside surrogate pairs
+    /// and between a base character and its combining marks, so an emoji or an
+    /// accented letter unlucky enough to straddle a boundary is delivered as
+    /// two halves of nothing. Dictation in Polish produces combining marks
+    /// routinely.
+    ///
+    /// A single character whose own encoding exceeds `chunkLimit` — a long
+    /// emoji sequence, or a stacked run of combining marks — gets an event to
+    /// itself and goes over the limit. The alternative is to split it, and a
+    /// truncated grapheme is not better than a whole one the API may truncate.
+    ///
+    /// Neither is actually acceptable, so it is arranged not to happen:
+    /// `InjectionPolicy.containsUntypableCharacter` spots such a character
+    /// before this is reached and pastes the transcript instead. The behaviour
+    /// here is the floor under a direct caller, not the plan.
+    static func chunks(_ text: String) -> [[UniChar]] {
+        var chunks: [[UniChar]] = []
+        var current: [UniChar] = []
+        for character in text {
+            let units = Array(String(character).utf16)
+            if !current.isEmpty, current.count + units.count > chunkLimit {
+                chunks.append(current)
+                current = []
+            }
+            current.append(contentsOf: units)
+        }
+        if !current.isEmpty { chunks.append(current) }
+        return chunks
     }
 
     private static func postChunk(_ chunk: inout [UniChar]) {

@@ -60,6 +60,49 @@ import Testing
         #expect(samples.count > 8_000,
                 "routed capture delivered \(samples.count) frames — tap did not fire")
     }
+
+    /// The risk in reusing one `AVAudioEngine` across recordings, against real
+    /// hardware.
+    ///
+    /// `stop()` no longer releases the engine — it is kept so an AVFAudio
+    /// property block already in flight cannot outlive it (see
+    /// `AudioCapture.retire` for the crash that motivated it). The cost of
+    /// that is a second `start()` re-routing, re-probing and re-tapping an
+    /// engine that has already run once, and the fake-backend suite cannot see
+    /// whether a real one survives it.
+    ///
+    /// It is the same failure shape this suite already exists for: a tap that
+    /// silently never fires. If a reused engine reported a stale
+    /// `inputFormat(forBus:)` on its second start, the second recording would
+    /// capture exactly zero frames while the engine claimed to run.
+    @Test("a reused engine still delivers audio on a second recording")
+    func reusedEngineDeliversOnSecondRecording() async throws {
+        guard ProcessInfo.processInfo.environment["ARA_AUDIO_HW"] == "1" else { return }
+
+        let store = MicrophoneStore(preferredUID: nil)
+        guard store.effective.device != nil else {
+            Issue.record("no input device connected; cannot run hardware check")
+            return
+        }
+
+        let capture = AudioCapture()
+        capture.deviceProvider = { store.effective.device?.id }
+
+        try capture.start()
+        try await Task.sleep(for: .seconds(2))
+        let first = capture.stop()
+
+        // The same engine object, started again.
+        try capture.start()
+        try await Task.sleep(for: .seconds(2))
+        let second = capture.stop()
+
+        print("hw-test: reuse frames = \(first.count) then \(second.count)")
+        #expect(first.count > 8_000,
+                "first recording delivered \(first.count) frames")
+        #expect(second.count > 8_000,
+                "reused engine delivered \(second.count) frames on its second recording — the tap did not fire")
+    }
 }
 
 final class NotificationCounter: @unchecked Sendable {

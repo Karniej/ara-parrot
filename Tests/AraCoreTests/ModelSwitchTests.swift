@@ -34,8 +34,13 @@ struct ModelLabelTests {
 
 @Suite("LanguageMenuCaption")
 struct LanguageMenuCaptionTests {
+    /// Built rather than looked up — the registry offers no English-only model
+    /// any more. See `LanguageMenuModelTests` for the same fixture and why.
     private var englishOnly: TranscriptionModel {
-        ModelRegistry.find("whisper-base.en")!
+        TranscriptionModel(
+            id: "whisper-base.en", displayName: "Whisper Base (English)",
+            engine: .whisperKit, whisperKitID: "openai_whisper-base.en",
+            sizeMB: 145, languages: ["en"], recommended: false)
     }
     private var multilingual: TranscriptionModel {
         ModelRegistry.find("whisper-large-v3-turbo")!

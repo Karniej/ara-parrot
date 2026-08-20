@@ -7,7 +7,13 @@ import SwiftUI
 public final class RecordingOverlay {
     public enum State: Equatable {
         case hidden
-        case recording
+        /// Capturing audio. `note` is a quiet second line under the waveform,
+        /// used by the warm-up ladder to say once — on the first press only —
+        /// that this utterance is going through the fast stand-in model
+        /// (`WarmupLadder`). It is `nil` for every ordinary recording, and
+        /// `nil` again for every press after the first, because repeating it
+        /// would be the friction the ladder exists to remove.
+        case recording(note: String?)
         case transcribing
         /// The daemon is not ready to dictate yet, and this is what it is
         /// doing about it — "downloading whisper-large-v3-turbo… 45%". Shown
@@ -39,7 +45,7 @@ public final class RecordingOverlay {
     public func show(_ state: State) {
         ensureWindow()
         showToken += 1
-        if state == .recording {
+        if case .recording = state {
             model.resetLevels()
         }
         guard let window else { return }
@@ -65,12 +71,22 @@ public final class RecordingOverlay {
         } else {
             model.state = state
         }
-        if case .error = state {
-            let token = showToken
-            DispatchQueue.main.asyncAfter(deadline: .now() + 1.6) { [weak self] in
-                guard let self, self.showToken == token else { return }
-                self.hide()
-            }
+        if case .error = state { hide(after: 1.6) }
+    }
+
+    /// Hide after `seconds`, unless something newer has been shown first.
+    ///
+    /// The token check is the whole point: a dictation started inside the
+    /// delay must not have its pill yanked off screen by a hide that was
+    /// scheduled for a message nobody is looking at any more. `.error` has
+    /// always self-hidden this way; the startup card uses the same mechanism
+    /// to clear itself once the daemon is ready, rather than owning a second
+    /// timer with the same bug to get wrong.
+    public func hide(after seconds: Double) {
+        let token = showToken
+        DispatchQueue.main.asyncAfter(deadline: .now() + seconds) { [weak self] in
+            guard let self, self.showToken == token else { return }
+            self.hide()
         }
     }
 
@@ -117,7 +133,26 @@ public final class RecordingOverlay {
         panel.hidesOnDeactivate = false
 
         let host = NSHostingView(rootView: OverlayPill(model: model))
-        host.frame = panel.contentView?.bounds ?? .zero
+        // Without this the panel above is decoration. `NSHostingView` reports
+        // an intrinsic content size by default, and as a window's contentView
+        // that size wins: measured, a panel built at 520x84 came up 362x44 —
+        // the pill's own size for whatever it happened to be showing.
+        //
+        // Two things follow, and both were reported from the field. A pill
+        // 44pt tall clips the two-line warm-up states, which want 54. And
+        // because the resize races the state change, the new text is laid out
+        // against the *old*, smaller width — "no audio captured" came out as
+        // three lines with "captured" broken across two of them, which needs a
+        // proposed width near sixty points.
+        //
+        // Emptying `sizingOptions` gives the panel its size back. The pill
+        // hugs its own content and centres inside, which is what it looked
+        // like all along when the race happened to go the other way; the panel
+        // is transparent and click-through, so the spare room costs nothing.
+        // `OverlayVisualCheck` pins both halves: that every message fits
+        // 520x84, and that the live panel actually proposes it.
+        host.sizingOptions = []
+        host.frame = NSRect(origin: .zero, size: panel.frame.size)
         host.autoresizingMask = [.width, .height]
         panel.contentView = host
 
@@ -174,7 +209,11 @@ private let errorTone = Color(red: 255/255.0, green: 163/255.0, blue: 150/255.0)
 /// still has a shape against a dark wallpaper.
 private let pillFill = Color(red: 10/255.0, green: 10/255.0, blue: 11/255.0)
 
-private struct OverlayPill: View {
+/// Internal rather than private so `OverlayVisualCheck` can render it offscreen
+/// at the panel's own proposed size. Its layout is not reasoned about well —
+/// a field screenshot showed this view's text overflowing its own background —
+/// and rendering it is the only way to check without a screen.
+struct OverlayPill: View {
     @ObservedObject var model: OverlayModel
 
     var body: some View {
@@ -203,9 +242,24 @@ private struct OverlayPill: View {
     @ViewBuilder
     private var content: some View {
         switch model.state {
-        case .hidden, .recording:
+        case .hidden, .recording(nil):
             Waveform(levels: model.levels)
                 .frame(width: 54, height: 22)
+        case .recording(let note?):
+            // The waveform keeps the headline slot — this is a recording, not
+            // a status message, and the bars are what say the audio is going
+            // in. The note takes `warmingUp`'s quiet second line, at the same
+            // size and opacity, because it is the same kind of sentence: the
+            // particular, one size down from what is happening.
+            HStack(spacing: 11) {
+                Waveform(levels: model.levels)
+                    .frame(width: 54, height: 22)
+                Text(note)
+                    .font(.system(size: 11.5, weight: .regular))
+                    .foregroundStyle(Color.white.opacity(0.5))
+                    .frame(maxWidth: 330, alignment: .leading)
+                    .fixedSize(horizontal: true, vertical: true)
+            }
         case .transcribing:
             ProgressView()
                 .controlSize(.small)
@@ -240,14 +294,14 @@ private struct OverlayPill: View {
                 // pill off the edge of a small screen; `fixedSize` then lets it
                 // take the second line it needs rather than truncating.
                 .frame(maxWidth: 330, alignment: .leading)
-                .fixedSize(horizontal: false, vertical: true)
+                .fixedSize(horizontal: true, vertical: true)
             }
         case .error(let message):
             Text(message)
                 .font(.system(size: 13, weight: .semibold))
                 .foregroundStyle(errorTone)
                 .frame(maxWidth: 330, alignment: .leading)
-                .fixedSize(horizontal: false, vertical: true)
+                .fixedSize(horizontal: true, vertical: true)
                 .frame(minHeight: 22)
         }
     }

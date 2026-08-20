@@ -6,11 +6,13 @@ import Foundation
 /// restart caption all live here, where a unit test can reach them without a
 /// screen.
 ///
-/// The caption is "applies on restart" because nothing re-arms the event tap
-/// live: `HotkeyMonitor` is started once with one `Hotkey` and the pick only
-/// changes what `StartupResolution.hotkey` resolves next launch. Re-arming
-/// the tap on a pick is a known follow-up (upstream PR #7 does it), not
-/// attempted here — this submenu stays honest about today's behaviour.
+/// There is no caption. There used to be one — "applies on restart" — because
+/// a pick wrote `config.json` and nothing else, and the armed tap kept
+/// answering to the old key until the next launch. `HotkeyMonitor.rearm` now
+/// makes the pick true the moment it is made, and a caption describing a wait
+/// that no longer happens would be the same lie pointed the other way.
+/// `caption` stays in the type as an optional so the submenu keeps one place
+/// to say something if it ever needs to again.
 public struct HotkeyMenuModel: Equatable, Sendable {
     /// One pickable key, shown under its human label ("right ⌘") while the
     /// pick persists the config spelling ("right-command") via
@@ -23,10 +25,11 @@ public struct HotkeyMenuModel: Equatable, Sendable {
     }
 
     public let items: [Item]
-    public let caption: String
+    public let caption: String?
 
-    /// The check sits on `current` — the key the running tap is armed with,
-    /// resolved at startup from flag, config and the Fn default.
+    /// The check sits on `current` — the key the running detector is armed
+    /// with, resolved at startup from flag, config and the Fn default, and
+    /// re-armed by every pick after that.
     public static func compute(current: Hotkey) -> HotkeyMenuModel {
         HotkeyMenuModel(
             items: Hotkey.allCases.map { hotkey in
@@ -34,6 +37,6 @@ public struct HotkeyMenuModel: Equatable, Sendable {
                      hotkey: hotkey,
                      checked: hotkey == current)
             },
-            caption: "applies on restart")
+            caption: nil)
     }
 }

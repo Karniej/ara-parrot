@@ -18,7 +18,9 @@ public final class MenuBarController {
     private let engineItem: NSMenuItem
     private let startAtLoginItem: NSMenuItem
     private let modelID: String
-    private let idleTitle: String
+    /// Names the hotkey, so it changes when the Hotkey submenu re-arms the
+    /// monitor — see `setHotkeyLabel`.
+    private var idleTitle: String
     /// What `setStartAtLogin` last read from disk; the toggle click requests
     /// the opposite. Never updated on a click — only from a fresh disk read.
     private var startAtLoginInstalled = false
@@ -68,8 +70,9 @@ public final class MenuBarController {
     /// AppKit.
     public var onModelPicked: ((String) -> Void)?
 
-    /// The user picked a key in the Hotkey submenu. Persists and applies on
-    /// restart — see `HotkeyMenuModel`. Invoked on the main thread by AppKit.
+    /// The user picked a key in the Hotkey submenu. Applies immediately to the
+    /// running monitor and persists across restarts — see `HotkeyMenuModel`.
+    /// Invoked on the main thread by AppKit.
     public var onHotkeyPicked: ((Hotkey) -> Void)?
 
     /// The user picked an engine in the Engine submenu. Persists and applies
@@ -93,7 +96,7 @@ public final class MenuBarController {
     ///   only the initial value; `setMode` keeps the label honest afterwards.
     public init(modelID: String, hotkeyLabel: String = "fn", modeID: String) {
         self.modelID = modelID
-        self.idleTitle = "idle · hold \(hotkeyLabel) to dictate"
+        self.idleTitle = Self.idleTitle(hotkeyLabel: hotkeyLabel)
         self.statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
 
         let menu = NSMenu()
@@ -255,6 +258,23 @@ public final class MenuBarController {
     /// by `clearNoMicrophone()` when a device returns while idle.
     public func setNoMicrophone() {
         stateLabel.title = Self.noMicrophoneTitle
+    }
+
+    /// The hotkey changed under a running daemon: the idle line names the key
+    /// to hold, and after a pick it names the wrong one.
+    ///
+    /// Repaints only when the line is currently the idle line, for
+    /// `clearNoMicrophone`'s reason: a pick made mid-recording must not
+    /// clobber "● recording", and the next `setRecording(false)` picks the new
+    /// title up anyway.
+    public func setHotkeyLabel(_ label: String) {
+        let previous = idleTitle
+        idleTitle = Self.idleTitle(hotkeyLabel: label)
+        if stateLabel.title == previous { stateLabel.title = idleTitle }
+    }
+
+    private static func idleTitle(hotkeyLabel: String) -> String {
+        "idle · hold \(hotkeyLabel) to dictate"
     }
 
     /// Restores the idle line — but only over the no-microphone message, so a
@@ -434,9 +454,9 @@ public final class MenuBarController {
             row.representedObject = item.hotkey.rawValue
             submenu.addItem(row)
         }
+        guard let text = model.caption else { return }
         submenu.addItem(.separator())
-        let caption = NSMenuItem(title: model.caption, action: nil,
-                                 keyEquivalent: "")
+        let caption = NSMenuItem(title: text, action: nil, keyEquivalent: "")
         caption.isEnabled = false
         submenu.addItem(caption)
     }

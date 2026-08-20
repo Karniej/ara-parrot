@@ -80,9 +80,9 @@ struct ModifierEdgeDetector {
     /// right-option, `0x2000` right-control.
     static let deviceBits: UInt64 = 0x0000_207F
 
-    private let classMask: UInt64
-    private let keyCode: Int64?
-    private let documentedDeviceBit: UInt64?
+    private var classMask: UInt64
+    private var keyCode: Int64?
+    private var documentedDeviceBit: UInt64?
 
     private var isPressed = false
     private var lastFlags: UInt64 = 0
@@ -132,6 +132,34 @@ struct ModifierEdgeDetector {
         }
 
         return edge(pressed: pressed)
+    }
+
+    /// Points the detector at a different key, for a pick made in the Hotkey
+    /// submenu while the daemon runs.
+    ///
+    /// This is the whole of a live hotkey switch. The event tap does not need
+    /// rebuilding: `HotkeyMonitor.eventMask` subscribes to every
+    /// `flagsChanged` event on the session, whichever key produced it, and the
+    /// tap has never known which of them was the hotkey — this type does. So
+    /// the switch is a field assignment plus `reset()`.
+    ///
+    /// `reset()` is not an optimisation here, it is the correctness argument:
+    /// `isPressed`, `lastFlags` and `learnedDeviceBits` all describe the *old*
+    /// key, and every one of them would be read as describing the new one.
+    /// The learned bit is the dangerous one — left in place, the old key's
+    /// next release would be reported as the new key going up, for a key the
+    /// user never touched.
+    ///
+    /// Its return value carries the same meaning it does after a tap gap: a
+    /// hold in flight on the old key ends as a release edge, so a recording
+    /// started by the key that is no longer the hotkey still stops through the
+    /// ordinary path with its transcript intact.
+    mutating func rearm(to hotkey: Hotkey) -> Edge? {
+        let ending = reset()
+        classMask = hotkey.mask.rawValue
+        keyCode = hotkey.keyCode
+        documentedDeviceBit = hotkey.documentedDeviceBit
+        return ending
     }
 
     /// Forgets everything, for use after a gap in the event stream — macOS

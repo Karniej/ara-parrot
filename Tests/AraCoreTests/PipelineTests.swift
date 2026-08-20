@@ -40,6 +40,13 @@ private final class RequestBox: @unchecked Sendable {
     var current: URLRequest? { lock.lock(); defer { lock.unlock() }; return request }
 }
 
+private final class SignalCounter: @unchecked Sendable {
+    private let lock = NSLock()
+    private var value = 0
+    func bump() { lock.lock(); value += 1; lock.unlock() }
+    var count: Int { lock.lock(); defer { lock.unlock() }; return value }
+}
+
 /// Everything the daemon decides from `config.json`, verified through the
 /// pipeline it actually assembles.
 ///
@@ -123,6 +130,25 @@ struct PipelineTests {
                                 })
             .process(Self.filler, override: nil, manual: nil, frontmostBundleID: nil)
         #expect(out == "Hello there friend.")
+    }
+
+    @Test("an unwarmed MLX formatter is not a per-utterance degradation")
+    func unwarmedMLXIsSilent() async {
+        let notices = SignalCounter()
+        let unwarmed = MLXFormatter(
+            isModelPresent: { true },
+            load: {
+                Issue.record("format triggered a model load")
+                return { _, _ in "unused" }
+            })
+        let config = Config()
+        let output = await Pipeline.makeSession(
+            config: config, apiKey: nil, mlx: unwarmed, apple: nil,
+            onDegrade: { _ in notices.bump() })
+            .process(Self.filler, override: nil, manual: nil,
+                     frontmostBundleID: nil)
+        #expect(!output.isEmpty)
+        #expect(notices.count == 0)
     }
 
     @Test("engine .cloud falls back to MLX, not to the Apple model")

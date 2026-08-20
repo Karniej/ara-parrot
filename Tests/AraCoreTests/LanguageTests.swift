@@ -150,11 +150,21 @@ struct LanguagePlanTests {
         engine: .whisperKit, whisperKitID: "openai_whisper-large-v3-v20240930_turbo",
         sizeMB: 1620, languages: ["multi"], recommended: false)
 
-    @Test("the registry's own models classify as expected")
+    /// Every offered model is multilingual now — the two `.en` entries were
+    /// dropped, because picking one silently turned language detection off.
+    /// The English-only *classification* still has to work: `LanguagePlan` and
+    /// `LanguageMenuModel` both branch on it, the stand-in in `WarmupLadder`
+    /// depends on being multilingual, and an `.en` model added back must be
+    /// recognised rather than quietly treated as multilingual.
+    @Test("every offered model is multilingual, and the classifier still works")
     func registryClassification() {
-        #expect(ModelRegistry.find("whisper-base.en")?.isEnglishOnly == true)
-        #expect(ModelRegistry.find("whisper-small.en")?.isEnglishOnly == true)
-        #expect(ModelRegistry.find("whisper-large-v3-turbo")?.isEnglishOnly == false)
+        #expect(!ModelRegistry.shared.isEmpty)
+        for model in ModelRegistry.shared {
+            #expect(!model.isEnglishOnly, "\(model.id) is English-only")
+        }
+        #expect(!ModelRegistry.bootstrap.isEnglishOnly)
+        #expect(englishOnly.isEnglishOnly)
+        #expect(!multilingual.isEnglishOnly)
     }
 
     /// The bug, pinned: a multilingual model on `auto` must ask WhisperKit to
