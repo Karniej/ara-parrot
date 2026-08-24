@@ -102,6 +102,24 @@ struct WarmupLadderTests {
         #expect(!WarmupLadder.isFatal(targetFailed: false, bootstrapServing: true))
     }
 
+    // MARK: - whether the gate waits for the ladder
+
+    /// The rule that decides how long a warm start takes. The ladder's task
+    /// sleeps before it checks anything, so waiting for it charged every warm
+    /// launch the full delay for a stand-in that was never going to be built.
+    @Test("a chosen model that loaded opens the gate without waiting for the ladder")
+    func successDoesNotWaitForTheLadder() {
+        #expect(!WarmupLadder.awaitsBootstrap(targetFailed: false))
+    }
+
+    /// The other half, and the reason this is a rule rather than "never wait":
+    /// `isFatal` reads whether the bootstrap is serving, and a bootstrap still
+    /// loading reads the same as one that never started.
+    @Test("a chosen model that failed waits for the ladder before deciding")
+    func failureWaitsForTheLadder() {
+        #expect(WarmupLadder.awaitsBootstrap(targetFailed: true))
+    }
+
     // MARK: - what the user is told
 
     /// It answers one question — "why is this transcript worse than usual?" —

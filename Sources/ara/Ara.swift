@@ -74,6 +74,27 @@ struct Run: ParsableCommand {
         // found in. See `CrashBacktrace`.
         CrashBacktrace.install()
 
+        // The permissions, before anything else looks at anything. Both gate
+        // the whole product — no microphone is no audio, and no accessibility
+        // means `HotkeyMonitor.start` cannot create its tap at all — and
+        // neither can be repaired inside a running process: macOS decides a
+        // process's accessibility trust when it starts. So a launch that finds
+        // one missing spends itself asking for it and restarts.
+        //
+        // `--skip-doctor` turns this off with the rest of the preflight. It is
+        // the flag for a developer who knows what is granted to what, and a
+        // window is a worse interruption to them than a failed tap.
+        if !skipDoctor {
+            let microphone = SetupPermissions.microphone()
+            let accessibility = SetupPermissions.accessibility()
+            if microphone != .granted || !accessibility {
+                MainActor.assumeIsolated {
+                    FirstRunSetup.runPermissions(
+                        step: microphone == .granted ? .accessibility : .microphone)
+                }
+            }
+        }
+
         if !skipDoctor {
             let checks = DoctorReport.run()
             if !DoctorReport.allOK(checks) {
@@ -229,6 +250,47 @@ struct Run: ParsableCommand {
         // with a file listing, and calling a warm start's etag check
         // "downloading" for those seconds would be a claim the pill then has to
         // take back.
+        // The model half of the first run: the download and the compile, which
+        // are the same warm-up every launch runs and the only two steps left
+        // by the time the permissions are settled. `nil` on every launch after
+        // the first, which is when the menu bar and the pill take the job
+        // back.
+        //
+        // The permissions are read again rather than assumed from the branch
+        // above: `--skip-doctor` skips that branch entirely, and a window that
+        // opened on a stale assumption would sit on a step it cannot advance.
+        let setupState = SetupFlow.State(
+            microphone: SetupPermissions.microphone(),
+            accessibility: SetupPermissions.accessibility(),
+            modelPresent: WhisperModelStore.isPresent(chosenModel),
+            setupCompleted: config.setupCompleted)
+        let makeSetupWindow: @MainActor () -> SetupWindow? = {
+            let window = SetupWindow()
+            // Not activating: this one opens in the middle of a launch the
+            // user has already walked away from, and it has nothing to ask
+            // them for. Closing it is equally cheap — the daemon carries on
+            // compiling and the menu bar still says what it is doing — so
+            // there is nothing to report and nothing to stop.
+            window.show(step: .prepare, activating: false)
+            FileHandle.standardError.write(Data(
+                ("opening the setup window: this build has to be compiled for "
+                    + "this Mac once\n").utf8))
+            return window
+        }
+        let openSetupWindow: (@MainActor () -> SetupWindow?)? =
+            skipDoctor ? nil : makeSetupWindow
+        let setupWindow: SetupWindow? = MainActor.assumeIsolated {
+            guard !skipDoctor, SetupFlow.isNeeded(setupState) else { return nil }
+            let window = SetupWindow()
+            window.show(step: SetupFlow.step(setupState))
+            return window
+        }
+        // Reached only with both permissions already granted — the branch at
+        // the top of `run` never returns otherwise — so every step this window
+        // can show is one the daemon is working through on its own. A close is
+        // a user dismissing a progress report, and the warm-up behind it is
+        // untouched.
+
         let warmup = MainActor.assumeIsolated {
             WarmupState(
                 status: WarmupStatus(
@@ -238,7 +300,9 @@ struct Run: ParsableCommand {
                     formatter: warmsMLX ? .loading : .notLoading),
                 overlay: overlay,
                 menuBar: menuBar,
-                readyMessage: WarmupStatus.readyMessage(hotkeyLabel: hotkeyLabel))
+                readyMessage: WarmupStatus.readyMessage(hotkeyLabel: hotkeyLabel),
+                setup: setupWindow,
+                openSetup: openSetupWindow)
         }
 
         // The dictionary itself is loaded per utterance — that is the entire
@@ -261,6 +325,11 @@ struct Run: ParsableCommand {
         // Armed by the ladder if it ever adopts the stand-in model, read by the
         // first hotkey press after that and by no press after it.
         let pressNote = MainActor.assumeIsolated { PressNote() }
+        // Which utterance owns the pill and the menu state. Utterances overlap
+        // — a second press lands while the first is still transcribing — and
+        // without this the first one's completion clears the screen out from
+        // under the recording the user is in the middle of.
+        let utterances = MainActor.assumeIsolated { UtteranceGeneration() }
         let mlx = Pipeline.mlxFormatter(
             timeoutBase: .milliseconds(config.timeoutMs),
             onOverrun: {
@@ -292,6 +361,22 @@ struct Run: ParsableCommand {
         let declareReady: @MainActor () -> Void = {
             guard warmup.finish() else { return }
             menuBar.setReady()
+            // The compile has finished at least once, which is the one part of
+            // `SetupFlow.State` nothing can look up. Written here rather than
+            // when the window closes because it is true whether or not there
+            // was a window: a `--skip-doctor` launch that reaches this line has
+            // paid the same compile, and the next ordinary launch should not
+            // reopen the window to watch it again.
+            //
+            // A write that fails is a window shown once more, which is why it
+            // is a warning and not a failure.
+            if !config.setupCompleted {
+                do { try Config.persistSetupCompleted(true) }
+                catch {
+                    FileHandle.standardError.write(Data(
+                        "config: could not record that setup finished (\(error))\n".utf8))
+                }
+            }
             guard !announcedReady.value else { return }
             announcedReady.value = true
             FileHandle.standardError.write(Data(
@@ -664,6 +749,12 @@ struct Run: ParsableCommand {
                     if MainActor.assumeIsolated({ warmup.consumesPress() }) {
                         return
                     }
+                    // Claims the screen before the capture is attempted, so a
+                    // press that fails to start owns its "no microphone" pill
+                    // exactly as a successful one owns its waveform. Every
+                    // press past the warm-up gate issues a token, which is
+                    // what lets the release below assume it has one.
+                    MainActor.assumeIsolated { _ = utterances.begin() }
                     do {
                         try capture.start()
                         FileHandle.standardError.write(Data("● recording\n".utf8))
@@ -708,12 +799,30 @@ struct Run: ParsableCommand {
                     // mode override rides the same sample for the same reason:
                     // a pick made while this utterance formats belongs to the
                     // next one.
-                    let (frontmostBundleID, manualModeID): (String?, String?)
+                    // `utteranceToken` rides along for the same reason as the
+                    // bundle ID: what it identifies is *this* utterance, and
+                    // by the time the work below finishes the user may have
+                    // started another one.
+                    let (frontmostBundleID, manualModeID, utteranceToken): (String?, String?, Int?)
                         = MainActor.assumeIsolated {
                         let id = FrontmostApp.bundleID
                         overlay?.show(.transcribing)
                         menuBar.setTranscribing()
-                        return (id, manualMode.id)
+                        return (id, manualMode.id, utterances.token)
+                    }
+                    /// Whether this utterance still owns the screen — false
+                    /// once the user has pressed the hotkey again, which is
+                    /// the whole point: a completion that lands during the
+                    /// *next* recording must deliver its text and then leave
+                    /// the pill and the menu state alone.
+                    ///
+                    /// A missing token means no press ever claimed the screen,
+                    /// which no ordinary release can produce. It answers true
+                    /// there: with nothing newer to protect, the risk worth
+                    /// avoiding is a pill left on screen for good.
+                    let ownsScreen: @MainActor () -> Bool = {
+                        guard let utteranceToken else { return true }
+                        return utterances.isCurrent(utteranceToken)
                     }
                     let seconds = Double(samples.count) / AudioCapture.targetSampleRate
                     let rms = computeRMS(samples)
@@ -767,6 +876,7 @@ struct Run: ParsableCommand {
                                 FileHandle.standardError.write(Data(
                                     "  nothing to transcribe: \(empty.reason)\n".utf8))
                                 await MainActor.run {
+                                    guard ownsScreen() else { return }
                                     overlay?.show(.error(empty.message))
                                     menuBar.setRecording(false)
                                 }
@@ -818,12 +928,14 @@ struct Run: ParsableCommand {
                                     case .paste: pasteInjector.inject(cleaned)
                                     }
                                 }
+                                guard ownsScreen() else { return }
                                 overlay?.hide()
                                 menuBar.setRecording(false)
                             }
                         } catch {
                             FileHandle.standardError.write(Data("transcription failed: \(error)\n".utf8))
                             await MainActor.run {
+                                guard ownsScreen() else { return }
                                 overlay?.hide()
                                 menuBar.setRecording(false)
                             }
@@ -989,9 +1101,48 @@ struct Run: ParsableCommand {
             }()
             let startupResult = await transcriberResult
             let mlxWarmupError = await mlxResult
+            // A warning, not a failure. Transcription without formatting is
+            // the whole app minus its polish; formatting without transcription
+            // is nothing. So a missing Whisper model is fatal below and a
+            // missing formatting model is one line here, with the command that
+            // fixes it. Hoisted into a closure because the two paths below
+            // report it at different moments and neither may skip it.
+            let reportFormatterWarning: @MainActor () -> Void = {
+                guard let mlxWarmupError else { return }
+                let detail: String
+                if case .transportFailure(let message)? = mlxWarmupError as? FormatterError {
+                    detail = message
+                } else {
+                    detail = "\(mlxWarmupError)"
+                }
+                FileHandle.standardError.write(Data(
+                    "! local formatting unavailable: \(detail)\n".utf8))
+                FileHandle.standardError.write(Data(
+                    "  dictation will use rule-based cleanup until then\n".utf8))
+            }
+            // The gate does not wait for the ladder when the chosen model
+            // loaded — `WarmupLadder.awaitsBootstrap` is the whole rule and
+            // the reason a warm start is 2.5s rather than 5s. The ladder's
+            // task sleeps before it checks anything, so awaiting it here used
+            // to charge every warm launch for a stand-in that was never going
+            // to be built.
+            guard WarmupLadder.awaitsBootstrap(targetFailed: startupResult.error != nil) else {
+                await MainActor.run {
+                    reportFormatterWarning()
+                    if running.generation == startupGeneration, !startupResult.superseded {
+                        declareReady()
+                    }
+                }
+                // Still awaited, so this block owns every task it started —
+                // just no longer in front of the gate. It is asleep on its own
+                // timer and will find the chosen model landed when it wakes.
+                await bootstrapDone
+                return
+            }
             // Awaited so this block owns every task it started, the reason the
             // MLX result is awaited even on a fatal path. By now it has either
-            // adopted, lost the race, or given up.
+            // adopted, lost the race, or given up — which is what `isFatal`
+            // below needs, because a bootstrap mid-load reads as "not serving".
             await bootstrapDone
             await MainActor.run {
                 if running.generation == startupGeneration,
@@ -1015,23 +1166,7 @@ struct Run: ParsableCommand {
                         ("still dictating with \(running.model.id); pick the model "
                             + "again from the menu to retry\n").utf8))
                 }
-                // A warning, not a failure. Transcription without formatting
-                // is the whole app minus its polish; formatting without
-                // transcription is nothing. So a missing Whisper model is
-                // fatal above and a missing formatting model is one line
-                // here, with the command that fixes it.
-                if let mlxWarmupError {
-                    let detail: String
-                    if case .transportFailure(let message)? = mlxWarmupError as? FormatterError {
-                        detail = message
-                    } else {
-                        detail = "\(mlxWarmupError)"
-                    }
-                    FileHandle.standardError.write(Data(
-                        "! local formatting unavailable: \(detail)\n".utf8))
-                    FileHandle.standardError.write(Data(
-                        "  dictation will use rule-based cleanup until then\n".utf8))
-                }
+                reportFormatterWarning()
                 if running.generation == startupGeneration, !startupResult.superseded {
                     declareReady()
                 }
@@ -1272,6 +1407,27 @@ private final class WarmupState {
     private var status: WarmupStatus
     private let overlay: RecordingOverlay?
     private let menuBar: MenuBarController
+    /// The first-run window, on the launches that have one. It shows the same
+    /// phases as the pill and the menu line, because it is the same warm-up —
+    /// what differs is who is looking. A returning user has met the menu bar;
+    /// someone who installed ara five seconds ago has met nothing, and the
+    /// window is the only surface they know about.
+    ///
+    /// A `var`, because a launch can acquire one it did not start with. The
+    /// Core ML compile is keyed on the signing identity as well as the macOS
+    /// build, so *every ara update* pays it again — and by then `setupCompleted`
+    /// is long since true and this would otherwise be `nil` through the one
+    /// wait it exists to explain.
+    private var setup: SetupWindow?
+    /// Opens a window mid-warm-up. `nil` under `--skip-doctor`, which turns
+    /// off the whole preflight, and only that.
+    ///
+    /// Deliberately not `--no-overlay`. That flag turns off the *recording
+    /// overlay* — the pill that appears over whatever the user is working in,
+    /// every time they dictate — and someone who wants their screen left alone
+    /// during dictation has not thereby asked to be told nothing about a
+    /// three-minute compile they can neither see nor explain.
+    private let openSetup: (@MainActor () -> SetupWindow?)?
     /// Names the hotkey, so a pick made *during* the warm-up has to move it —
     /// which is exactly when a user is most likely to be poking at the menu,
     /// because the daemon is not yet doing anything else.
@@ -1293,11 +1449,15 @@ private final class WarmupState {
     private var handedOver = false
 
     init(status: WarmupStatus, overlay: RecordingOverlay?,
-         menuBar: MenuBarController, readyMessage: String) {
+         menuBar: MenuBarController, readyMessage: String,
+         setup: SetupWindow? = nil,
+         openSetup: (@MainActor () -> SetupWindow?)? = nil) {
         self.status = status
         self.overlay = overlay
         self.menuBar = menuBar
         self.readyMessage = readyMessage
+        self.setup = setup
+        self.openSetup = openSetup
         // The state line's first value. From here the warm-up owns it until
         // `MenuBarController.setReady()`.
         if let message = status.message {
@@ -1370,6 +1530,11 @@ private final class WarmupState {
         status.transcriber = nil
         overlay?.show(.warmingUp(title: readyMessage, detail: nil))
         overlay?.hide(after: Self.readyLingerSeconds)
+        // The window's whole job was the wait, and the wait is over. It closes
+        // rather than showing a "done" step nobody asked to read: the pill is
+        // already saying the same thing, in the place the user will meet it
+        // every day from now on.
+        setup?.close()
         return true
     }
 
@@ -1377,6 +1542,32 @@ private final class WarmupState {
         guard !handedOver, let message = status.message else { return }
         menuBar.setWarmingUp(message)
         overlay?.show(.warmingUp(title: message, detail: status.detail))
+        repaintSetup()
+    }
+
+    /// The same phases, rendered as the first-run window's two working steps.
+    /// A download has a percentage to show; everything else is the load, and
+    /// the load's honest report is a clock — Core ML says nothing at all from
+    /// inside the compile.
+    private func repaintSetup() {
+        // The compile has been running for over twenty seconds
+        // (`WhisperWarmupPlan.specialisationThreshold`), which is the only
+        // observable evidence that this launch is paying it. On a first run
+        // there is already a window; after an update there is not, and this is
+        // where it gets one. A load that finishes quickly never reaches this
+        // phase and never opens anything.
+        if status.transcriber == .preparingNeuralEngine, setup == nil {
+            setup = openSetup?()
+        }
+        guard let setup else { return }
+        switch status.transcriber {
+        case .downloading(let percent):
+            setup.update(step: .download, activity: .downloading(percent: percent))
+        case .loading, .preparingNeuralEngine:
+            setup.update(step: .prepare, activity: .preparing(seconds: 0))
+        case nil:
+            break
+        }
     }
 }
 

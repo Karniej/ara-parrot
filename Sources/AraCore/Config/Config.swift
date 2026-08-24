@@ -77,6 +77,20 @@ public struct Config: Codable, Sendable {
     /// engine downgrade. The warning in `load` names the valid shapes.
     public var language: LanguageSetting = .automatic
 
+    /// Whether the first-run window has ever run to completion.
+    ///
+    /// The only piece of `SetupFlow.State` that is remembered rather than
+    /// looked up. The other three — both permissions and the model on disk —
+    /// are live system state, and reading them fresh is what brings the window
+    /// back when a user revokes a grant. This one cannot be read at all: it
+    /// stands for "Core ML has finished compiling the model for this machine",
+    /// and that cache is private to Core ML and keyed on a signing identity we
+    /// have no API for.
+    ///
+    /// Absent means "not yet", which is the right answer for every install
+    /// that predates this key as well as for every new one.
+    public var setupCompleted: Bool = false
+
     /// Set during decoding when `cleanup` was present but not one of its four
     /// spellings; `load` turns it into the warning, exactly as
     /// `microphoneProblem` below.
@@ -257,6 +271,16 @@ public struct Config: Codable, Sendable {
         try rewriteOneKey("model", to: id, at: url)
     }
 
+    /// Sets the `setupCompleted` key, with the guarantees above — the same
+    /// rewrite. Written once, by the first-run window, when the model has
+    /// finished compiling for this machine; nothing clears it, because the
+    /// compile it records does not come undone. A user who wants the window
+    /// back can delete the key.
+    public static func persistSetupCompleted(_ completed: Bool,
+                                             at url: URL? = nil) throws {
+        try rewriteOneKey("setupCompleted", to: completed, at: url)
+    }
+
     /// Sets the `hotkey` key, with the guarantees above — the same rewrite.
     /// Takes the enum rather than a string so a menu pick cannot write a
     /// spelling `StartupResolution.hotkey` would warn about and discard.
@@ -352,7 +376,7 @@ public struct Config: Codable, Sendable {
 
     private enum CodingKeys: String, CodingKey {
         case engine, timeoutMs, mode, hotkey, model, cloud, microphone, inject, pasteRestoreMs,
-             cleanup, language
+             cleanup, language, setupCompleted
     }
 
     public init(from decoder: Decoder) throws {
@@ -365,6 +389,10 @@ public struct Config: Codable, Sendable {
         cloud = try c.decodeIfPresent(CloudConfig.self, forKey: .cloud)
         inject = try c.decodeIfPresent(String.self, forKey: .inject)
         pasteRestoreMs = try c.decodeIfPresent(Int.self, forKey: .pasteRestoreMs) ?? 300
+        // Absent is "not yet": every install that predates this key has never
+        // shown the first-run window, and showing it once more is cheap —
+        // it lands on `.done` the moment the compile finishes.
+        setupCompleted = try c.decodeIfPresent(Bool.self, forKey: .setupCompleted) ?? false
         do {
             microphone = try c.decodeIfPresent(String.self, forKey: .microphone)
         } catch {

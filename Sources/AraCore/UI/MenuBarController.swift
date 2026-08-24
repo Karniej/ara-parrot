@@ -226,6 +226,7 @@ public final class MenuBarController {
 
     public func setRecording(_ recording: Bool) {
         stateLabel.title = recording ? "● recording" : idleTitle
+        configureButton(recording: recording)
     }
 
     /// The daemon is loading models and cannot dictate yet: holding the key
@@ -651,35 +652,16 @@ public final class MenuBarController {
         onCorrectionAdded?(heard, canonical)
     }
 
+    /// The status item's mark, amber while the microphone is open.
+    ///
+    /// The colour is the whole signal, and it is the only place in the daemon
+    /// allowed to use it: amber means recording, here and in the overlay pill,
+    /// exactly as it does in the iOS app. Every other state is the template
+    /// image, which macOS tints to match the menu bar itself.
     private func configureButton(recording: Bool) {
         guard let button = statusItem.button else { return }
-        let image = Self.birdImage()
-        image?.isTemplate = true
-        button.image = image
-    }
-
-    // Inlined Lucide bird SVG. Keeping it in source means the executable has
-    // no separate resource bundle to install alongside it — true single-binary.
-    private static let birdSVG = """
-    <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" \
-    viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" \
-    stroke-linecap="round" stroke-linejoin="round">\
-    <path d="M16 7h.01"/>\
-    <path d="M3.4 18H12a8 8 0 0 0 8-8V7a4 4 0 0 0-7.28-2.3L2 20"/>\
-    <path d="m20 7 2 .5-2 .5"/>\
-    <path d="M10 18v3"/>\
-    <path d="M14 17.75V21"/>\
-    <path d="M7 18a6 6 0 0 0 3.84-10.61"/>\
-    </svg>
-    """
-
-    private static func birdImage() -> NSImage? {
-        guard let data = birdSVG.data(using: .utf8),
-              let image = NSImage(data: data)
-        else { return nil }
-        // Menu-bar status icons are nominally 18pt tall; size the SVG to match.
-        image.size = NSSize(width: 16, height: 16)
-        return image
+        button.image = AraMarkImage.mark(
+            height: 16, tint: recording ? AraMarkImage.recordingInk : nil)
     }
 
     @objc private func quitClicked() {

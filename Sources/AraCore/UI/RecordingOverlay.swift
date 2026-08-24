@@ -203,11 +203,16 @@ final class OverlayModel: ObservableObject {
 /// Deliberately not blue: a cool blue on near-black is the default every
 /// AI-adjacent menu-bar app arrives at, and amber ties the overlay to the
 /// recording glyph in the menu bar, which is already warm.
-private let accent = Color(red: 255/255.0, green: 190/255.0, blue: 118/255.0)
-private let errorTone = Color(red: 255/255.0, green: 163/255.0, blue: 150/255.0)
-/// Near-black rather than the old charcoal, with a hairline edge so the pill
-/// still has a shape against a dark wallpaper.
-private let pillFill = Color(red: 10/255.0, green: 10/255.0, blue: 11/255.0)
+/// All four now come from `Brand`, which is the iOS app's `Theme` ported. The
+/// values here were arrived at independently and had already converged on the
+/// same amber; what changed is that there is now one place to change them, and
+/// a second surface — the first-run window — that has to agree.
+private let accent = Brand.accentFill
+private let errorTone = Brand.danger
+/// The readout black, and a warm hairline so the pill still has a shape
+/// against a dark wallpaper.
+private let pillFill = Brand.window
+private let pillEdge = Brand.windowEdge
 
 /// Internal rather than private so `OverlayVisualCheck` can render it offscreen
 /// at the panel's own proposed size. Its layout is not reasoned about well —
@@ -225,11 +230,11 @@ struct OverlayPill: View {
                 // around two lines of text bows out at the ends and wastes the
                 // width the second line needs. At the one-line height this is
                 // within two points of a capsule anyway.
-                RoundedRectangle(cornerRadius: 18, style: .continuous)
+                RoundedRectangle(cornerRadius: Brand.pillCornerRadius, style: .continuous)
                     .fill(pillFill)
                     .overlay(
-                        RoundedRectangle(cornerRadius: 18, style: .continuous)
-                            .strokeBorder(Color.white.opacity(0.09), lineWidth: 1)
+                        RoundedRectangle(cornerRadius: Brand.pillCornerRadius, style: .continuous)
+                            .strokeBorder(pillEdge, lineWidth: 1)
                     )
             )
             .scaleEffect(model.state == .hidden ? 0 : 1)
@@ -256,7 +261,7 @@ struct OverlayPill: View {
                     .frame(width: 54, height: 22)
                 Text(note)
                     .font(.system(size: 11.5, weight: .regular))
-                    .foregroundStyle(Color.white.opacity(0.5))
+                    .foregroundStyle(Brand.windowInkSecondary)
                     .frame(maxWidth: 330, alignment: .leading)
                     .fixedSize(horizontal: true, vertical: true)
             }
@@ -287,7 +292,7 @@ struct OverlayPill: View {
                     if let detail {
                         Text(detail)
                             .font(.system(size: 11.5, weight: .regular))
-                            .foregroundStyle(Color.white.opacity(0.5))
+                            .foregroundStyle(Brand.windowInkSecondary)
                     }
                 }
                 // Bounded so a long model id wraps instead of stretching the
