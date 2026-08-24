@@ -261,6 +261,11 @@ struct Run: ParsableCommand {
         // Armed by the ladder if it ever adopts the stand-in model, read by the
         // first hotkey press after that and by no press after it.
         let pressNote = MainActor.assumeIsolated { PressNote() }
+        // Which utterance owns the pill and the menu state. Utterances overlap
+        // — a second press lands while the first is still transcribing — and
+        // without this the first one's completion clears the screen out from
+        // under the recording the user is in the middle of.
+        let utterances = MainActor.assumeIsolated { UtteranceGeneration() }
         let mlx = Pipeline.mlxFormatter(
             timeoutBase: .milliseconds(config.timeoutMs),
             onOverrun: {
@@ -664,6 +669,12 @@ struct Run: ParsableCommand {
                     if MainActor.assumeIsolated({ warmup.consumesPress() }) {
                         return
                     }
+                    // Claims the screen before the capture is attempted, so a
+                    // press that fails to start owns its "no microphone" pill
+                    // exactly as a successful one owns its waveform. Every
+                    // press past the warm-up gate issues a token, which is
+                    // what lets the release below assume it has one.
+                    MainActor.assumeIsolated { _ = utterances.begin() }
                     do {
                         try capture.start()
                         FileHandle.standardError.write(Data("● recording\n".utf8))
@@ -708,12 +719,30 @@ struct Run: ParsableCommand {
                     // mode override rides the same sample for the same reason:
                     // a pick made while this utterance formats belongs to the
                     // next one.
-                    let (frontmostBundleID, manualModeID): (String?, String?)
+                    // `utteranceToken` rides along for the same reason as the
+                    // bundle ID: what it identifies is *this* utterance, and
+                    // by the time the work below finishes the user may have
+                    // started another one.
+                    let (frontmostBundleID, manualModeID, utteranceToken): (String?, String?, Int?)
                         = MainActor.assumeIsolated {
                         let id = FrontmostApp.bundleID
                         overlay?.show(.transcribing)
                         menuBar.setTranscribing()
-                        return (id, manualMode.id)
+                        return (id, manualMode.id, utterances.token)
+                    }
+                    /// Whether this utterance still owns the screen — false
+                    /// once the user has pressed the hotkey again, which is
+                    /// the whole point: a completion that lands during the
+                    /// *next* recording must deliver its text and then leave
+                    /// the pill and the menu state alone.
+                    ///
+                    /// A missing token means no press ever claimed the screen,
+                    /// which no ordinary release can produce. It answers true
+                    /// there: with nothing newer to protect, the risk worth
+                    /// avoiding is a pill left on screen for good.
+                    let ownsScreen: @MainActor () -> Bool = {
+                        guard let utteranceToken else { return true }
+                        return utterances.isCurrent(utteranceToken)
                     }
                     let seconds = Double(samples.count) / AudioCapture.targetSampleRate
                     let rms = computeRMS(samples)
@@ -767,6 +796,7 @@ struct Run: ParsableCommand {
                                 FileHandle.standardError.write(Data(
                                     "  nothing to transcribe: \(empty.reason)\n".utf8))
                                 await MainActor.run {
+                                    guard ownsScreen() else { return }
                                     overlay?.show(.error(empty.message))
                                     menuBar.setRecording(false)
                                 }
@@ -818,12 +848,14 @@ struct Run: ParsableCommand {
                                     case .paste: pasteInjector.inject(cleaned)
                                     }
                                 }
+                                guard ownsScreen() else { return }
                                 overlay?.hide()
                                 menuBar.setRecording(false)
                             }
                         } catch {
                             FileHandle.standardError.write(Data("transcription failed: \(error)\n".utf8))
                             await MainActor.run {
+                                guard ownsScreen() else { return }
                                 overlay?.hide()
                                 menuBar.setRecording(false)
                             }
