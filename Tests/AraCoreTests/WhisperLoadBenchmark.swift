@@ -203,9 +203,17 @@ struct WhisperLoadBenchmark {
         let warm = ContinuousClock.now - t0
         Self.line("warmUp()", warm)
 
-        let t1 = ContinuousClock.now
-        _ = try await transcriber.transcribe(Self.audio())
-        Self.line("first transcribe()", ContinuousClock.now - t1)
+        // Three rounds, not one. The first transcription pays costs that
+        // never recur — lazily built Core ML state, the first GPU command
+        // buffer — and comparing a first round against another path's steady
+        // state is how a compute unit gets credited with a win it does not
+        // have. What decides between the Neural Engine and the GPU is what an
+        // ordinary utterance costs, which is rounds two and three.
+        for round in 1...3 {
+            let t = ContinuousClock.now
+            _ = try await transcriber.transcribe(Self.audio())
+            Self.line("transcription \(round)", ContinuousClock.now - t)
+        }
     }
 
     // MARK: - the compute unit the specialisation is for
@@ -229,6 +237,43 @@ struct WhisperLoadBenchmark {
         let config = WhisperKitConfig(
             model: variant, modelFolder: folder.path,
             computeOptions: ModelComputeOptions(audioEncoderCompute: .cpuAndGPU),
+            verbose: false, prewarm: false, load: true, download: false)
+        let kit = try await WhisperKit(config)
+        Self.line("WhisperKit(config) prewarm:false load:true", ContinuousClock.now - t1)
+        print("      encoder load: "
+            + "\(String(format: "%.2f", kit.currentTimings.encoderLoadTime))s"
+            + ", decoder load: "
+            + "\(String(format: "%.2f", kit.currentTimings.decoderLoadTime))s")
+
+        for round in 1...3 {
+            let t = ContinuousClock.now
+            _ = try await kit.transcribe(audioArray: Self.audio())
+            Self.line("transcription \(round)", ContinuousClock.now - t)
+        }
+    }
+
+    /// The same load with the encoder left on the Neural Engine — the other
+    /// half of the comparison `WhisperComputePlan` is decided on.
+    ///
+    /// Run it in the same session as `encoderOnGPU`, never against a number
+    /// from another day: both paths move with what else the machine is doing,
+    /// and the difference between them is small enough for that to swamp it.
+    /// The load figure here is only meaningful on a client identity that has
+    /// already paid the specialisation once; a cold one reports the compile,
+    /// which is the wait, not the load.
+    @Test("audio encoder on the Neural Engine")
+    func encoderOnANE() async throws {
+        guard Self.enabled else { return }
+        let model = Self.model
+        try #require(WhisperModelStore.isPresent(model), "download \(model.id) first")
+        let variant = model.whisperKitID!
+
+        print("\n=== \(model.id) — audioEncoderCompute: .cpuAndNeuralEngine ===")
+        let folder = WhisperModelStore.directory(for: model)!
+        let t1 = ContinuousClock.now
+        let config = WhisperKitConfig(
+            model: variant, modelFolder: folder.path,
+            computeOptions: ModelComputeOptions(audioEncoderCompute: .cpuAndNeuralEngine),
             verbose: false, prewarm: false, load: true, download: false)
         let kit = try await WhisperKit(config)
         Self.line("WhisperKit(config) prewarm:false load:true", ContinuousClock.now - t1)

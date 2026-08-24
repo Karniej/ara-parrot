@@ -114,6 +114,31 @@ public enum WarmupLadder {
         targetFailed && !bootstrapServing
     }
 
+    /// Whether the daemon must wait for the ladder's task to settle before it
+    /// decides what to do about the warm-up's outcome.
+    ///
+    /// ## Why waiting was costing every warm launch two and a half seconds
+    ///
+    /// The ladder's task sleeps `bootstrapDelay` *before* it checks anything —
+    /// that is the measurement the delay exists to make. Waiting for it before
+    /// opening the gate therefore charged every start the full five seconds,
+    /// including the warm ones where the chosen model landed in 2.45 s and the
+    /// stand-in was never going to be built. The user stood in front of a
+    /// daemon that was ready, holding a hotkey that would not record, while a
+    /// timer ran down on a decision that had already been made.
+    ///
+    /// ## Why the failure path still waits
+    ///
+    /// `isFatal` reads whether the bootstrap is *serving*, and a bootstrap
+    /// halfway through its own load reads exactly like one that never
+    /// started. Asking too early gets "nothing is serving" and exits a daemon
+    /// that was seconds away from dictating on the stand-in. Nobody is waiting
+    /// on that path anyway — the chosen model has already failed, and the
+    /// seconds are spent deciding whether there is anything left to run with.
+    public static func awaitsBootstrap(targetFailed: Bool) -> Bool {
+        targetFailed
+    }
+
     /// The one line the overlay shows on the first press while the bootstrap
     /// is serving.
     ///

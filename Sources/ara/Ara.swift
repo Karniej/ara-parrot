@@ -1021,9 +1021,48 @@ struct Run: ParsableCommand {
             }()
             let startupResult = await transcriberResult
             let mlxWarmupError = await mlxResult
+            // A warning, not a failure. Transcription without formatting is
+            // the whole app minus its polish; formatting without transcription
+            // is nothing. So a missing Whisper model is fatal below and a
+            // missing formatting model is one line here, with the command that
+            // fixes it. Hoisted into a closure because the two paths below
+            // report it at different moments and neither may skip it.
+            let reportFormatterWarning: @MainActor () -> Void = {
+                guard let mlxWarmupError else { return }
+                let detail: String
+                if case .transportFailure(let message)? = mlxWarmupError as? FormatterError {
+                    detail = message
+                } else {
+                    detail = "\(mlxWarmupError)"
+                }
+                FileHandle.standardError.write(Data(
+                    "! local formatting unavailable: \(detail)\n".utf8))
+                FileHandle.standardError.write(Data(
+                    "  dictation will use rule-based cleanup until then\n".utf8))
+            }
+            // The gate does not wait for the ladder when the chosen model
+            // loaded — `WarmupLadder.awaitsBootstrap` is the whole rule and
+            // the reason a warm start is 2.5s rather than 5s. The ladder's
+            // task sleeps before it checks anything, so awaiting it here used
+            // to charge every warm launch for a stand-in that was never going
+            // to be built.
+            guard WarmupLadder.awaitsBootstrap(targetFailed: startupResult.error != nil) else {
+                await MainActor.run {
+                    reportFormatterWarning()
+                    if running.generation == startupGeneration, !startupResult.superseded {
+                        declareReady()
+                    }
+                }
+                // Still awaited, so this block owns every task it started —
+                // just no longer in front of the gate. It is asleep on its own
+                // timer and will find the chosen model landed when it wakes.
+                await bootstrapDone
+                return
+            }
             // Awaited so this block owns every task it started, the reason the
             // MLX result is awaited even on a fatal path. By now it has either
-            // adopted, lost the race, or given up.
+            // adopted, lost the race, or given up — which is what `isFatal`
+            // below needs, because a bootstrap mid-load reads as "not serving".
             await bootstrapDone
             await MainActor.run {
                 if running.generation == startupGeneration,
@@ -1047,23 +1086,7 @@ struct Run: ParsableCommand {
                         ("still dictating with \(running.model.id); pick the model "
                             + "again from the menu to retry\n").utf8))
                 }
-                // A warning, not a failure. Transcription without formatting
-                // is the whole app minus its polish; formatting without
-                // transcription is nothing. So a missing Whisper model is
-                // fatal above and a missing formatting model is one line
-                // here, with the command that fixes it.
-                if let mlxWarmupError {
-                    let detail: String
-                    if case .transportFailure(let message)? = mlxWarmupError as? FormatterError {
-                        detail = message
-                    } else {
-                        detail = "\(mlxWarmupError)"
-                    }
-                    FileHandle.standardError.write(Data(
-                        "! local formatting unavailable: \(detail)\n".utf8))
-                    FileHandle.standardError.write(Data(
-                        "  dictation will use rule-based cleanup until then\n".utf8))
-                }
+                reportFormatterWarning()
                 if running.generation == startupGeneration, !startupResult.superseded {
                     declareReady()
                 }
