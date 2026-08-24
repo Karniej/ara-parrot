@@ -28,6 +28,17 @@ public final class SetupWindow {
     private var preparingTimer: Timer?
     private var launchPlayed = false
     private var launchTimer: Timer?
+    private var closeWatcher: SetupWindowDelegate?
+    /// Called when the user closes the window with its red button.
+    ///
+    /// The window is closable on purpose — a window a user cannot dismiss is
+    /// worse than one they can — but who *owns* that close differs entirely
+    /// by which launch this is. During the permission steps the daemon has not
+    /// started and never will on this launch, so closing has to end the
+    /// process; during the compile the daemon is running and a close is just a
+    /// user who has read the message and wants their screen back. Only the
+    /// caller knows which, so the window reports and decides nothing.
+    public var onClose: (@MainActor () -> Void)?
     /// Called when the user presses the step's button. The caller owns what
     /// each press does — raising the microphone prompt, opening Settings,
     /// restarting, dismissing — because all of those are process-level acts
@@ -59,12 +70,20 @@ public final class SetupWindow {
 
     /// Moves to a new step, or updates the one on screen. Idempotent: the
     /// caller polls system state and may hand the same step back many times.
+    ///
+    /// Does nothing once the window is gone. A closed window must stay closed:
+    /// the poll behind the permission steps runs twice a second, and reopening
+    /// on the next tick would be a window the user cannot dismiss.
     public func update(step: SetupFlow.Step, activity: Activity = .idle) {
-        guard window != nil else { return show(step: step) }
+        guard window != nil else { return }
         model.step = step
         model.copy = SetupFlow.copy(for: step)
         setActivity(activity)
     }
+
+    /// Whether a window is up. False before the first `show` and after any
+    /// close, the user's included.
+    public var isOpen: Bool { window != nil }
 
     /// Which step is on screen. Read by the caller's poll, which must not
     /// move a user off the restart step it deliberately put them on.
@@ -137,11 +156,21 @@ public final class SetupWindow {
     /// `.accessory`, which is what makes ara a menu-bar app again — leaving it
     /// `.regular` would put a Dock icon on a daemon that has no windows.
     public func close() {
+        window?.orderOut(nil)
+        teardown()
+    }
+
+    /// Drops everything the window owns and hands the screen back. The policy
+    /// returns to `.accessory`, which is what makes ara a menu-bar app again —
+    /// leaving it `.regular` would put a Dock icon on a daemon that has no
+    /// windows.
+    private func teardown() {
         preparingTimer?.invalidate()
         preparingTimer = nil
         launchTimer?.invalidate()
         launchTimer = nil
-        window?.orderOut(nil)
+        window?.delegate = nil
+        closeWatcher = nil
         window = nil
         NSApplication.shared.setActivationPolicy(.accessory)
     }
@@ -183,6 +212,19 @@ public final class SetupWindow {
         host.frame = NSRect(origin: .zero, size: size)
         host.autoresizingMask = [.width, .height]
         window.contentView = host
+        // Held here, because `NSWindow.delegate` is unowned: a delegate that
+        // only the window points at is deallocated immediately and the close
+        // is never reported.
+        let watcher = SetupWindowDelegate { [weak self] in
+            guard let self else { return }
+            // Torn down before the caller is told, so a caller that keeps the
+            // process alive is not left holding a window that no longer exists
+            // but still answers `update`.
+            self.teardown()
+            self.onClose?()
+        }
+        window.delegate = watcher
+        closeWatcher = watcher
         self.window = window
     }
 
@@ -392,5 +434,23 @@ struct BrandButtonStyle: ButtonStyle {
                 RoundedRectangle(cornerRadius: Brand.buttonCornerRadius, style: .continuous)
                     .fill(Brand.textPrimary))
             .opacity(configuration.isPressed ? 0.82 : 1)
+    }
+}
+
+/// Reports the window's red button to `SetupWindow`.
+///
+/// A separate object rather than `SetupWindow` conforming: `NSWindowDelegate`
+/// inherits `NSObjectProtocol`, and making the whole main-actor class an
+/// `NSObject` subclass to receive one callback is more surface than the
+/// callback is worth.
+private final class SetupWindowDelegate: NSObject, NSWindowDelegate {
+    private let onClose: @MainActor () -> Void
+
+    init(onClose: @escaping @MainActor () -> Void) {
+        self.onClose = onClose
+    }
+
+    func windowWillClose(_ notification: Notification) {
+        MainActor.assumeIsolated { onClose() }
     }
 }

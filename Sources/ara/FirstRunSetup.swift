@@ -31,6 +31,18 @@ enum FirstRunSetup {
     static func runPermissions(step: SetupFlow.Step) -> Never {
         let app = NSApplication.shared
         let window = SetupWindow()
+        // Closing the window ends the launch. There is nothing else running:
+        // the daemon was never started, because it cannot start without the
+        // permission this window is collecting. Staying alive would leave a
+        // process with no window, no menu bar item and no hotkey — ara would
+        // look installed and be inert until the user found it in Activity
+        // Monitor.
+        window.onClose = {
+            FileHandle.standardError.write(Data(
+                ("setup was closed before ara could start; run it again when "
+                    + "you are ready\n").utf8))
+            NSApp.terminate(nil)
+        }
         window.onAction = { step in
             switch step {
             case .microphone:

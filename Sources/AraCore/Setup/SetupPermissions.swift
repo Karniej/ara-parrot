@@ -93,7 +93,16 @@ public enum Relaunch {
             .map { "'" + $0.replacingOccurrences(of: "'", with: "'\\''") + "'" }
             .joined(separator: " ")
         shell.arguments = ["-c", "sleep \(delay); exec \(quoted)"]
-        try? shell.run()
+        do {
+            try shell.run()
+        } catch {
+            // The one thing worse than a failed relaunch is a silent one: the
+            // user pressed a button called "Restart Ara" and the app would
+            // simply cease to exist, with no window, no menu bar item and
+            // nothing to read.
+            FileHandle.standardError.write(Data(
+                "relaunch failed (\(type(of: error))); start ara again yourself\n".utf8))
+        }
         exit(0)
     }
 }

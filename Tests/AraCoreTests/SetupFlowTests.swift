@@ -154,3 +154,39 @@ struct SetupFlowTests {
         #expect(copy.detail.lowercased().contains("restart"))
     }
 }
+
+/// The window's own state, as opposed to the flow's. Only the rules that a
+/// wrong answer would make user-visible: everything else about it is drawing,
+/// and drawing is checked by `SetupVisualCheck`.
+@Suite("Setup window", .serialized)
+@MainActor
+struct SetupWindowStateTests {
+    /// The poll behind the permission steps runs twice a second and hands the
+    /// window a step every time. Once the window is closed those must do
+    /// nothing: reopening on the next tick is a window the user cannot
+    /// dismiss.
+    @Test("a closed window is not reopened by an update")
+    func closedStaysClosed() {
+        let window = SetupWindow()
+        window.show(step: .prepare, activating: false)
+        #expect(window.isOpen)
+
+        window.close()
+        #expect(!window.isOpen)
+
+        window.update(step: .prepare, activity: .preparing(seconds: 4))
+        #expect(!window.isOpen)
+    }
+
+    /// The launch moment plays once. A second `show` is an ordinary event —
+    /// the permission poll repaints, an answer lands — and replaying the
+    /// animation each time would make the window look like it kept restarting.
+    @Test("showing twice does not replay the launch moment")
+    func launchPlaysOnce() {
+        let window = SetupWindow()
+        window.show(step: .microphone, activating: false)
+        window.update(step: .accessibility)
+        #expect(window.currentStep == .accessibility)
+        window.close()
+    }
+}

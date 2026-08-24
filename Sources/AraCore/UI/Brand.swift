@@ -172,7 +172,10 @@ public struct AraBirdMark: View {
                 AraParrotBeak().fill(color)
 
                 ForEach(Array(Self.slits.enumerated()), id: \.offset) { index, slit in
-                    let depth = heights.map { $0[min(index, $0.count - 1)] } ?? 1
+                    // `?? 1` for both the absent case and the empty one: an
+                    // empty array would index at -1, and a mark asked to draw
+                    // no frame should draw the finished one rather than trap.
+                    let depth = heights.flatMap { $0.isEmpty ? nil : $0[min(index, $0.count - 1)] } ?? 1
                     let top = size.height * slit.top
                     let full = size.height * (slit.bottom - slit.top)
                     Rectangle()

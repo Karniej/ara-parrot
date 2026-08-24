@@ -268,7 +268,9 @@ struct Run: ParsableCommand {
             let window = SetupWindow()
             // Not activating: this one opens in the middle of a launch the
             // user has already walked away from, and it has nothing to ask
-            // them for.
+            // them for. Closing it is equally cheap — the daemon carries on
+            // compiling and the menu bar still says what it is doing — so
+            // there is nothing to report and nothing to stop.
             window.show(step: .prepare, activating: false)
             FileHandle.standardError.write(Data(
                 ("opening the setup window: this build has to be compiled for "
@@ -283,6 +285,11 @@ struct Run: ParsableCommand {
             window.show(step: SetupFlow.step(setupState))
             return window
         }
+        // Reached only with both permissions already granted — the branch at
+        // the top of `run` never returns otherwise — so every step this window
+        // can show is one the daemon is working through on its own. A close is
+        // a user dismissing a progress report, and the warm-up behind it is
+        // untouched.
 
         let warmup = MainActor.assumeIsolated {
             WarmupState(
@@ -1412,9 +1419,14 @@ private final class WarmupState {
     /// is long since true and this would otherwise be `nil` through the one
     /// wait it exists to explain.
     private var setup: SetupWindow?
-    /// Opens a window mid-warm-up. `nil` on the launches that must never have
-    /// one — `--skip-doctor`, and a daemon whose user has said they want no
-    /// window.
+    /// Opens a window mid-warm-up. `nil` under `--skip-doctor`, which turns
+    /// off the whole preflight, and only that.
+    ///
+    /// Deliberately not `--no-overlay`. That flag turns off the *recording
+    /// overlay* — the pill that appears over whatever the user is working in,
+    /// every time they dictate — and someone who wants their screen left alone
+    /// during dictation has not thereby asked to be told nothing about a
+    /// three-minute compile they can neither see nor explain.
     private let openSetup: (@MainActor () -> SetupWindow?)?
     /// Names the hotkey, so a pick made *during* the warm-up has to move it —
     /// which is exactly when a user is most likely to be poking at the menu,
