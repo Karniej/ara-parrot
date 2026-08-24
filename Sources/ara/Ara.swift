@@ -74,6 +74,27 @@ struct Run: ParsableCommand {
         // found in. See `CrashBacktrace`.
         CrashBacktrace.install()
 
+        // The permissions, before anything else looks at anything. Both gate
+        // the whole product — no microphone is no audio, and no accessibility
+        // means `HotkeyMonitor.start` cannot create its tap at all — and
+        // neither can be repaired inside a running process: macOS decides a
+        // process's accessibility trust when it starts. So a launch that finds
+        // one missing spends itself asking for it and restarts.
+        //
+        // `--skip-doctor` turns this off with the rest of the preflight. It is
+        // the flag for a developer who knows what is granted to what, and a
+        // window is a worse interruption to them than a failed tap.
+        if !skipDoctor {
+            let microphone = SetupPermissions.microphone()
+            let accessibility = SetupPermissions.accessibility()
+            if microphone != .granted || !accessibility {
+                MainActor.assumeIsolated {
+                    FirstRunSetup.runPermissions(
+                        step: microphone == .granted ? .accessibility : .microphone)
+                }
+            }
+        }
+
         if !skipDoctor {
             let checks = DoctorReport.run()
             if !DoctorReport.allOK(checks) {
@@ -229,6 +250,40 @@ struct Run: ParsableCommand {
         // with a file listing, and calling a warm start's etag check
         // "downloading" for those seconds would be a claim the pill then has to
         // take back.
+        // The model half of the first run: the download and the compile, which
+        // are the same warm-up every launch runs and the only two steps left
+        // by the time the permissions are settled. `nil` on every launch after
+        // the first, which is when the menu bar and the pill take the job
+        // back.
+        //
+        // The permissions are read again rather than assumed from the branch
+        // above: `--skip-doctor` skips that branch entirely, and a window that
+        // opened on a stale assumption would sit on a step it cannot advance.
+        let setupState = SetupFlow.State(
+            microphone: SetupPermissions.microphone(),
+            accessibility: SetupPermissions.accessibility(),
+            modelPresent: WhisperModelStore.isPresent(chosenModel),
+            setupCompleted: config.setupCompleted)
+        let makeSetupWindow: @MainActor () -> SetupWindow? = {
+            let window = SetupWindow()
+            // Not activating: this one opens in the middle of a launch the
+            // user has already walked away from, and it has nothing to ask
+            // them for.
+            window.show(step: .prepare, activating: false)
+            FileHandle.standardError.write(Data(
+                ("opening the setup window: this build has to be compiled for "
+                    + "this Mac once\n").utf8))
+            return window
+        }
+        let openSetupWindow: (@MainActor () -> SetupWindow?)? =
+            skipDoctor ? nil : makeSetupWindow
+        let setupWindow: SetupWindow? = MainActor.assumeIsolated {
+            guard !skipDoctor, SetupFlow.isNeeded(setupState) else { return nil }
+            let window = SetupWindow()
+            window.show(step: SetupFlow.step(setupState))
+            return window
+        }
+
         let warmup = MainActor.assumeIsolated {
             WarmupState(
                 status: WarmupStatus(
@@ -238,7 +293,9 @@ struct Run: ParsableCommand {
                     formatter: warmsMLX ? .loading : .notLoading),
                 overlay: overlay,
                 menuBar: menuBar,
-                readyMessage: WarmupStatus.readyMessage(hotkeyLabel: hotkeyLabel))
+                readyMessage: WarmupStatus.readyMessage(hotkeyLabel: hotkeyLabel),
+                setup: setupWindow,
+                openSetup: openSetupWindow)
         }
 
         // The dictionary itself is loaded per utterance — that is the entire
@@ -297,6 +354,22 @@ struct Run: ParsableCommand {
         let declareReady: @MainActor () -> Void = {
             guard warmup.finish() else { return }
             menuBar.setReady()
+            // The compile has finished at least once, which is the one part of
+            // `SetupFlow.State` nothing can look up. Written here rather than
+            // when the window closes because it is true whether or not there
+            // was a window: a `--skip-doctor` launch that reaches this line has
+            // paid the same compile, and the next ordinary launch should not
+            // reopen the window to watch it again.
+            //
+            // A write that fails is a window shown once more, which is why it
+            // is a warning and not a failure.
+            if !config.setupCompleted {
+                do { try Config.persistSetupCompleted(true) }
+                catch {
+                    FileHandle.standardError.write(Data(
+                        "config: could not record that setup finished (\(error))\n".utf8))
+                }
+            }
             guard !announcedReady.value else { return }
             announcedReady.value = true
             FileHandle.standardError.write(Data(
@@ -1327,6 +1400,22 @@ private final class WarmupState {
     private var status: WarmupStatus
     private let overlay: RecordingOverlay?
     private let menuBar: MenuBarController
+    /// The first-run window, on the launches that have one. It shows the same
+    /// phases as the pill and the menu line, because it is the same warm-up —
+    /// what differs is who is looking. A returning user has met the menu bar;
+    /// someone who installed ara five seconds ago has met nothing, and the
+    /// window is the only surface they know about.
+    ///
+    /// A `var`, because a launch can acquire one it did not start with. The
+    /// Core ML compile is keyed on the signing identity as well as the macOS
+    /// build, so *every ara update* pays it again — and by then `setupCompleted`
+    /// is long since true and this would otherwise be `nil` through the one
+    /// wait it exists to explain.
+    private var setup: SetupWindow?
+    /// Opens a window mid-warm-up. `nil` on the launches that must never have
+    /// one — `--skip-doctor`, and a daemon whose user has said they want no
+    /// window.
+    private let openSetup: (@MainActor () -> SetupWindow?)?
     /// Names the hotkey, so a pick made *during* the warm-up has to move it —
     /// which is exactly when a user is most likely to be poking at the menu,
     /// because the daemon is not yet doing anything else.
@@ -1348,11 +1437,15 @@ private final class WarmupState {
     private var handedOver = false
 
     init(status: WarmupStatus, overlay: RecordingOverlay?,
-         menuBar: MenuBarController, readyMessage: String) {
+         menuBar: MenuBarController, readyMessage: String,
+         setup: SetupWindow? = nil,
+         openSetup: (@MainActor () -> SetupWindow?)? = nil) {
         self.status = status
         self.overlay = overlay
         self.menuBar = menuBar
         self.readyMessage = readyMessage
+        self.setup = setup
+        self.openSetup = openSetup
         // The state line's first value. From here the warm-up owns it until
         // `MenuBarController.setReady()`.
         if let message = status.message {
@@ -1425,6 +1518,11 @@ private final class WarmupState {
         status.transcriber = nil
         overlay?.show(.warmingUp(title: readyMessage, detail: nil))
         overlay?.hide(after: Self.readyLingerSeconds)
+        // The window's whole job was the wait, and the wait is over. It closes
+        // rather than showing a "done" step nobody asked to read: the pill is
+        // already saying the same thing, in the place the user will meet it
+        // every day from now on.
+        setup?.close()
         return true
     }
 
@@ -1432,6 +1530,32 @@ private final class WarmupState {
         guard !handedOver, let message = status.message else { return }
         menuBar.setWarmingUp(message)
         overlay?.show(.warmingUp(title: message, detail: status.detail))
+        repaintSetup()
+    }
+
+    /// The same phases, rendered as the first-run window's two working steps.
+    /// A download has a percentage to show; everything else is the load, and
+    /// the load's honest report is a clock — Core ML says nothing at all from
+    /// inside the compile.
+    private func repaintSetup() {
+        // The compile has been running for over twenty seconds
+        // (`WhisperWarmupPlan.specialisationThreshold`), which is the only
+        // observable evidence that this launch is paying it. On a first run
+        // there is already a window; after an update there is not, and this is
+        // where it gets one. A load that finishes quickly never reaches this
+        // phase and never opens anything.
+        if status.transcriber == .preparingNeuralEngine, setup == nil {
+            setup = openSetup?()
+        }
+        guard let setup else { return }
+        switch status.transcriber {
+        case .downloading(let percent):
+            setup.update(step: .download, activity: .downloading(percent: percent))
+        case .loading, .preparingNeuralEngine:
+            setup.update(step: .prepare, activity: .preparing(seconds: 0))
+        case nil:
+            break
+        }
     }
 }
 
