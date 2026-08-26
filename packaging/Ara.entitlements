@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <!--
+      The microphone, under the hardened runtime.
+
+      Hardened runtime is what notarization requires and what turns every
+      capability into something the binary has to ask for by name. Ara asks for
+      exactly one: audio input. Everything else it does needs no entitlement —
+      accessibility is a user grant rather than a capability, the models are
+      files it reads, and the pasteboard belongs to whoever is frontmost.
+
+      Deliberately not sandboxed. A sandboxed app cannot create the
+      session-wide event tap the hotkey is built on, and cannot read the model
+      cache that lives outside its container. That is a real limitation of this
+      design, not an oversight: ara is distributed outside the App Store partly
+      because of it.
+    -->
+    <key>com.apple.security.device.audio-input</key>
+    <true/>
+</dict>
+</plist>

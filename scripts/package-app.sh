@@ -143,20 +143,38 @@ fi
 # `_CodeSignature/CodeResources` — an *invalid* state, not an absent one.
 # `codesign --verify` fails it and Gatekeeper reports it as damaged, which is
 # a worse first run than the honest unsigned prompt. Signing with `-` needs no
-# certificate; a maintainer with a Developer ID replaces `-` with their
-# identity and adds `--timestamp`, and the rest of this script is unchanged.
+# certificate; a maintainer with a Developer ID sets `ARA_SIGN_IDENTITY` and
+# gets the timestamp and entitlements with it.
 #
 # Signed inner-out rather than with `--deep`, which Apple documents as a
 # verification convenience and discourages for signing. The metallib has to be
 # signed first: it lives in Contents/MacOS (where MLX's loader looks), and
 # codesign treats everything there as a nested code object — sealing the
 # bundle around an unsigned one fails with "code object is not signed at all".
-if ! codesign --force --sign - "$APP/Contents/MacOS/mlx.metallib" 2>/dev/null; then
+# `ARA_SIGN_IDENTITY` picks the certificate. Unset means `-`, the ad-hoc
+# signature, which is what a contributor with no Apple account gets and what
+# the honest "unsigned, right-click to open" install has always been.
+#
+# A real Developer ID changes three things, and all three are required
+# together: the timestamp (notarization refuses a signature without one), the
+# entitlements (the hardened runtime is already on, so the microphone has to be
+# asked for by name), and the identity itself. Getting one of the three wrong
+# produces a bundle that signs, verifies, and is then rejected minutes later by
+# a service — which is why they are set in one place rather than three.
+IDENTITY="${ARA_SIGN_IDENTITY:--}"
+SIGN_EXTRA=()
+if [ "$IDENTITY" != "-" ]; then
+    SIGN_EXTRA=(--timestamp --entitlements packaging/Ara.entitlements)
+    echo "→ signing as $IDENTITY"
+fi
+
+if ! codesign --force "${SIGN_EXTRA[@]}" --sign "$IDENTITY" \
+        "$APP/Contents/MacOS/mlx.metallib" 2>/dev/null; then
     echo "could not sign the Metal kernel library" >&2
     exit 1
 fi
-if ! codesign --force --options runtime --sign - "$APP" 2>/dev/null; then
-    echo "ad-hoc signing failed — the bundle would be reported as damaged" >&2
+if ! codesign --force --options runtime "${SIGN_EXTRA[@]}" --sign "$IDENTITY" "$APP"; then
+    echo "signing failed — the bundle would be reported as damaged" >&2
     exit 1
 fi
 # Verified, not assumed: this is the check Gatekeeper's own evaluation starts
