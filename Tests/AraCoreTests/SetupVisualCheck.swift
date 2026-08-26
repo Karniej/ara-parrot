@@ -244,6 +244,23 @@ struct MarkVisualCheck {
         }
     }
 
+    /// The Dock icon, at the size the Dock actually asks for.
+    @MainActor
+    @Test("render the app icon")
+    func renderAppIcon() throws {
+        guard let directory = SetupVisualCheck.directory else { return }
+        let image = AraMarkImage.appIcon(size: 512)
+        guard let tiff = image.tiffRepresentation,
+              let bitmap = NSBitmapImageRep(data: tiff),
+              let png = bitmap.representation(using: .png, properties: [:])
+        else {
+            Issue.record("could not render the app icon")
+            return
+        }
+        try png.write(to: URL(fileURLWithPath: "\(directory)/app-icon.png"))
+        print("mark-shot: app icon → \(directory)/app-icon.png")
+    }
+
     /// A status item is nominally 18 points tall and the mark is drawn to fit
     /// inside that. Its aspect ratio is the iOS mark's, not a square.
     @MainActor

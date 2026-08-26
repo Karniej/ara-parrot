@@ -353,6 +353,70 @@ public enum AraMarkImage {
         return image
     }
 
+    /// The Dock icon.
+    ///
+    /// A daemon has no icon of its own: ara is a single binary, and a single
+    /// binary is not a bundle, so the moment the setup window turns it into a
+    /// regular app macOS falls back to the generic green "exec" tile. That is
+    /// the first thing a user sees of ara in their Dock, and it says nothing.
+    ///
+    /// Drawn rather than shipped, from the same paths as everything else, so
+    /// there is no fourth copy of the bird to keep in step. The plate is the
+    /// icon's own black rather than `Brand.background`: this sits on whatever
+    /// wallpaper the user has, and the iOS icon is black in both appearances
+    /// for the same reason.
+    public static func appIcon(size: CGFloat = 512) -> NSImage {
+        let image = NSImage(size: NSSize(width: size, height: size), flipped: true) { rect in
+            guard let context = NSGraphicsContext.current?.cgContext else { return false }
+            // macOS icons are a rounded square inset from their canvas, not a
+            // full-bleed tile like iOS. The proportions here are Apple's:
+            // roughly a fifth of the width as the corner radius, and a tenth
+            // as the margin the shadow and the grid expect.
+            let inset = rect.width * 0.10
+            let plate = rect.insetBy(dx: inset, dy: inset)
+            let plated = CGPath(roundedRect: plate,
+                                cornerWidth: plate.width * 0.225,
+                                cornerHeight: plate.width * 0.225,
+                                transform: nil)
+            context.setFillColor(NSColor.black.cgColor)
+            context.addPath(plated)
+            context.fillPath()
+
+            // The mark, centred on the plate at the size the iOS icon gives it.
+            let markHeight = plate.height * 0.62
+            let markWidth = markHeight * 1.08
+            let markRect = CGRect(x: plate.midX - markWidth / 2,
+                                  y: plate.midY - markHeight / 2,
+                                  width: markWidth, height: markHeight)
+            context.saveGState()
+            context.translateBy(x: markRect.minX, y: markRect.minY)
+            let local = CGRect(origin: .zero, size: markRect.size)
+            context.setFillColor(recordingInk.cgColor)
+            context.addPath(AraParrotHead().path(in: local).cgPath)
+            context.addPath(AraParrotBeak().path(in: local).cgPath)
+            context.fillPath()
+            // Painted black, not cleared. The menu-bar mark clears because it
+            // is a template image with nothing behind it; here there is a
+            // plate, and clearing punches a hole straight through it — which
+            // rendered as white slits on a white page the first time.
+            context.setFillColor(NSColor.black.cgColor)
+            for slit in AraBirdMark.slits {
+                context.fill(CGRect(x: local.width * slit.x,
+                                    y: local.height * slit.top,
+                                    width: max(1, local.width * AraBirdMark.slitWidth),
+                                    height: local.height * (slit.bottom - slit.top)))
+            }
+            let diameter = local.width * 0.076
+            context.fillEllipse(in: CGRect(x: local.width * 0.45 - diameter / 2,
+                                           y: local.height * 0.30 - diameter / 2,
+                                           width: diameter, height: diameter))
+            context.restoreGState()
+            return true
+        }
+        image.isTemplate = false
+        return image
+    }
+
     /// The amber the recording state uses, as an `NSColor` — `Brand.accentFill`
     /// is a SwiftUI `Color` and Core Graphics wants the other one.
     public static let recordingInk = NSColor(srgbRed: 1, green: 190 / 255,
