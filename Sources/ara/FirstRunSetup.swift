@@ -65,6 +65,7 @@ enum FirstRunSetup {
                 break
             }
         }
+        report(step)
         window.show(step: step)
 
         Timer.scheduledTimer(withTimeInterval: pollInterval, repeats: true) { _ in
@@ -75,6 +76,21 @@ enum FirstRunSetup {
         Relaunch.now()
     }
 
+    /// One line per step, because the permission phase used to write nothing
+    /// at all. An app launched from Finder has no terminal, so this reaches a
+    /// file only when someone runs ara from one or captures its stderr — but
+    /// when a user says "it crashed", the difference between an empty log and
+    /// a log that ends at a named step is the difference between guessing and
+    /// knowing.
+    private static func report(_ step: SetupFlow.Step) {
+        guard step != lastReported else { return }
+        lastReported = step
+        FileHandle.standardError.write(Data(
+            "setup: \(SetupFlow.copy(for: step).title.lowercased())\n".utf8))
+    }
+
+    private static var lastReported: SetupFlow.Step?
+
     /// Re-reads both permissions and moves the window if they changed.
     ///
     /// Once both are granted the process restarts rather than continuing: this
@@ -84,12 +100,16 @@ enum FirstRunSetup {
         let microphone = SetupPermissions.microphone()
         let accessibility = SetupPermissions.accessibility()
         if microphone == .granted, accessibility {
+            FileHandle.standardError.write(Data(
+                "setup: both permissions granted\n".utf8))
             Relaunch.now()
         }
         // A user parked on the restart step is left there. They have been sent
         // to Settings and told what to press; moving them back to the step
         // they just completed would read as the app losing their work.
         if window.currentStep == .restart, microphone == .granted { return }
-        window.update(step: microphone == .granted ? .accessibility : .microphone)
+        let next: SetupFlow.Step = microphone == .granted ? .accessibility : .microphone
+        report(next)
+        window.update(step: next)
     }
 }

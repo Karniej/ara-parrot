@@ -1,44 +1,30 @@
 #!/usr/bin/env bash
-# Regenerates packaging/Ara.icns from the README banner.
+# Regenerates packaging/Ara.icns from the mark in Sources/AraCore/UI/Brand.swift.
 #
-# The banner (docs/assets/ara.png, 1774x887) is a wide black plate: macaw on
-# the left, waveform and wordmark on the right. A square crop of the middle
-# would be the letter "A"; a square crop of the left third would cut the tail
-# off. So this crops to the bird's own bounding box — a 425x630 window whose
-# numbers are measured from the artwork, not guessed — and then pads that
-# portrait rectangle out to a square with the same black the banner already
-# uses. The result is the bird, centred, with the wordmark gone.
+# The icon used to be cropped out of the README banner with sips — the
+# line-art macaw on a branch, padded to a square. That artwork is still the
+# banner, but it is no longer the product's mark: the menu bar, the setup
+# window and the Dock tile all draw `AraMarkImage`, which is the iOS app's
+# icon ported. An .icns cut from the banner made the bundle the one place ara
+# looked like a different application.
 #
-# The .icns is committed, so this only needs re-running when the banner
-# changes. Uses sips and iconutil, both part of macOS.
+# So the master comes from the same code every other surface draws. There is
+# no image file to keep in step, and no second copy of the bird to update when
+# the first one changes.
+#
+# The .icns is committed, so this only needs re-running when the mark changes.
+# Uses iconutil and sips, both part of macOS, and the test target's renderer.
 #
 # Usage:
 #   scripts/build-icon.sh
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-SOURCE="docs/assets/ara.png"
 OUTPUT="packaging/Ara.icns"
 
-# The bird's bounding box in the banner: x 300..725, y 145..775. Includes the
-# branch (which reaches further left than the body) and the full tail (which
-# reaches nearly to the bottom edge).
-CROP_X=300
-CROP_Y=145
-CROP_W=425
-CROP_H=630
-# Padded square. 740 leaves ~7% breathing room above and below the tallest
-# part of the artwork, which is what keeps it from looking cropped at 16px.
-SQUARE=740
-
-if [ ! -f "$SOURCE" ]; then
-    echo "no banner at $SOURCE — this script draws the icon from it" >&2
-    exit 1
-fi
-
-for tool in sips iconutil; do
+for tool in sips iconutil swift; do
     if ! command -v "$tool" >/dev/null 2>&1; then
-        echo "missing $tool (ships with macOS)" >&2
+        echo "missing $tool" >&2
         exit 1
     fi
 done
@@ -48,16 +34,17 @@ trap 'rm -rf "$WORK"' EXIT
 ICONSET="$WORK/Ara.iconset"
 mkdir -p "$ICONSET"
 
-echo "→ cropping the macaw out of $SOURCE..."
-sips -c "$CROP_H" "$CROP_W" --cropOffset "$CROP_Y" "$CROP_X" \
-    "$SOURCE" --out "$WORK/bird.png" >/dev/null
-# Black, because the artwork is line-art on black and any other pad colour
-# would show as a frame around it.
-sips -p "$SQUARE" "$SQUARE" --padColor 000000 \
-    "$WORK/bird.png" --out "$WORK/square.png" >/dev/null
-# One master, upscaled once, so every icon size is a downsample of the same
-# image rather than an independent resample of a 630px original.
-sips -z 1024 1024 "$WORK/square.png" --out "$WORK/master.png" >/dev/null
+echo "→ rendering the mark at 1024px..."
+# One master, rendered once, so every size below is a downsample of the same
+# image rather than an independent draw. `renderAppIcon` writes it when
+# ARA_ICON_MASTER is set; without that variable the same test only measures.
+ARA_ICON_MASTER="$WORK/master.png" \
+    swift test --filter renderAppIcon 2>&1 | grep -E "icon-master|error:" || true
+
+if [ ! -f "$WORK/master.png" ]; then
+    echo "the renderer wrote nothing — run 'swift test --filter renderAppIcon' to see why" >&2
+    exit 1
+fi
 
 echo "→ rendering iconset sizes..."
 # name:pixels — the @2x entries are the same pixel counts under the names
@@ -74,6 +61,6 @@ do
     sips -z "$px" "$px" "$WORK/master.png" --out "$ICONSET/$name.png" >/dev/null
 done
 
-mkdir -p "$(dirname "$OUTPUT")"
+echo "→ packing $OUTPUT..."
 iconutil -c icns "$ICONSET" -o "$OUTPUT"
-echo "✓ $OUTPUT ($(du -h "$OUTPUT" | cut -f1))"
+echo "✓ $OUTPUT"

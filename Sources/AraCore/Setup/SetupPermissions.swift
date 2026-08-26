@@ -73,26 +73,36 @@ public enum Relaunch {
     ///   with none.
     public static func now(delay: TimeInterval = 0.5) -> Never {
         let bundle = Bundle.main.bundleURL
+        let command: String
         if bundle.pathExtension == "app" {
-            let configuration = NSWorkspace.OpenConfiguration()
-            configuration.createsNewApplicationInstance = true
-            // Fire and forget: this process is about to exit, and waiting for
-            // the completion handler of a launch that starts after we are gone
-            // is waiting for nobody.
-            NSWorkspace.shared.openApplication(at: bundle, configuration: configuration)
-            exit(0)
+            // `open`, spawned into a shell that outlives us — not
+            // `NSWorkspace.openApplication`. That call is asynchronous, and
+            // the first version of this made the request and then called
+            // `exit(0)` on the next line, which cancels it: ara vanished when
+            // the user pressed "Restart Ara" and nothing came back. It
+            // *sometimes* survived, which is worse than never.
+            command = "open -n \(shellQuoted(bundle.path))"
+        } else {
+            // A binary run straight from a terminal — a development build, or
+            // an install into `~/.local/bin`. There is no bundle for `open` to
+            // work with, so the replacement is the executable itself.
+            let executable = Bundle.main.executablePath ?? CommandLine.arguments[0]
+            command = ([executable] + CommandLine.arguments.dropFirst())
+                .map(shellQuoted).joined(separator: " ")
         }
-        // A binary run straight from a terminal — a development build, or an
-        // install into `~/.local/bin`. `open` has nothing to work with, so the
-        // replacement is spawned directly, after this process has quit.
-        let executable = Bundle.main.executablePath ?? CommandLine.arguments[0]
-        let arguments = Array(CommandLine.arguments.dropFirst())
+
+        // Announced before it happens. A restart is the one moment ara
+        // deliberately disappears, and a silent exit is indistinguishable from
+        // a crash — which is exactly how this was first reported.
+        FileHandle.standardError.write(Data(
+            "restarting ara so macOS applies the new permission...\n".utf8))
+
         let shell = Process()
         shell.executableURL = URL(fileURLWithPath: "/bin/sh")
-        let quoted = ([executable] + arguments)
-            .map { "'" + $0.replacingOccurrences(of: "'", with: "'\\''") + "'" }
-            .joined(separator: " ")
-        shell.arguments = ["-c", "sleep \(delay); exec \(quoted)"]
+        // The delay lets this process finish dying first: two copies of a
+        // menu-bar daemon competing for one hotkey tap is worse than a moment
+        // with none.
+        shell.arguments = ["-c", "sleep \(delay); \(command)"]
         do {
             try shell.run()
         } catch {
@@ -104,5 +114,9 @@ public enum Relaunch {
                 "relaunch failed (\(type(of: error))); start ara again yourself\n".utf8))
         }
         exit(0)
+    }
+
+    private static func shellQuoted(_ value: String) -> String {
+        "'" + value.replacingOccurrences(of: "'", with: "'\\''") + "'"
     }
 }

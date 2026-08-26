@@ -244,10 +244,29 @@ struct MarkVisualCheck {
         }
     }
 
-    /// The Dock icon, at the size the Dock actually asks for.
+    /// The Dock icon, at the size the Dock actually asks for — and, when
+    /// `ARA_ICON_MASTER` names a path, the 1024px master that
+    /// `scripts/build-icon.sh` turns into `packaging/Ara.icns`.
+    ///
+    /// The icon is generated rather than drawn in an editor, so the bundle's
+    /// icon, the Dock tile, the menu bar and the setup window are all one
+    /// shape. This is where the generator lives, because it is already the
+    /// place that can run AppKit drawing and write a file.
     @MainActor
     @Test("render the app icon")
     func renderAppIcon() throws {
+        if let master = ProcessInfo.processInfo.environment["ARA_ICON_MASTER"] {
+            let image = AraMarkImage.appIcon(size: 1024)
+            guard let tiff = image.tiffRepresentation,
+                  let bitmap = NSBitmapImageRep(data: tiff),
+                  let png = bitmap.representation(using: .png, properties: [:])
+            else {
+                Issue.record("could not render the icon master")
+                return
+            }
+            try png.write(to: URL(fileURLWithPath: master))
+            print("icon-master: → \(master)")
+        }
         guard let directory = SetupVisualCheck.directory else { return }
         let image = AraMarkImage.appIcon(size: 512)
         guard let tiff = image.tiffRepresentation,
