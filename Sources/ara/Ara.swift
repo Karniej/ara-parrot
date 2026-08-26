@@ -189,13 +189,11 @@ struct Run: ParsableCommand {
         // it owns.
         let app = NSApplication.shared
         app.setActivationPolicy(.accessory)
-        // A single binary is not a bundle, so it has no icon of its own and
-        // macOS hands it the generic green "exec" tile. That never showed
-        // while ara was `.accessory` — an accessory app is not in the Dock —
-        // and it appeared the moment the setup window turned ara into a
-        // regular app to put a window on screen. Set here rather than there:
-        // it is the process's identity, not the window's.
-        app.applicationIconImage = AraMarkImage.appIcon()
+        // The Dock icon is not set here. A single binary is not a bundle and
+        // has no icon of its own, but there is also no Dock tile to put one on
+        // until something makes ara a regular app — so `SetupWindow` sets it
+        // at that moment. Setting it here instead was tried, and the generic
+        // "exec" tile appeared anyway.
 
         let monitor = HotkeyMonitor(hotkey: chosenHotkey, debug: debugHotkey)
         // One injector for the whole process, because it is stateful: the

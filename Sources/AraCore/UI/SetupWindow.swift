@@ -60,6 +60,12 @@ public final class SetupWindow {
         startLaunchMoment()
         let app = NSApplication.shared
         app.setActivationPolicy(.regular)
+        // After the policy, never before it. A Dock tile does not exist until
+        // ara is a regular app, and an icon set while it is still an accessory
+        // is dropped when the tile is finally created — which is exactly how
+        // the first attempt at this failed, leaving the generic "exec" tile on
+        // screen with nothing in the process able to tell.
+        AraMarkImage.applyDockIcon()
         if activating {
             app.activate(ignoringOtherApps: true)
             window?.makeKeyAndOrderFront(nil)

@@ -417,6 +417,29 @@ public enum AraMarkImage {
         return image
     }
 
+    /// Puts the icon on the Dock tile, for a process that has no bundle to
+    /// take one from.
+    ///
+    /// Two calls, because one is not enough. `applicationIconImage` alone is
+    /// documented to work and does not here: a Dock tile only exists once the
+    /// activation policy is `.regular`, and a value set while ara is still an
+    /// accessory is dropped when the tile is created. The `dockTile` content
+    /// view is what actually draws, and `display()` is what makes it draw now
+    /// rather than at the next natural refresh.
+    ///
+    /// Must therefore be called *after* the policy change, not at startup.
+    @MainActor
+    public static func applyDockIcon() {
+        let icon = appIcon()
+        let app = NSApplication.shared
+        app.applicationIconImage = icon
+        let view = NSImageView(frame: NSRect(x: 0, y: 0, width: 512, height: 512))
+        view.image = icon
+        view.imageScaling = .scaleProportionallyUpOrDown
+        app.dockTile.contentView = view
+        app.dockTile.display()
+    }
+
     /// The amber the recording state uses, as an `NSColor` — `Brand.accentFill`
     /// is a SwiftUI `Color` and Core Graphics wants the other one.
     public static let recordingInk = NSColor(srgbRed: 1, green: 190 / 255,

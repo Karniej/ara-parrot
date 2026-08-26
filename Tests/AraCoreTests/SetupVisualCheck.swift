@@ -272,3 +272,28 @@ struct MarkVisualCheck {
         #expect(image.isTemplate)
     }
 }
+
+/// Puts a real Dock tile on screen for a few seconds so its icon can be
+/// looked at. Opt-in, because it turns the test process into a regular app.
+///
+/// ```
+/// ARA_DOCK_CHECK=1 swift test --filter DockIcon
+/// ```
+///
+/// Exists because the first attempt at this — `applicationIconImage` set at
+/// startup — left the generic "exec" tile on screen, and nothing in the
+/// process could tell: the Dock draws the tile, not us.
+@Suite("DockIcon", .serialized)
+struct DockIconCheck {
+    @MainActor
+    @Test("show a Dock tile carrying the app icon")
+    func showsDockTile() {
+        guard ProcessInfo.processInfo.environment["ARA_DOCK_CHECK"] == "1" else { return }
+        let app = NSApplication.shared
+        app.setActivationPolicy(.regular)
+        AraMarkImage.applyDockIcon()
+        print("dock-check: tile up for 12 seconds — look at the Dock")
+        RunLoop.main.run(until: Date().addingTimeInterval(12))
+        app.setActivationPolicy(.accessory)
+    }
+}
