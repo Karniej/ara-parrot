@@ -146,12 +146,25 @@ struct SetupFlowTests {
         #expect(SetupFlow.copy(for: .restart).button != nil)
     }
 
-    /// macOS only honours a fresh accessibility grant in a fresh process, so
-    /// the step has to say that a restart is coming.
-    @Test("the accessibility step explains the restart")
-    func accessibilityExplainsTheRestart() {
+    /// The step used to promise a restart, because ara used to need one.
+    /// Measured on macOS 26: `AXIsProcessTrusted` flips inside the running
+    /// process about a second after the switch, so ara carries on instead —
+    /// and a step that still announced a restart would be describing an app
+    /// that no longer behaves that way.
+    @Test("the accessibility step promises no restart")
+    func accessibilityPromisesNoRestart() {
         let copy = SetupFlow.copy(for: .accessibility)
-        #expect(copy.detail.lowercased().contains("restart"))
+        #expect(!copy.detail.lowercased().contains("restart"))
+        #expect(copy.button != nil)
+    }
+
+    /// The waiting step keeps the restart, as the one thing left to press if
+    /// the grant lands and the hotkey still hears nothing.
+    @Test("the waiting step keeps the restart as a fallback")
+    func waitingStepKeepsTheFallback() {
+        let copy = SetupFlow.copy(for: .restart)
+        #expect(copy.button?.lowercased().contains("restart") == true)
+        #expect(copy.detail.lowercased().contains("accessibility"))
     }
 }
 

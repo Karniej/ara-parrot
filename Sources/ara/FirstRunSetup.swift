@@ -26,13 +26,23 @@ enum FirstRunSetup {
     /// the only way to notice is to keep asking.
     private static let pollInterval: TimeInterval = 0.5
 
-    /// Shows the permission steps and never returns. Ends in `Relaunch`, which
-    /// exits.
-    static func runPermissions(step: SetupFlow.Step) -> Never {
+    /// Shows the permission steps and never returns.
+    ///
+    /// Ends by starting the daemon in this same process, through `then` —
+    /// which is why the window can stay on screen across the handover. It only
+    /// leaves through `Relaunch` if the user asks for a restart.
+    ///
+    /// - Parameter then: the rest of the daemon. Called on the main actor,
+    ///   inside the run loop this method starts, the moment both permissions
+    ///   are in place. It is handed the window so the daemon can go on using
+    ///   it — the download and the compile are the next two steps of the same
+    ///   setup, and opening a second window for them would undo the point.
+    static func collectPermissions(step: SetupFlow.Step,
+                                   then start: @escaping @MainActor (SetupWindow) -> Void) -> Never {
         let app = NSApplication.shared
         let window = SetupWindow()
         // Closing the window ends the launch. There is nothing else running:
-        // the daemon was never started, because it cannot start without the
+        // the daemon has not started, because it cannot start without the
         // permission this window is collecting. Staying alive would leave a
         // process with no window, no menu bar item and no hotkey — ara would
         // look installed and be inert until the user found it in Activity
@@ -51,13 +61,14 @@ enum FirstRunSetup {
                     // repainting from the poll below would work too, but a
                     // window that changes the moment the sheet closes is the
                     // difference between "it noticed" and "did that work?".
-                    refresh(window)
+                    refresh(window, then: start)
                 }
             case .accessibility:
                 SetupPermissions.requestAccessibility()
-                // Straight to the restart step. macOS will not tell this
-                // process that the grant landed — see `SetupFlow.Step.restart`
-                // — so the user, who can see the switch, is the one who says.
+                // Straight to the waiting step, which is where the restart
+                // button lives. The poll takes the window off it by itself
+                // once macOS reports the grant.
+                report(.restart)
                 window.update(step: .restart)
             case .restart:
                 Relaunch.now()
@@ -68,8 +79,10 @@ enum FirstRunSetup {
         report(step)
         window.show(step: step)
 
-        Timer.scheduledTimer(withTimeInterval: pollInterval, repeats: true) { _ in
-            Task { @MainActor in refresh(window) }
+        Timer.scheduledTimer(withTimeInterval: pollInterval, repeats: true) { timer in
+            Task { @MainActor in
+                if refresh(window, then: start) { timer.invalidate() }
+            }
         }
         app.run()
         // `NSApplication.run` does not return; the compiler cannot know that.
@@ -90,26 +103,41 @@ enum FirstRunSetup {
     }
 
     private static var lastReported: SetupFlow.Step?
+    /// Whether the handover has already happened, so a poll that fires while
+    /// the daemon is starting cannot start it twice.
+    private static var started = false
 
-    /// Re-reads both permissions and moves the window if they changed.
+    /// Re-reads both permissions, and either moves the window on or hands
+    /// control to the daemon. Answers whether the handover happened.
     ///
-    /// Once both are granted the process restarts rather than continuing: this
-    /// launch has already skipped building the daemon, and a live accessibility
-    /// grant does not apply to a process that started without it.
-    private static func refresh(_ window: SetupWindow) {
+    /// Both are read fresh every time rather than remembered: the whole reason
+    /// this polls is that Settings tells us nothing when the user flips a
+    /// switch, and the measured behaviour is that `AXIsProcessTrusted` starts
+    /// answering true about a second later, in this same process.
+    @discardableResult
+    private static func refresh(_ window: SetupWindow,
+                                then start: @MainActor (SetupWindow) -> Void) -> Bool {
+        guard !started else { return true }
         let microphone = SetupPermissions.microphone()
-        let accessibility = SetupPermissions.accessibility()
-        if microphone == .granted, accessibility {
+        if microphone == .granted, SetupPermissions.accessibility() {
+            started = true
             FileHandle.standardError.write(Data(
-                "setup: both permissions granted\n".utf8))
-            Relaunch.now()
+                "setup: both permissions granted; starting ara\n".utf8))
+            // The window is deliberately left up. The daemon's warm-up takes
+            // it over on the next repaint — the download and the compile are
+            // steps of the same setup — and the user sees one window walk from
+            // the first permission to a working dictation, rather than an app
+            // that disappears and comes back.
+            start(window)
+            return true
         }
         // A user parked on the restart step is left there. They have been sent
         // to Settings and told what to press; moving them back to the step
         // they just completed would read as the app losing their work.
-        if window.currentStep == .restart, microphone == .granted { return }
+        if window.currentStep == .restart, microphone == .granted { return false }
         let next: SetupFlow.Step = microphone == .granted ? .accessibility : .microphone
         report(next)
         window.update(step: next)
+        return false
     }
 }

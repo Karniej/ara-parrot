@@ -112,17 +112,23 @@ public enum SetupFlow {
             return Copy(
                 title: "Allow accessibility",
                 detail: "This lets Ara see the hotkey and type the text at your "
-                    + "cursor. macOS gives the permission to a newly started "
-                    + "copy, so Ara restarts itself once you switch it on.",
+                    + "cursor. Switch Ara on in the list and it carries on by "
+                    + "itself.",
                 button: "Open Settings")
         case .restart:
-            // Never returned by `step(_:)`: no reading of system state can
-            // tell "granted, needs a fresh process" from "not granted". The
-            // window enters it when the user comes back from Settings, which
-            // is the only moment anyone knows.
+            // Never returned by `step(_:)`. The window enters it when the user
+            // comes back from Settings, and leaves it on its own the moment
+            // macOS reports the grant — measured at about a second after the
+            // switch is flipped, in the same process.
+            //
+            // The button is a fallback, not the path. Trust arriving is proven;
+            // an event tap armed *after* it arriving is not, so if the hotkey
+            // stays dead there is still one thing to press.
             return Copy(
-                title: "Restart Ara to finish",
-                detail: "Switch Ara on in the Accessibility list, then restart.",
+                title: "Waiting for the switch",
+                detail: "Switch Ara on in the Accessibility list. Ara continues "
+                    + "on its own when macOS reports it — a restart is only "
+                    + "needed if the hotkey stays dead.",
                 button: "Restart Ara")
         case .download:
             return Copy(

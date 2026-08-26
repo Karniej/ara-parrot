@@ -75,26 +75,47 @@ struct Run: ParsableCommand {
         CrashBacktrace.install()
 
         // The permissions, before anything else looks at anything. Both gate
-        // the whole product — no microphone is no audio, and no accessibility
-        // means `HotkeyMonitor.start` cannot create its tap at all — and
-        // neither can be repaired inside a running process: macOS decides a
-        // process's accessibility trust when it starts. So a launch that finds
-        // one missing spends itself asking for it and restarts.
+        // the whole product: no microphone is no audio, and an untrusted
+        // process gets an event tap that is created happily and then delivers
+        // nothing at all — the hotkey simply never fires.
+        //
+        // This used to end in ara restarting itself, on the belief that macOS
+        // only tells a *fresh* process about a new grant. Measured: it does
+        // not. `AXIsProcessTrusted` flipped to true one second after the
+        // switch was flipped, in the same process, so the daemon can simply
+        // carry on — and `collectPermissions` calls this closure to do it
+        // without the app ever leaving the screen. The restart survives as a
+        // button on that step, for the case where the tap still hears nothing.
         //
         // `--skip-doctor` turns this off with the rest of the preflight. It is
         // the flag for a developer who knows what is granted to what, and a
         // window is a worse interruption to them than a failed tap.
         if !skipDoctor {
             let microphone = SetupPermissions.microphone()
-            let accessibility = SetupPermissions.accessibility()
-            if microphone != .granted || !accessibility {
+            if microphone != .granted || !SetupPermissions.accessibility() {
                 MainActor.assumeIsolated {
-                    FirstRunSetup.runPermissions(
-                        step: microphone == .granted ? .accessibility : .microphone)
+                    FirstRunSetup.collectPermissions(
+                        step: microphone == .granted ? .accessibility : .microphone,
+                        then: { window in
+                            try? self.startDaemon(runningLoop: true, setupWindow: window)
+                        })
                 }
             }
         }
 
+        try startDaemon(runningLoop: false)
+    }
+
+    /// Everything the daemon is, from the preflight to the run loop.
+    ///
+    /// - Parameter runningLoop: whether `NSApplication.run()` is already
+    ///   pumping. True when the first-run window collected a permission and
+    ///   handed control back mid-loop; calling `run()` again there would nest
+    ///   one run loop inside another.
+    /// - Parameter setupWindow: the first-run window, when one is already on
+    ///   screen because it just collected a permission. The daemon adopts it
+    ///   rather than opening its own.
+    private func startDaemon(runningLoop: Bool, setupWindow adopted: SetupWindow? = nil) throws {
         if !skipDoctor {
             let checks = DoctorReport.run()
             if !DoctorReport.allOK(checks) {
@@ -285,6 +306,12 @@ struct Run: ParsableCommand {
         let openSetupWindow: (@MainActor () -> SetupWindow?)? =
             skipDoctor ? nil : makeSetupWindow
         let setupWindow: SetupWindow? = MainActor.assumeIsolated {
+            // Already on screen, still showing the permission it just
+            // collected: move it on rather than opening a second one.
+            if let adopted {
+                adopted.update(step: SetupFlow.step(setupState))
+                return adopted
+            }
             guard !skipDoctor, SetupFlow.isNeeded(setupState) else { return nil }
             let window = SetupWindow()
             window.show(step: SetupFlow.step(setupState))
@@ -1184,6 +1211,13 @@ struct Run: ParsableCommand {
         // its deallocation would leave the tap callback dangling. Pin the
         // roots of the object graph for as long as the application runs.
         withExtendedLifetime((monitor, sigint, menuBar)) {
+            // Already pumping when the first-run window handed control back:
+            // that path is *inside* `app.run()` already, and calling it again
+            // nests a second run loop that never unwinds. The lifetime pin
+            // still matters on both paths — the event tap holds an unretained
+            // pointer to `monitor` — so it wraps the whole thing rather than
+            // only the call.
+            guard !runningLoop else { return }
             app.run()
         }
     }
