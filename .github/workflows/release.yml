@@ -10,6 +10,12 @@ permissions:
   contents: write
 
 env:
+  # Whether this repository can sign. Hoisted to a job-wide variable because
+  # GitHub does not allow the `secrets` context in a step's `if:` — the
+  # workflow fails to parse rather than evaluating to false, which is how this
+  # was found. The value is the certificate itself and is never echoed; every
+  # step below only asks whether it is empty.
+  ARA_SIGNED: ${{ secrets.MACOS_CERTIFICATE }}
   # `swift build --arch arm64` writes here, and `.build/release` is only a
   # symlink SwiftPM happens to maintain. Naming the real directory removes the
   # question: scripts/package-app.sh reads ARA_RELEASE_DIR, and
@@ -187,7 +193,7 @@ jobs:
       # Guarded on the secret, so a fork with no certificate still builds and
       # still produces an honest ad-hoc DMG rather than failing at the gate.
       - name: import the signing certificate
-        if: ${{ secrets.MACOS_CERTIFICATE != '' }}
+        if: ${{ env.ARA_SIGNED != '' }}
         env:
           CERTIFICATE: ${{ secrets.MACOS_CERTIFICATE }}
           CERTIFICATE_PWD: ${{ secrets.MACOS_CERTIFICATE_PWD }}
@@ -225,7 +231,7 @@ jobs:
       # moment — a first launch, on a new machine — when the network is least
       # welcome.
       - name: notarize Ara.app
-        if: ${{ secrets.MACOS_CERTIFICATE != '' }}
+        if: ${{ env.ARA_SIGNED != '' }}
         env:
           NOTARY_KEY: ${{ secrets.NOTARY_KEY }}
           ARA_NOTARY_KEY_ID: ${{ secrets.NOTARY_KEY_ID }}
@@ -243,7 +249,7 @@ jobs:
       # the other: Gatekeeper evaluates the DMG the user downloaded, and then
       # the app they dragged out of it.
       - name: notarize the DMG
-        if: ${{ secrets.MACOS_CERTIFICATE != '' }}
+        if: ${{ env.ARA_SIGNED != '' }}
         env:
           NOTARY_KEY: ${{ secrets.NOTARY_KEY }}
           ARA_NOTARY_KEY_ID: ${{ secrets.NOTARY_KEY_ID }}
@@ -266,7 +272,7 @@ jobs:
       # tests the bytes that will actually be uploaded.
       - name: verify the DMG ships a complete bundle
         env:
-          SIGNED: ${{ secrets.MACOS_CERTIFICATE }}
+          SIGNED: ${{ env.ARA_SIGNED }}
         run: |
           set -euo pipefail
           VERSION="$(tr -d '[:space:]' < VERSION)"
