@@ -1,7 +1,7 @@
 import Foundation
 import WhisperKit
 
-public actor WhisperKitTranscriber: Transcriber {
+public actor WhisperKitTranscriber: SpeechTranscriber {
     /// Which model the *running* transcriber is actually using — not what
     /// `config.json` says. The Model submenu can change the saved value while
     /// this one is still serving utterances from the old pipeline, and the menu

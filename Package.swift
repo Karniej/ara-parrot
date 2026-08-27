@@ -14,11 +14,11 @@ let package = Package(
         // implementations in the package, so a caller must supply both. The range
         // is WhisperKit's, so this adds no new resolution.
         .package(url: "https://github.com/huggingface/swift-transformers.git", "1.1.0" ..< "2.0.0"),
-        // SPIKE, test target only. Parakeet TDT v3 on the Neural Engine, to be
-        // measured against the Whisper path before anything ships on it — see
-        // `ParakeetBenchmark`. Nothing in AraCore links this, so the daemon is
-        // unchanged and the dependency can be removed by deleting two lines.
-        // Zero transitive dependencies of its own, and the same macOS 14 floor.
+        // Parakeet TDT v3 on the Neural Engine — the default transcriber since
+        // it measured 4-8x faster than Whisper at equal accuracy on real
+        // dictation (`ParakeetBenchmark`, and the table in
+        // `ParakeetTranscriber`). Zero transitive dependencies of its own, and
+        // the same macOS 14 floor as everything else here.
         .package(url: "https://github.com/FluidInference/FluidAudio.git", from: "0.15.6"),
     ],
     targets: [
@@ -38,6 +38,7 @@ let package = Package(
                 // that matters, and it is why the split exists.
                 .product(name: "ArgumentParser", package: "swift-argument-parser"),
                 .product(name: "WhisperKit", package: "WhisperKit"),
+                .product(name: "FluidAudio", package: "FluidAudio"),
                 .product(name: "MLXLLM", package: "mlx-swift-lm"),
                 .product(name: "MLXLMCommon", package: "mlx-swift-lm"),
                 .product(name: "Hub", package: "swift-transformers"),

@@ -723,3 +723,47 @@ struct KeychainServiceTests {
         #expect(Keychain.service != Keychain.legacyService)
     }
 }
+
+/// The struct's defaults and the decoder's defaults are written twice — once
+/// as property initialisers, once as `?? …` in `init(from:)` — and nothing but
+/// this makes them agree.
+///
+/// They were changed apart once. `cleanup` moved to `.none` when Parakeet
+/// became the default transcriber, the decoder kept `?? .medium`, and every
+/// install with no `cleanup` key went on loading 0.9 GB of language model that
+/// `.none` guarantees nobody will call. Both spellings were defensible on their
+/// own; the defect was that they disagreed, and nothing said so.
+@Suite("Config defaults agree")
+struct ConfigDefaultAgreementTests {
+    /// An empty object rather than an empty file: this asks what the *decoder*
+    /// does with absent keys, which is a different path from `load` deciding
+    /// there is no file at all.
+    static func decodedFromEmptyObject() throws -> Config {
+        try JSONDecoder().decode(Config.self, from: Data("{}".utf8))
+    }
+
+    @Test("every default survives a config file that says nothing")
+    func decoderMatchesStruct() throws {
+        let fresh = Config()
+        let decoded = try Self.decodedFromEmptyObject()
+
+        #expect(decoded.engine == fresh.engine)
+        #expect(decoded.timeoutMs == fresh.timeoutMs)
+        #expect(decoded.mode == fresh.mode)
+        #expect(decoded.pasteRestoreMs == fresh.pasteRestoreMs)
+        #expect(decoded.cleanup == fresh.cleanup)
+        #expect(decoded.language == fresh.language)
+        #expect(decoded.setupCompleted == fresh.setupCompleted)
+        #expect(decoded.hotkey == fresh.hotkey)
+        #expect(decoded.model == fresh.model)
+        #expect(decoded.inject == fresh.inject)
+        #expect(decoded.microphone == fresh.microphone)
+    }
+
+    /// The one this suite was written for, stated on its own so a failure
+    /// names the cost rather than just the mismatch.
+    @Test("an absent cleanup key does not resurrect the language model")
+    func absentCleanupDoesNotWarmAnEngine() throws {
+        #expect(try Self.decodedFromEmptyObject().cleanup == .none)
+    }
+}

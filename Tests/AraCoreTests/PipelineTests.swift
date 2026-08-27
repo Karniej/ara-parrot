@@ -58,6 +58,23 @@ struct PipelineTests {
     private static let filler = "um hello there friend"
     private static let cleaned = "hello there friend"
 
+    /// A config whose cleanup intensity actually reaches a language model.
+    ///
+    /// `Config()` used to default to `.medium` and these tests leaned on it.
+    /// The shipped default is now `.none` — Parakeet punctuates its own output,
+    /// so the daemon no longer spends a second of generation on what the
+    /// transcriber already did. That is right for the product and wrong for a
+    /// suite about *engine routing*: at `.none` no engine is reached at all,
+    /// and every routing assertion here would pass by not running.
+    ///
+    /// So the intensity is stated rather than inherited. A future change to
+    /// the default cannot quietly turn these into tests of nothing.
+    private func llmConfig() -> Config {
+        var config = Config()
+        config.cleanup = .medium
+        return config
+    }
+
     private func session(_ config: Config,
                          apiKey: String? = nil,
                          mlx: (any AraCore.Formatter)? = nil,
@@ -86,7 +103,7 @@ struct PipelineTests {
 
     @Test("engine .off leaves the transcript untouched")
     func engineOff() async {
-        var config = Config()
+        var config = llmConfig()
         config.engine = .off
         let out = await session(config, apple: PipelineStub { _, _ in
             Issue.record("an engine ran under engine .off")
@@ -97,7 +114,7 @@ struct PipelineTests {
 
     @Test("engine .rules runs the rule-based formatter and no model")
     func engineRules() async {
-        var config = Config()
+        var config = llmConfig()
         config.engine = .rules
         let out = await session(config, apple: PipelineStub { _, _ in
             Issue.record("an engine ran under engine .rules")
@@ -108,7 +125,7 @@ struct PipelineTests {
 
     @Test("engine .apple routes through the Apple on-device formatter")
     func engineApple() async {
-        var config = Config()
+        var config = llmConfig()
         config.engine = .apple
         let out = await session(config, apple: PipelineStub { _, _ in "Hello there friend." })
             .process(Self.filler, override: nil, manual: nil, frontmostBundleID: nil)
@@ -118,10 +135,15 @@ struct PipelineTests {
     /// The default engine, and therefore the one a fresh install runs. A
     /// pipeline that built the chain correctly for every *named* engine while
     /// dropping the default would ship as "formatting silently does nothing".
+    /// "Default engine" means `Config().engine`, which is still `.mlx`. The
+    /// *intensity* is stated because the default is now `.none`, at which no
+    /// engine runs at all — see `llmConfig`.
     @Test("the default engine routes through the MLX formatter")
     func defaultEngineIsMLX() async {
-        let config = Config()
-        #expect(config.engine == .mlx)
+        // The engine default is asserted from the real `Config()`; the
+        // intensity is raised because the shipped default reaches no engine.
+        #expect(Config().engine == .mlx)
+        let config = llmConfig()
         let out = await session(config,
                                 mlx: PipelineStub { _, _ in "Hello there friend." },
                                 apple: PipelineStub { _, _ in
@@ -153,7 +175,7 @@ struct PipelineTests {
 
     @Test("engine .cloud falls back to MLX, not to the Apple model")
     func cloudFallsBackToMLX() async {
-        var config = Config()
+        var config = llmConfig()
         config.engine = .cloud
         config.cloud = CloudConfig()
         let out = await session(config,
@@ -176,7 +198,7 @@ struct PipelineTests {
     /// filler stripped, so the output proves which formatter produced it.
     @Test("cleanup none skips the model and keeps the rules floor")
     func cleanupNoneSkipsTheModel() async {
-        var config = Config()
+        var config = llmConfig()
         config.cleanup = .none
         let out = await session(config, mlx: PipelineStub { _, _ in
             Issue.record("a model ran under cleanup none")
@@ -190,7 +212,7 @@ struct PipelineTests {
     /// with no symptom other than the wrong editing aggressiveness.
     @Test("config.cleanup reaches the formatter on the resolved mode")
     func cleanupReachesTheFormatter() async {
-        var config = Config()
+        var config = llmConfig()
         config.cleanup = .high
         let box = ModeBox()
         let out = await session(config, mlx: PipelineStub { text, mode in
@@ -210,7 +232,7 @@ struct PipelineTests {
     /// deadline would hang this test rather than fail an assertion.
     @Test("timeoutMs becomes the chain's per-engine deadline")
     func timeoutIsWired() async {
-        var config = Config()
+        var config = llmConfig()
         config.engine = .apple
         config.timeoutMs = 60
         let started = ContinuousClock.now
@@ -229,7 +251,7 @@ struct PipelineTests {
     /// and rewrite words the user asked to keep.
     @Test("config.mode becomes the default mode")
     func configModeIsTheDefault() async {
-        var config = Config()
+        var config = llmConfig()
         config.engine = .apple
         config.mode = "verbatim"
         let out = await session(config, apple: PipelineStub { _, _ in
@@ -241,7 +263,7 @@ struct PipelineTests {
 
     @Test("a per-utterance override outranks config.mode")
     func overrideOutranksConfigMode() async {
-        var config = Config()
+        var config = llmConfig()
         config.engine = .apple
         config.mode = "default"
         let out = await session(config, apple: PipelineStub { _, _ in
@@ -253,7 +275,7 @@ struct PipelineTests {
 
     @Test("the frontmost application still selects a mode through the built session")
     func frontmostAppSelectsMode() async {
-        var config = Config()
+        var config = llmConfig()
         config.engine = .apple
         // Four words out for four words in: a bare mode id would be discarded by
         // the chain's plausibility guard before it could be asserted on.
@@ -281,7 +303,7 @@ struct PipelineTests {
     /// given, and the dictionary runs upstream of every engine.
     @Test("makeSession wires the dictionary from the given URL")
     func dictionaryURLIsWired() async {
-        var config = Config()
+        var config = llmConfig()
         config.engine = .off
         let out = await session(config, dictionaryURL: dictionaryFile())
             .process("tell arra hello", override: nil, manual: nil,
@@ -294,7 +316,7 @@ struct PipelineTests {
     /// that quietly kept loading from the URL would drop exactly those.
     @Test("makeSession consults a custom dictionary source when given one")
     func dictionarySourceOverride() async {
-        var config = Config()
+        var config = llmConfig()
         config.engine = .off
         let out = await Pipeline.makeSession(
             config: config, apiKey: nil, mlx: nil, apple: nil,
@@ -313,7 +335,7 @@ struct PipelineTests {
     /// dictionary with it.
     @Test("verbatim mode still gets dictionary corrections")
     func verbatimModeIsCorrected() async {
-        var config = Config()
+        var config = llmConfig()
         config.engine = .apple
         let out = await session(config,
                                 apple: PipelineStub { _, _ in
@@ -342,7 +364,7 @@ struct PipelineTests {
     /// expansion reaches the injector with no formatter in between.
     @Test("makeSession wires snippets from the given URL, bypassing the engine")
     func snippetsURLIsWired() async {
-        var config = Config()
+        var config = llmConfig()
         config.engine = .apple
         let out = await session(config,
                                 apple: PipelineStub { _, _ in
@@ -359,7 +381,7 @@ struct PipelineTests {
     /// utterance takes the normal path, untouched.
     @Test("a broken snippets file leaves dictation unaffected")
     func brokenSnippetsFileIsHarmless() async {
-        var config = Config()
+        var config = llmConfig()
         config.engine = .off
         let url = FileManager.default.temporaryDirectory
             .appendingPathComponent("ara-snip-broken-\(UUID().uuidString).json")
@@ -391,7 +413,7 @@ struct PipelineTests {
         guard #available(macOS 26.0, *) else { return }
         let cores = ProcessInfo.processInfo.activeProcessorCount
         let occupancy = Occupancy()
-        var config = Config()
+        var config = llmConfig()
         config.engine = .apple
         config.timeoutMs = 5_000
 
@@ -424,7 +446,7 @@ struct PipelineTests {
     /// that would prefer one.
     @Test("no cloud config means no cloud formatter, even under engine .cloud")
     func noCloudConfigMeansNoNetwork() async {
-        var config = Config()
+        var config = llmConfig()
         config.engine = .cloud
         config.cloud = nil
         let out = await session(config, apiKey: "sk-should-not-be-used",
@@ -445,7 +467,7 @@ struct PipelineTests {
     func cloudConfigAndKeyAreWired() async throws {
         var cloudConfig = CloudConfig()
         cloudConfig.model = "claude-test-model"
-        var config = Config()
+        var config = llmConfig()
         config.engine = .cloud
         config.cloud = cloudConfig
 

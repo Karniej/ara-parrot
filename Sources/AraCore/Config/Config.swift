@@ -62,7 +62,23 @@ public struct Config: Codable, Sendable {
     /// preference and losing a valid `cloud` section over it would turn a
     /// spelling mistake into an engine downgrade. The warning in `load` names
     /// the valid spellings.
-    public var cleanup: CleanupIntensity = .medium
+    /// `none` by default since Parakeet became the default transcriber.
+    ///
+    /// `medium` was right when the transcriber returned unpunctuated text: a
+    /// language model was the only thing that could put the full stops in, and
+    /// a second of generation was the price of a readable transcript. Parakeet
+    /// punctuates and capitalises itself, so that second now buys rewriting
+    /// nobody asked for — measured end to end on a 34-second dictation, the
+    /// wait fell from 3.21s to about 0.39s with output that was the same or
+    /// better.
+    ///
+    /// The rules floor still runs: filler words are still stripped ("this new
+    /// um engine" → "this new engine", in about two milliseconds), the
+    /// dictionary still applies, snippets still expand. What is off is the
+    /// *language model* — and with it the `email`, `chat` and `code` modes,
+    /// which are rewriting and therefore do nothing at this intensity. A user
+    /// who wants them sets `"cleanup": "medium"` back.
+    public var cleanup: CleanupIntensity = .none
 
     /// Which language, or languages, dictation is transcribed in — see
     /// `LanguageSetting`. `automatic` when the key is absent, which is
@@ -401,11 +417,15 @@ public struct Config: Codable, Sendable {
             microphoneProblem = Config.describe(error)
         }
         do {
+            // `Config()`'s own default, not a second copy of it. The two were
+            // both `.medium` and were changed apart once — the property moved
+            // to `.none` and this did not, so an absent key still loaded a
+            // language model nobody could reach.
             cleanup = try c.decodeIfPresent(CleanupIntensity.self, forKey: .cleanup)
-                ?? .medium
+                ?? Config().cleanup
         } catch {
             // See `cleanupProblem`: defaulted, remembered, never rethrown.
-            cleanup = .medium
+            cleanup = Config().cleanup
             cleanupProblem = Config.describe(error)
         }
         do {

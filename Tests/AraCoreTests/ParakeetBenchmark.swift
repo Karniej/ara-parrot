@@ -118,7 +118,86 @@ struct ParakeetBenchmark {
         Double(samples.count) / 16_000
     }
 
+    /// Real dictation, when `ARA_BENCH_WAV` names a directory of 16 kHz WAVs.
+    ///
+    /// `say` output settled the speed question and could not settle the
+    /// accuracy one: synthetic speech is out of distribution for both models,
+    /// and not equally so. The first run had Parakeet returning near-nonsense
+    /// on a sentence Whisper got nearly right, which is either a real result
+    /// or an artefact of the robot voice — and there is no way to tell from
+    /// inside the benchmark.
+    ///
+    /// So the deciding audio is the user's own, captured with `ara run
+    /// --dump-wav`, and never committed: it is a recording of somebody
+    /// speaking, and it belongs to them.
+    static var recordings: [(name: String, url: URL)] {
+        guard let dir = ProcessInfo.processInfo.environment["ARA_BENCH_WAV"] else { return [] }
+        let root = URL(fileURLWithPath: dir)
+        let found = (try? FileManager.default.contentsOfDirectory(
+            at: root, includingPropertiesForKeys: nil)) ?? []
+        return found.filter { $0.pathExtension == "wav" }
+            .sorted { $0.lastPathComponent < $1.lastPathComponent }
+            .map { ($0.deletingPathExtension().lastPathComponent, $0) }
+    }
+
+    static func samples(at url: URL) throws -> [Float] {
+        let file = try AVAudioFile(forReading: url)
+        guard let buffer = AVAudioPCMBuffer(
+            pcmFormat: file.processingFormat,
+            frameCapacity: AVAudioFrameCount(file.length))
+        else { throw BenchError.noAudio(url.path) }
+        try file.read(into: buffer)
+        guard let channel = buffer.floatChannelData?[0] else {
+            throw BenchError.noAudio(url.path)
+        }
+        return Array(UnsafeBufferPointer(start: channel, count: Int(buffer.frameLength)))
+    }
+
     #if canImport(FluidAudio)
+    @Test("real dictation — both models, one session")
+    func realSpeech() async throws {
+        guard Self.enabled, !Self.recordings.isEmpty else { return }
+
+        print("\n=== real dictation ===")
+        let models = try await AsrModels.downloadAndLoad(version: .v3)
+        let parakeet = AsrManager(config: .default)
+        try await parakeet.loadModels(models)
+        let whisper = WhisperKitTranscriber(
+            model: ModelRegistry.find("whisper-large-v3-turbo")!)
+        try await whisper.warmUp()
+
+        for (name, url) in Self.recordings {
+            let audio = try Self.samples(at: url)
+            let length = Self.seconds(audio)
+            print("\n--- \(name) (\(String(format: "%.1f", length))s) ---")
+
+            // Warm both on this clip before timing, so neither is charged for
+            // state the other has already built.
+            var warm = try TdtDecoderState()
+            _ = try await parakeet.transcribe(audio, decoderState: &warm)
+            _ = try await whisper.transcribe(audio)
+
+            var decoder = try TdtDecoderState()
+            var t = ContinuousClock.now
+            let p = try await parakeet.transcribe(audio, decoderState: &decoder)
+            let pTook = ContinuousClock.now - t
+            print("  parakeet \(Self.ms(pTook)) ms"
+                + String(format: "  %.0fx realtime", length
+                    / (Double(pTook.components.attoseconds) / 1e18
+                       + Double(pTook.components.seconds))))
+            print("    \(p.text)")
+
+            t = ContinuousClock.now
+            let w = try await whisper.transcribe(audio)
+            let wTook = ContinuousClock.now - t
+            print("  whisper  \(Self.ms(wTook)) ms"
+                + String(format: "  %.0fx realtime", length
+                    / (Double(wTook.components.attoseconds) / 1e18
+                       + Double(wTook.components.seconds))))
+            print("    \(w)")
+        }
+    }
+
     @Test("Parakeet TDT v3 — load, then transcribe at three lengths")
     func parakeet() async throws {
         guard Self.enabled else { return }

@@ -31,6 +31,23 @@ public enum ModelRegistry {
     /// behaviour for a model that cannot produce other languages, and the day
     /// one is added back it should still be right.
     public static let shared: [TranscriptionModel] = [
+        // The default since it measured 4-8x faster than Whisper at equal
+        // accuracy on real dictation, and punctuates itself — see
+        // `ParakeetTranscriber` for the table. First, because this list is the
+        // order the Model submenu draws.
+        //
+        // 25 European languages, against Whisper's 99, which is the whole
+        // reason the two Whisper entries below stay: a user dictating in
+        // Japanese or Arabic has to be able to pick one.
+        TranscriptionModel(
+            id: "parakeet-tdt-0.6b-v3",
+            displayName: "Parakeet TDT v3 (fastest)",
+            engine: .parakeet,
+            whisperKitID: nil,
+            sizeMB: 620,
+            languages: ["multi"],
+            recommended: true
+        ),
         TranscriptionModel(
             id: "whisper-small",
             displayName: "Whisper Small",
@@ -38,7 +55,7 @@ public enum ModelRegistry {
             whisperKitID: "openai_whisper-small",
             sizeMB: 488,
             languages: ["multi"],
-            recommended: true
+            recommended: false
         ),
         TranscriptionModel(
             id: "whisper-large-v3-turbo",

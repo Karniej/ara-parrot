@@ -17,13 +17,20 @@ struct CleanupMenuModelTests {
                 == [.none, .light, .medium, .high])
     }
 
-    /// `Config.load` defaults an absent `cleanup` key to `.medium`, so the
-    /// menu computed from a default config must check medium — the daemon's
-    /// actual behaviour, not an unchecked menu.
+    /// The menu computed from a default config must check whatever the daemon
+    /// actually does — an unchecked menu would be describing a different app.
+    ///
+    /// The default moved from `.medium` to `.none` when Parakeet became the
+    /// default transcriber: it punctuates its own output, so the second of
+    /// generation `.medium` costs now buys rewriting nobody asked for. Written
+    /// against `Config().cleanup` rather than a spelled-out row so the next
+    /// change to the default moves the checkmark here too, instead of leaving
+    /// this passing and wrong.
     @Test("the configured intensity carries the check, and only it")
     func checkmarkPlacement() {
-        #expect(CleanupMenuModel.compute(current: Config().cleanup)
-            .items.map(\.checked) == [false, false, true, false])
+        let rows = CleanupMenuModel.compute(current: Config().cleanup).items
+        #expect(rows.filter(\.checked).count == 1)
+        #expect(rows.first { $0.checked }?.intensity == Config().cleanup)
         for intensity in CleanupIntensity.allCases {
             let checks = CleanupMenuModel.compute(current: intensity)
                 .items.map(\.checked)

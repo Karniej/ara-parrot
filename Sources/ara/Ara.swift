@@ -188,8 +188,11 @@ struct Run: ParsableCommand {
                                               setting: config.language).warning {
             FileHandle.standardError.write(Data("config: \(warning)\n".utf8))
         }
-        let transcriber = WhisperKitTranscriber(model: chosenModel,
-                                                language: config.language)
+        // Which engine, from the model. `TranscriberFactory` is the only place
+        // that decides; everything below holds the protocol and does not care
+        // — except the two ladder call sites, which ask.
+        let transcriber = ActiveTranscriber(
+            TranscriberFactory.make(model: chosenModel, language: config.language))
         // The formatting model is loaded at startup too — before the hotkey
         // arms, and never on the dictation path: a warm load is ~1s and a cold
         // one ~38s against a 2500ms per-engine deadline, so a lazy first load
@@ -200,7 +203,17 @@ struct Run: ParsableCommand {
         // *warmed* under the engines that will consult it: `apple`, `rules` and
         // `off` would otherwise pay a second of startup and 0.9GB of resident
         // memory for a model they never call.
-        let warmsMLX = config.engine == .mlx || config.engine == .cloud
+        // Warmed only when something can actually call it. The engine says
+        // *which* model would run; the intensity says whether any model runs at
+        // all — `cleanup: none` routes every mode through the rules floor, so
+        // an engine of `.mlx` there names a model nobody will ever ask for.
+        //
+        // That mattered the moment `.none` became the default: the daemon was
+        // loading 0.9GB of resident weights and a second of startup for a
+        // formatter that could not be reached. The engine check alone had been
+        // right for as long as the default intensity used an LLM.
+        let warmsMLX = (config.engine == .mlx || config.engine == .cloud)
+            && config.cleanup != CleanupIntensity.none
 
         // AppKit before the warm-up, not after it. The status item below must
         // exist while models load — the whole point of the non-blocking warm-up
@@ -1027,6 +1040,30 @@ struct Run: ParsableCommand {
                     // visible change and not one per byte. The callback itself
                     // arrives on a URLSession thread; the hop is the whole
                     // body.
+                    // Parakeet loads in about a third of a second, so it has
+                    // no pipeline to build ahead of time and nothing to adopt:
+                    // `warmUp` is the whole of it, and the ladder below finds
+                    // the target already landed. Whisper keeps the split —
+                    // build off the actor, swap between utterances — because
+                    // its load is the wait the ladder exists for.
+                    guard let whisper = await transcriber.whisperKit else {
+                        try await transcriber.warmUp(onPhase: { phase in
+                            Task { @MainActor in warmup.setTranscriber(phase) }
+                        })
+                        guard await MainActor.run(resultType: Bool.self, body: {
+                            guard running.generation == startupGeneration else { return false }
+                            ladder.targetDidLand()
+                            return true
+                        }) else { return (nil, true) }
+                        await MainActor.run {
+                            running.model = chosenModel
+                            running.switching = .settled
+                            menuBar.setModelLabel(running: chosenModel.id, switching: .settled)
+                            repaintLanguageMenu()
+                            warmup.setTranscriber(nil)
+                        }
+                        return (nil, false)
+                    }
                     let pipeline = try await WhisperKitTranscriber.buildPipeline(
                         model: chosenModel,
                         onPhase: { phase in
@@ -1043,7 +1080,7 @@ struct Run: ParsableCommand {
                     guard await MainActor.run(resultType: Bool.self, body: {
                         running.generation == startupGeneration
                     }) else { return (nil, true) }
-                    await transcriber.adopt(pipeline, model: chosenModel)
+                    await whisper.adopt(pipeline, model: chosenModel)
                     // The transcriber is warm *before* the gate opens, and
                     // that gap is the point: the formatting model may still be
                     // loading, and the pill should say so rather than keep
@@ -1072,7 +1109,11 @@ struct Run: ParsableCommand {
             // model nobody asked for would only be noise on top of the wait
             // they are already being told about.
             async let bootstrapDone: Void = {
-                guard let bootstrap = WarmupLadder.bootstrap(for: chosenModel) else { return }
+                // Nothing to stand in for when the chosen model is not a
+                // Whisper one: `bootstrap` is a Whisper model, and adopting it
+                // into a Parakeet transcriber is not a thing that exists.
+                guard await transcriber.whisperKit != nil,
+                      let bootstrap = WarmupLadder.bootstrap(for: chosenModel) else { return }
                 // The delay is the whole trigger — see `bootstrapDelay` for why
                 // it is measured rather than probed. A warm chosen model
                 // returns inside it and the check below ends this task before
@@ -1100,7 +1141,7 @@ struct Run: ParsableCommand {
                 guard await MainActor.run(resultType: Bool.self, body: {
                     running.generation == startupGeneration
                 }) else { return }
-                await transcriber.adopt(pipeline, model: bootstrap)
+                await transcriber.whisperKit?.adopt(pipeline, model: bootstrap)
                 await MainActor.run {
                     guard running.generation == startupGeneration else { return }
                     running.model = bootstrap
@@ -1243,7 +1284,7 @@ struct Run: ParsableCommand {
 @MainActor
 private func beginModelSwitch(
     to target: TranscriptionModel, running: RunningModel,
-    transcriber: WhisperKitTranscriber, menuBar: MenuBarController,
+    transcriber: ActiveTranscriber, menuBar: MenuBarController,
     repaintLanguageMenu: @escaping @MainActor () -> Void,
     declareReady: @escaping @MainActor () -> Void
 ) {
@@ -1259,14 +1300,22 @@ private func beginModelSwitch(
 
     Task {
         do {
-            let pipeline = try await WhisperKitTranscriber.buildPipeline(model: target)
+            // Built and warmed *outside* the box, then swapped in. A Whisper
+            // load can take minutes and warming it in place would queue every
+            // utterance behind it — the same reason `buildPipeline` is static.
+            // This form also crosses engines, which adopting a pipeline into a
+            // fixed actor could not: Whisper to Parakeet is a different actor,
+            // not a different pipeline.
+            let replacement = TranscriberFactory.make(model: target,
+                                                      language: running.language)
+            try await replacement.warmUp(onPhase: { _ in })
             guard running.generation == generation else {
                 FileHandle.standardError.write(Data(
                     ("\(target.id) loaded, but a newer choice supersedes it; "
                         + "discarding\n").utf8))
                 return
             }
-            await transcriber.adopt(pipeline, model: target)
+            await transcriber.replace(with: replacement)
             running.model = target
             running.switching = .settled
             menuBar.setModelLabel(running: target.id, switching: .settled)
