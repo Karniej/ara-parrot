@@ -15,11 +15,18 @@
 #
 #   - A signed bundle. Sign with `ARA_SIGN_IDENTITY="Developer ID Application:
 #     ..." scripts/package-app.sh`; an ad-hoc signature is rejected.
-#   - A notarytool credential profile. Create one once:
+#   - Credentials, in one of two forms. Locally, a notarytool profile, created
+#     once:
 #       xcrun notarytool store-credentials ara \
 #         --key ~/.appstoreconnect/private_keys/AuthKey_XXXX.p8 \
 #         --key-id XXXX --issuer <issuer-uuid>
 #     `ARA_NOTARY_PROFILE` overrides the name; it defaults to `ara`.
+#
+#     In CI there is no keychain to hold a profile, so `ARA_NOTARY_KEY` (a path
+#     to the .p8), `ARA_NOTARY_KEY_ID` and `ARA_NOTARY_ISSUER` are used instead
+#     when all three are set. One script either way: a release built by hand and
+#     a release built by the workflow go through the same code, which is the
+#     only way the local path stays honest about what CI does.
 #
 # Usage:
 #   scripts/notarize.sh [path]        # defaults to dist/Ara.app
@@ -61,11 +68,21 @@ case "$TARGET" in
         ;;
 esac
 
+if [ -n "${ARA_NOTARY_KEY:-}" ] && [ -n "${ARA_NOTARY_KEY_ID:-}" ] \
+        && [ -n "${ARA_NOTARY_ISSUER:-}" ]; then
+    CREDENTIALS=(--key "$ARA_NOTARY_KEY" --key-id "$ARA_NOTARY_KEY_ID"
+                 --issuer "$ARA_NOTARY_ISSUER")
+    HOW="--key ... --key-id $ARA_NOTARY_KEY_ID --issuer ..."
+else
+    CREDENTIALS=(--keychain-profile "$PROFILE")
+    HOW="--keychain-profile $PROFILE"
+fi
+
 echo "→ submitting to Apple (this usually takes a few minutes)..."
-if ! xcrun notarytool submit "$SUBMISSION" --keychain-profile "$PROFILE" --wait; then
+if ! xcrun notarytool submit "$SUBMISSION" "${CREDENTIALS[@]}" --wait; then
     echo >&2
     echo "notarization failed. The log says why:" >&2
-    echo "  xcrun notarytool log <submission-id> --keychain-profile $PROFILE" >&2
+    echo "  xcrun notarytool log <submission-id> $HOW" >&2
     exit 1
 fi
 
