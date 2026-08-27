@@ -92,6 +92,19 @@ fi
 echo "→ stapling..."
 xcrun stapler staple "$TARGET"
 
+# Asked the way Gatekeeper will ask. The assessment type is not cosmetic: a
+# disk image is not executable code, and `--type execute` rejects a perfectly
+# good DMG with "the code is valid but does not seem to be an app" — which is
+# a pass reported as a failure, and cost one CI run to learn.
 echo "→ verifying as Gatekeeper sees it..."
-spctl --assess --type execute --verbose=2 "$TARGET" 2>&1 | sed 's/^/  /'
+case "$TARGET" in
+    *.app) ASSESS=(--type execute) ;;
+    *)     ASSESS=(--type open --context context:primary-signature) ;;
+esac
+ASSESSMENT="$(spctl --assess "${ASSESS[@]}" --verbose=2 "$TARGET" 2>&1 || true)"
+echo "$ASSESSMENT" | sed 's/^/  /'
+if ! echo "$ASSESSMENT" | grep -q "source=Notarized Developer ID"; then
+    echo "notarization did not stick — $TARGET would still warn on download" >&2
+    exit 1
+fi
 echo "✓ $TARGET is notarized and stapled"
