@@ -14,6 +14,12 @@ let package = Package(
         // implementations in the package, so a caller must supply both. The range
         // is WhisperKit's, so this adds no new resolution.
         .package(url: "https://github.com/huggingface/swift-transformers.git", "1.1.0" ..< "2.0.0"),
+        // SPIKE, test target only. Parakeet TDT v3 on the Neural Engine, to be
+        // measured against the Whisper path before anything ships on it — see
+        // `ParakeetBenchmark`. Nothing in AraCore links this, so the daemon is
+        // unchanged and the dependency can be removed by deleting two lines.
+        // Zero transitive dependencies of its own, and the same macOS 14 floor.
+        .package(url: "https://github.com/FluidInference/FluidAudio.git", from: "0.15.6"),
     ],
     targets: [
         // The portable engine: cleanup, vocabulary, modes, the session. No
@@ -45,6 +51,11 @@ let package = Package(
                 .product(name: "ArgumentParser", package: "swift-argument-parser"),
             ]
         ),
-        .testTarget(name: "AraCoreTests", dependencies: ["AraCore", "AraEngine"]),
+        .testTarget(
+            name: "AraCoreTests",
+            dependencies: [
+                "AraCore", "AraEngine",
+                .product(name: "FluidAudio", package: "FluidAudio"),
+            ]),
     ]
 )
