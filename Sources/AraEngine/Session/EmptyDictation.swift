@@ -36,13 +36,39 @@ public enum EmptyDictation: Equatable, Sendable {
         }
     }
 
+    /// Why this utterance produced nothing worth typing, or `nil` when it did.
+    ///
+    /// ## The audio outranks the transcript
+    ///
+    /// Whisper does not answer silence with silence. It was trained on
+    /// captioned video, so a buffer with nothing in it comes back as "Thank
+    /// you." or "Thanks for watching!" — confident, well-formed, and entirely
+    /// invented. Reported from use as ara saying thank you to a recording
+    /// nobody spoke into.
+    ///
+    /// This used to open with a guard that returned `nil` for any non-blank
+    /// transcript, which meant every check below it — including the rms that
+    /// says the microphone heard nothing — was only ever reached when Whisper
+    /// had already admitted it had nothing. The moment it invented something
+    /// instead, the evidence was skipped and the invention was typed.
+    ///
+    /// So the sound comes first. If the buffer carried none, anything derived
+    /// from it was made up, however plausible it reads.
+    ///
+    /// ## Why not a list of known phrases
+    ///
+    /// Matching "thank you" and its friends would need one list per language
+    /// Whisper speaks, would fail on the next wording it invents, and would
+    /// eventually reject a user who really did dictate "thank you" into a live
+    /// microphone. The rms is language-neutral and describes the recording
+    /// rather than guessing at the words.
     public static func diagnose(sampleCount: Int, seconds: Double, rms: Float,
                                 leadingSilence: Double,
                                 transcript: String) -> EmptyDictation? {
-        guard transcript.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-        else { return nil }
         if sampleCount == 0 { return .noAudio }
         if rms < silenceRMS { return .silence }
+        guard transcript.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        else { return nil }
         if seconds < minimumSeconds {
             return .tooShort(lateStart: leadingSilence >= lateStartSeconds)
         }

@@ -896,9 +896,14 @@ struct Run: ParsableCommand {
                             // unreliable below about a second, and `sanitize`
                             // strips the bracket tokens it emits in place of
                             // words — so a short or clipped utterance lands here
-                            // with a healthy rms and an empty string. `diagnose`
-                            // returns nil for any non-blank transcript, so this
-                            // branch cannot swallow a real result.
+                            // with a healthy rms and an empty string.
+                            //
+                            // It also catches the opposite: a silent buffer
+                            // that Whisper filled in. Trained on captioned
+                            // video, it answers silence with "Thank you." —
+                            // so `diagnose` weighs the recording before the
+                            // transcript, and a real utterance is kept by its
+                            // rms rather than by having produced words.
                             if let empty = EmptyDictation.diagnose(
                                 sampleCount: samples.count, seconds: seconds, rms: rms,
                                 leadingSilence: EmptyDictation.leadingSilence(

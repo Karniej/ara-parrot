@@ -8,10 +8,17 @@ struct EmptyDictationTests {
 
     @Test("a transcript with words is not a diagnosis")
     func wordsAreNotADiagnosis() {
-        // Deliberately alongside audio that would otherwise be diagnosed: the
-        // guard's whole obligation is that it cannot take a transcript away.
+        // Deliberately alongside audio that would otherwise be diagnosed —
+        // too short, and starting late. The obligation is that neither of
+        // those can take a real transcript away.
+        //
+        // It used to say `rms: 0.0` here, and that was the defect rather than
+        // the contract: a buffer with no sound in it cannot produce "hello",
+        // so keeping that transcript meant keeping an invention. Silence is
+        // now judged from the recording (see `diagnose`), and this case says
+        // what it always meant to — a *quiet* utterance is still an utterance.
         #expect(EmptyDictation.diagnose(sampleCount: 12_000, seconds: 0.75,
-                                        rms: 0.0, leadingSilence: 0.7,
+                                        rms: 0.02, leadingSilence: 0.7,
                                         transcript: "hello") == nil)
     }
 
@@ -139,5 +146,63 @@ struct EmptyDictationTests {
     @Test("no samples, no leading silence")
     func emptyBuffer() {
         #expect(EmptyDictation.leadingSilence([], sampleRate: 16_000) == 0)
+    }
+}
+
+/// Whisper does not answer silence with silence. It was trained on captioned
+/// video, so a buffer with nothing in it comes back as "Thank you." or
+/// "Thanks for watching!" — confident, well-formed, and entirely invented.
+///
+/// Reported from use: *"sometimes when Ara hears something while there was
+/// nothing to hear it says thank you"*.
+@Suite("Hallucinated silence")
+struct HallucinatedSilenceTests {
+    /// The defect. `diagnose` used to open with a guard that returned `nil`
+    /// for any non-blank transcript, so the audio evidence below it — the rms
+    /// that says this buffer carried no sound — was never reached. A silent
+    /// recording that Whisper had filled in sailed through and got typed.
+    @Test("a silent buffer is silence however confident the transcript")
+    func silenceOutranksAnInventedTranscript() {
+        #expect(EmptyDictation.diagnose(sampleCount: 48_000, seconds: 3.0,
+                                        rms: 0.001, leadingSilence: 3.0,
+                                        transcript: "Thank you.")
+                == .silence)
+    }
+
+    /// No blocklist. Deciding this by matching phrases would need one list per
+    /// language Whisper speaks, and would still miss the next wording it
+    /// invents — the audio is the evidence, and the audio is language-neutral.
+    @Test("any invented wording is caught, not a list of known ones")
+    func noPhraseListRequired() {
+        for invented in ["Thanks for watching!", "Dziękuję.", "字幕by索兰娅",
+                         "Please subscribe to my channel.", "you"] {
+            #expect(EmptyDictation.diagnose(sampleCount: 48_000, seconds: 3.0,
+                                            rms: 0.002, leadingSilence: 3.0,
+                                            transcript: invented)
+                    == .silence)
+        }
+    }
+
+    /// The other side, and the one that matters more: a real utterance must
+    /// survive. Measured from this user's own log — ordinary speech lands at
+    /// rms 0.011 to 0.022, well clear of the 0.005 floor.
+    @Test("quiet but real speech is kept")
+    func realSpeechSurvives() {
+        for rms in [Float(0.006), 0.011, 0.022] {
+            #expect(EmptyDictation.diagnose(sampleCount: 48_000, seconds: 3.0,
+                                            rms: rms, leadingSilence: 0.1,
+                                            transcript: "open the terminal")
+                    == nil)
+        }
+    }
+
+    /// A transcript is still returned unchanged when the audio was fine and
+    /// the words were real — the check must not become "reject short things".
+    @Test("a one-word utterance with real audio is not silence")
+    func shortRealUtteranceSurvives() {
+        #expect(EmptyDictation.diagnose(sampleCount: 48_000, seconds: 1.4,
+                                        rms: 0.018, leadingSilence: 0.05,
+                                        transcript: "yes")
+                == nil)
     }
 }
