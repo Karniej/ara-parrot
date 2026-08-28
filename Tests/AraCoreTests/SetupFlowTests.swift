@@ -9,9 +9,12 @@ import Testing
 struct SetupFlowTests {
     private static func state(microphone: MicrophonePermission = .granted,
                               accessibility: Bool = true,
+                              modelChosen: Bool = true,
+                              cleanupChosen: Bool = true,
                               modelPresent: Bool = true,
                               setupCompleted: Bool = true) -> SetupFlow.State {
         SetupFlow.State(microphone: microphone, accessibility: accessibility,
+                        modelChosen: modelChosen, cleanupChosen: cleanupChosen,
                         modelPresent: modelPresent, setupCompleted: setupCompleted)
     }
 
@@ -201,5 +204,74 @@ struct SetupWindowStateTests {
         window.update(step: .accessibility)
         #expect(window.currentStep == .accessibility)
         window.close()
+    }
+}
+
+
+/// The two questions the first run asks, and why they sit where they do.
+@Suite("Setup choices")
+struct SetupChoiceTests {
+    private static func state(modelChosen: Bool = true,
+                              cleanupChosen: Bool = true,
+                              modelPresent: Bool = true) -> SetupFlow.State {
+        SetupFlow.State(microphone: .granted, accessibility: true,
+                        modelChosen: modelChosen, cleanupChosen: cleanupChosen,
+                        modelPresent: modelPresent, setupCompleted: false)
+    }
+
+    /// **Before the download, and that is the point.** The answer decides
+    /// *which* model is fetched — 620 MB of Parakeet or 1.6 GB of Whisper —
+    /// so asking afterwards would mean downloading the wrong one first.
+    @Test("the language question comes before the download")
+    func languageBeforeDownload() {
+        #expect(SetupFlow.step(Self.state(modelChosen: false,
+                                          modelPresent: false)) == .languages)
+    }
+
+    /// Permissions still lead. A user who has not agreed to let ara hear them
+    /// is not ready to be asked about transcription quality.
+    @Test("both questions wait for the permissions")
+    func questionsWaitForPermissions() {
+        let blocked = SetupFlow.State(
+            microphone: .notDetermined, accessibility: false,
+            modelChosen: false, cleanupChosen: false,
+            modelPresent: false, setupCompleted: false)
+        #expect(SetupFlow.step(blocked) == .microphone)
+    }
+
+    @Test("the rewriting question follows the language one")
+    func rewritingFollowsLanguage() {
+        #expect(SetupFlow.step(Self.state(cleanupChosen: false)) == .rewriting)
+    }
+
+    /// An answered question is never asked again — including by a user who
+    /// answered it by editing the config file rather than pressing a button.
+    @Test("answered questions are not asked again")
+    func answeredQuestionsAreSkipped() {
+        #expect(SetupFlow.step(Self.state()) == .prepare)
+    }
+
+    /// Each is a question, so each offers both answers. A single button would
+    /// make one of them the default by making the other invisible.
+    @Test("each question offers both answers")
+    func bothAnswersAreOffered() {
+        for step in [SetupFlow.Step.languages, .rewriting] {
+            let copy = SetupFlow.copy(for: step)
+            #expect(copy.button != nil)
+            #expect(copy.alternative != nil)
+        }
+    }
+
+    /// The wording has to let someone who knows nothing about ASR answer it.
+    /// Neither question names a model, and the language one names languages.
+    @Test("the questions are answerable without knowing what a Parakeet is")
+    func questionsAvoidJargon() {
+        for step in [SetupFlow.Step.languages, .rewriting] {
+            let copy = SetupFlow.copy(for: step)
+            let words = (copy.title + " " + copy.detail).lowercased()
+            #expect(!words.contains("parakeet"))
+            #expect(!words.contains("whisper"))
+            #expect(!words.contains("model"))
+        }
     }
 }

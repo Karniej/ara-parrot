@@ -112,6 +112,16 @@ public struct Config: Codable, Sendable {
     /// `microphoneProblem` below.
     var cleanupProblem: String?
 
+    /// Whether the file actually said something about cleanup, as opposed to
+    /// getting the default.
+    ///
+    /// The first-run window asks whether Ara should rewrite as well as
+    /// transcribe, and must not ask a user who has already answered — in the
+    /// window, or by editing the file. An absent key is the only honest
+    /// spelling of "never chosen": the *value* cannot say it, because the
+    /// default is itself a valid answer.
+    public private(set) var cleanupWasChosen = false
+
     /// Set during decoding when `language` was present but not a shape
     /// `LanguageSetting` accepts; `load` turns it into the warning. Same
     /// contract as `cleanupProblem`: remembered, never rethrown.
@@ -421,8 +431,9 @@ public struct Config: Codable, Sendable {
             // both `.medium` and were changed apart once — the property moved
             // to `.none` and this did not, so an absent key still loaded a
             // language model nobody could reach.
-            cleanup = try c.decodeIfPresent(CleanupIntensity.self, forKey: .cleanup)
-                ?? Config().cleanup
+            let stated = try c.decodeIfPresent(CleanupIntensity.self, forKey: .cleanup)
+            cleanup = stated ?? Config().cleanup
+            cleanupWasChosen = stated != nil
         } catch {
             // See `cleanupProblem`: defaulted, remembered, never rethrown.
             cleanup = Config().cleanup

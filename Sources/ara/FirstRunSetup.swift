@@ -37,8 +37,8 @@ enum FirstRunSetup {
     ///   are in place. It is handed the window so the daemon can go on using
     ///   it — the download and the compile are the next two steps of the same
     ///   setup, and opening a second window for them would undo the point.
-    static func collectPermissions(step: SetupFlow.Step,
-                                   then start: @escaping @MainActor (SetupWindow) -> Void) -> Never {
+    static func collectSetup(state: SetupFlow.State,
+                             then start: @escaping @MainActor (SetupWindow) -> Void) -> Never {
         let app = NSApplication.shared
         let window = SetupWindow()
         // Closing the window ends the launch. There is nothing else running:
@@ -53,7 +53,7 @@ enum FirstRunSetup {
                     + "you are ready\n").utf8))
             NSApp.terminate(nil)
         }
-        window.onAction = { step in
+        window.onAction = { step, answer in
             switch step {
             case .microphone:
                 SetupPermissions.requestMicrophone {
@@ -72,12 +72,25 @@ enum FirstRunSetup {
                 window.update(step: .restart)
             case .restart:
                 Relaunch.now()
+            case .languages:
+                // The alternative is the ninety-nine-language transcriber; the
+                // primary is the fast one, which is also the default and so
+                // needs no key written. Both are recorded, because an absent
+                // key is how "never asked" is spelled — writing only one
+                // answer would ask the other user again on every launch.
+                persist(model: answer == .alternative
+                    ? "whisper-large-v3-turbo" : ModelRegistry.shared[0].id)
+                advance(window, then: start)
+            case .rewriting:
+                persist(cleanup: answer == .alternative ? .medium : CleanupIntensity.none)
+                advance(window, then: start)
             case .download, .prepare, .done:
                 break
             }
         }
-        report(step)
-        window.show(step: step)
+        let opening = SetupFlow.step(state)
+        report(opening)
+        window.show(step: opening)
 
         Timer.scheduledTimer(withTimeInterval: pollInterval, repeats: true) { timer in
             Task { @MainActor in
@@ -103,6 +116,60 @@ enum FirstRunSetup {
     }
 
     private static var lastReported: SetupFlow.Step?
+
+    private static func persist(model id: String) {
+        do { try Config.persistModel(id) }
+        catch {
+            FileHandle.standardError.write(Data(
+                "config: could not save the model choice (\(error))\n".utf8))
+        }
+    }
+
+    private static func persist(cleanup: CleanupIntensity) {
+        do { try Config.persistCleanup(cleanup) }
+        catch {
+            FileHandle.standardError.write(Data(
+                "config: could not save the rewriting choice (\(error))\n".utf8))
+        }
+    }
+
+    /// Re-reads the config an answer just changed and moves to whatever is
+    /// next — the other question, or the daemon.
+    private static func advance(_ window: SetupWindow,
+                                then start: @MainActor (SetupWindow) -> Void) {
+        let config = Config.load(warn: { _ in })
+        let next = SetupFlow.step(state(from: config))
+        switch next {
+        case .languages, .rewriting, .microphone, .accessibility, .restart:
+            report(next)
+            window.update(step: next)
+        case .download, .prepare, .done:
+            handOver(window, then: start)
+        }
+    }
+
+    /// Everything the flow needs that is not a live permission read.
+    static func state(from config: Config) -> SetupFlow.State {
+        SetupFlow.State(
+            microphone: SetupPermissions.microphone(),
+            accessibility: SetupPermissions.accessibility(),
+            modelChosen: config.model != nil,
+            cleanupChosen: config.cleanupWasChosen,
+            // Not consulted before the daemon starts: whether the chosen model
+            // is on disk is the daemon's own warm-up to discover, and reading
+            // it here would need the model resolved, which is what the
+            // question above decides.
+            modelPresent: true,
+            setupCompleted: config.setupCompleted)
+    }
+
+    private static func handOver(_ window: SetupWindow,
+                                 then start: @MainActor (SetupWindow) -> Void) {
+        guard !started else { return }
+        started = true
+        FileHandle.standardError.write(Data("setup: starting ara\n".utf8))
+        start(window)
+    }
     /// Whether the handover has already happened, so a poll that fires while
     /// the daemon is starting cannot start it twice.
     private static var started = false
@@ -120,15 +187,14 @@ enum FirstRunSetup {
         guard !started else { return true }
         let microphone = SetupPermissions.microphone()
         if microphone == .granted, SetupPermissions.accessibility() {
-            started = true
             FileHandle.standardError.write(Data(
-                "setup: both permissions granted; starting ara\n".utf8))
-            // The window is deliberately left up. The daemon's warm-up takes
-            // it over on the next repaint — the download and the compile are
-            // steps of the same setup — and the user sees one window walk from
-            // the first permission to a working dictation, rather than an app
+                "setup: both permissions granted\n".utf8))
+            // The window is deliberately left up, whether the next thing is a
+            // question or the daemon itself. The download and the compile are
+            // steps of the same setup, and the user sees one window walk from
+            // the first permission to working dictation rather than an app
             // that disappears and comes back.
-            start(window)
+            advance(window, then: start)
             return true
         }
         // A user parked on the restart step is left there. They have been sent

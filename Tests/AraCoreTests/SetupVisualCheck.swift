@@ -56,7 +56,7 @@ struct SetupVisualCheck {
 
     @MainActor
     static func view(step: SetupFlow.Step, activity: SetupWindow.Activity) -> SetupView {
-        SetupView(model: model(step: step, activity: activity)) { _ in }
+        SetupView(model: model(step: step, activity: activity)) { _, _ in }
     }
 
     /// The same content with no frame of its own, proposed the window's width.
@@ -66,7 +66,7 @@ struct SetupVisualCheck {
     static func unframed(step: SetupFlow.Step,
                          activity: SetupWindow.Activity) -> NSHostingView<some View> {
         NSHostingView(
-            rootView: SetupContent(model: model(step: step, activity: activity)) { _ in }
+            rootView: SetupContent(model: model(step: step, activity: activity)) { _, _ in }
                 .frame(width: SetupWindow.contentSize.width))
     }
 

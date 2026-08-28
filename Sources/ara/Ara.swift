@@ -91,14 +91,22 @@ struct Run: ParsableCommand {
         // the flag for a developer who knows what is granted to what, and a
         // window is a worse interruption to them than a failed tap.
         if !skipDoctor {
-            let microphone = SetupPermissions.microphone()
-            if microphone != .granted || !SetupPermissions.accessibility() {
-                MainActor.assumeIsolated {
-                    FirstRunSetup.collectPermissions(
-                        step: microphone == .granted ? .accessibility : .microphone,
-                        then: { window in
-                            try? self.startDaemon(runningLoop: true, setupWindow: window)
-                        })
+            // The whole pre-daemon phase in one decision: two permissions and
+            // two questions. The questions are here rather than later because
+            // the first of them decides what the daemon would download — 620MB
+            // or 1.6GB — and asking after the download is asking too late.
+            MainActor.assumeIsolated {
+                let state = FirstRunSetup.state(from: Config.load(warn: { _ in }))
+                switch SetupFlow.step(state) {
+                case .microphone, .accessibility, .restart, .languages, .rewriting:
+                    FirstRunSetup.collectSetup(state: state, then: { window in
+                        try? self.startDaemon(runningLoop: true, setupWindow: window)
+                    })
+                case .download, .prepare, .done:
+                    // Nothing to ask. The download and the compile are the
+                    // daemon's own warm-up, and it reports them through the
+                    // same window if they take long enough to need one.
+                    break
                 }
             }
         }
@@ -212,6 +220,9 @@ struct Run: ParsableCommand {
         // loading 0.9GB of resident weights and a second of startup for a
         // formatter that could not be reached. The engine check alone had been
         // right for as long as the default intensity used an LLM.
+        // Whether the on-demand load has already happened, so a user toggling
+        // the menu back and forth does not queue several of them.
+        let mlxWarmedOnDemand = OneShot()
         let warmsMLX = (config.engine == .mlx || config.engine == .cloud)
             && config.cleanup != CleanupIntensity.none
 
@@ -514,18 +525,8 @@ struct Run: ParsableCommand {
             // changes nothing on restart, so re-checking would be a lie.
             let startupCleanup = config.cleanup
             menuBar.setCleanupMenu(CleanupMenuModel.compute(current: startupCleanup))
-            menuBar.onCleanupPicked = { intensity in
-                do {
-                    try Config.persistCleanup(intensity)
-                    menuBar.setCleanupMenu(CleanupMenuModel.compute(current: intensity))
-                } catch {
-                    let reason = (error as? Config.PersistError)?.description
-                        ?? "\(type(of: error))"
-                    FileHandle.standardError.write(Data(
-                        "config: cleanup choice not saved (\(reason)); the saved setting is unchanged\n"
-                            .utf8))
-                }
-            }
+            // `onCleanupPicked` is wired further down, after the session it
+            // has to reach exists. Everything else here only needs the menu.
 
             // The Language submenu — the *other* live pick, and the only one
             // that both applies live and persists. The transcriber builds its
@@ -761,6 +762,54 @@ struct Run: ParsableCommand {
                     pressNote.arm(FormatterChain.degradedNote(engine: engine))
                 }
             })
+
+        // The Cleanup submenu, wired here rather than with the other menus
+        // because it is the one that talks to the session, and the session is
+        // built from the config those menus were drawn from.
+        MainActor.assumeIsolated {
+        menuBar.onCleanupPicked = { intensity in
+            // Applied to the running session first, saved second. The pick
+            // used to be saved only — the checkmark moved, the file
+            // changed, and the daemon went on formatting at the intensity
+            // it had started with until the next launch. Reported as the
+            // menu not working, which is exactly what it was.
+            //
+            // Raising the intensity also has to warm a model. At `.none`
+            // the daemon skips the MLX load entirely (`warmsMLX`), and an
+            // unwarmed formatter does not load on demand — it falls
+            // through to the rules floor without a word, which would be
+            // the same silent nothing in a different place.
+            Task {
+                await session.setCleanup(intensity)
+                // `.none` is the one intensity that reaches no model —
+                // `Mode.applying(cleanup:)` clears `usesLLM` for it, which
+                // is the same seam verbatim mode rides.
+                guard intensity != CleanupIntensity.none, !warmsMLX,
+                      await mlxWarmedOnDemand.claim() else { return }
+                FileHandle.standardError.write(Data(
+                    "loading \(MLXModel.id) for the cleanup you just picked...\n".utf8))
+                do {
+                    try await mlx.warmUp()
+                    FileHandle.standardError.write(Data(
+                        "✓ \(MLXModel.id) ready\n".utf8))
+                } catch {
+                    FileHandle.standardError.write(Data(
+                        ("! could not load \(MLXModel.id) (\(type(of: error))); "
+                            + "cleanup stays rule-based\n").utf8))
+                }
+            }
+            do {
+                try Config.persistCleanup(intensity)
+                menuBar.setCleanupMenu(CleanupMenuModel.compute(current: intensity))
+            } catch {
+                let reason = (error as? Config.PersistError)?.description
+                    ?? "\(type(of: error))"
+                FileHandle.standardError.write(Data(
+                    "config: cleanup choice not saved (\(reason)); the saved setting is unchanged\n"
+                        .utf8))
+            }
+        }
+        }
 
         // Installed before the warm-up rather than after the hotkey arms, so a
         // ^C during a long first-run model download still shuts down cleanly.
@@ -1826,5 +1875,21 @@ struct Models: ParsableCommand {
             FileHandle.standardError.write(Data("\r".utf8))
             if let e = capturedError { throw e }
         }
+    }
+}
+
+/// A latch that answers `true` exactly once.
+///
+/// The Cleanup submenu can load a language model, and a user clicking through
+/// the four intensities would otherwise start four loads of the same 0.9 GB of
+/// weights. An actor rather than a main-actor flag because the caller is
+/// already in a `Task` and the check has to be atomic with the claim.
+actor OneShot {
+    private var claimed = false
+
+    func claim() -> Bool {
+        if claimed { return false }
+        claimed = true
+        return true
     }
 }

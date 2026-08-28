@@ -55,7 +55,14 @@ public actor DictationSession {
     private let resolver: ModeResolver
     private let dictionary: @Sendable () -> LocalDictionary
     private let snippets: @Sendable () -> Snippets
-    private let cleanup: CleanupIntensity
+    /// The editing intensity, stamped onto every resolved mode.
+    ///
+    /// A `var` because the Cleanup submenu changes it while the daemon runs.
+    /// It was a `let` when the only way to change it was to edit the config
+    /// and relaunch — which is what a user reported as the menu "not working":
+    /// the pick was saved, the checkmark moved, and the next utterance was
+    /// formatted by the intensity the daemon had started with.
+    private var cleanup: CleanupIntensity
     private let onModeResolved: (@Sendable (Mode) -> Void)?
 
     /// - Parameters:
@@ -99,6 +106,18 @@ public actor DictationSession {
         self.snippets = snippets
         self.cleanup = cleanup
         self.onModeResolved = onModeResolved
+    }
+
+    /// The Cleanup submenu changed. Applies to the next utterance; one already
+    /// being formatted keeps the intensity it started with, which is what
+    /// actor isolation gives for free.
+    ///
+    /// Changing this is not sufficient on its own. At `.none` no language
+    /// model is loaded — see the daemon's `warmsMLX` — so raising the
+    /// intensity also has to warm one, or the chain silently falls through to
+    /// the rules floor and the user gets no rewriting and no error.
+    public func setCleanup(_ intensity: CleanupIntensity) {
+        cleanup = intensity
     }
 
     /// Corrects `raw` against the user's dictionary, formats it, and returns

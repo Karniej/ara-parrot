@@ -43,7 +43,7 @@ public final class SetupWindow {
     /// each press does — raising the microphone prompt, opening Settings,
     /// restarting, dismissing — because all of those are process-level acts
     /// and none of them belong to a view.
-    public var onAction: (@MainActor (SetupFlow.Step) -> Void)?
+    public var onAction: (@MainActor (SetupFlow.Step, SetupFlow.Answer) -> Void)?
 
     public init() {}
 
@@ -207,8 +207,8 @@ public final class SetupWindow {
         window.standardWindowButton(.miniaturizeButton)?.isEnabled = false
         window.standardWindowButton(.zoomButton)?.isEnabled = false
 
-        let host = NSHostingView(rootView: SetupView(model: model) { [weak self] step in
-            self?.onAction?(step)
+        let host = NSHostingView(rootView: SetupView(model: model) { [weak self] step, answer in
+            self?.onAction?(step, answer)
         })
         // `RecordingOverlay`'s lesson, and the same one line of fix: an
         // `NSHostingView`'s intrinsic size otherwise wins over the size the
@@ -263,7 +263,7 @@ final class SetupModel: ObservableObject {
 /// could not fail.
 struct SetupView: View {
     @ObservedObject var model: SetupModel
-    var action: (SetupFlow.Step) -> Void
+    var action: (SetupFlow.Step, SetupFlow.Answer) -> Void
 
     var body: some View {
         ZStack {
@@ -316,7 +316,7 @@ struct LaunchMoment: View {
 /// microphone is not open, and amber means the microphone is open.
 struct SetupContent: View {
     @ObservedObject var model: SetupModel
-    var action: (SetupFlow.Step) -> Void
+    var action: (SetupFlow.Step, SetupFlow.Answer) -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
@@ -345,8 +345,18 @@ struct SetupContent: View {
                     .textCase(.uppercase)
                     .foregroundStyle(Brand.textTertiary)
                 Spacer()
+                // The alternative sits left of the primary and reads as
+                // text, not a button. Both are real answers, but one of them
+                // is what most people want, and a pair of identical buttons
+                // makes a user stop and decide which is safe.
+                if let alternative = model.copy.alternative {
+                    Button(alternative) { action(model.step, .alternative) }
+                        .buttonStyle(.plain)
+                        .font(Brand.labelFont)
+                        .foregroundStyle(Brand.textSecondary)
+                }
                 if let button = model.copy.button {
-                    Button(button) { action(model.step) }
+                    Button(button) { action(model.step, .primary) }
                         .buttonStyle(BrandButtonStyle())
                         .keyboardShortcut(.defaultAction)
                 }

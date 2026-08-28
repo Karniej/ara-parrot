@@ -41,6 +41,12 @@ public enum SetupFlow {
     public struct State: Sendable, Equatable {
         public var microphone: MicrophonePermission
         public var accessibility: Bool
+        /// Whether the config names a transcription model. Absent means the
+        /// language question has never been answered — the *value* cannot say
+        /// so, because the default is itself a valid answer.
+        public var modelChosen: Bool
+        /// The same, for cleanup: whether the config says anything about it.
+        public var cleanupChosen: Bool
         public var modelPresent: Bool
         /// The one thing no amount of looking can answer: whether the Core ML
         /// compile has ever run to completion. Nothing on disk that we can
@@ -49,16 +55,28 @@ public enum SetupFlow {
         public var setupCompleted: Bool
 
         public init(microphone: MicrophonePermission, accessibility: Bool,
+                    modelChosen: Bool = true, cleanupChosen: Bool = true,
                     modelPresent: Bool, setupCompleted: Bool) {
             self.microphone = microphone
             self.accessibility = accessibility
+            self.modelChosen = modelChosen
+            self.cleanupChosen = cleanupChosen
             self.modelPresent = modelPresent
             self.setupCompleted = setupCompleted
         }
     }
 
     public enum Step: Sendable, Equatable, CaseIterable {
-        case microphone, accessibility, restart, download, prepare, done
+        case microphone, accessibility, restart, languages, rewriting,
+             download, prepare, done
+    }
+
+    /// Which of a step's two buttons was pressed.
+    ///
+    /// `primary` on the steps that only have one, so a caller that does not
+    /// care never has to look.
+    public enum Answer: Sendable, Equatable {
+        case primary, alternative
     }
 
     /// One step's words. `button` is `nil` for the steps that wait on macOS
@@ -68,6 +86,18 @@ public enum SetupFlow {
         public var title: String
         public var detail: String
         public var button: String?
+        /// The second answer, on the steps that ask a question rather than
+        /// wait for one thing. A question with one button is not a question —
+        /// it makes the unshown answer invisible rather than optional.
+        public var alternative: String?
+
+        public init(title: String, detail: String,
+                    button: String? = nil, alternative: String? = nil) {
+            self.title = title
+            self.detail = detail
+            self.button = button
+            self.alternative = alternative
+        }
     }
 
     /// Whether the window is shown at all.
@@ -90,6 +120,12 @@ public enum SetupFlow {
     public static func step(_ state: State) -> Step {
         if state.microphone != .granted { return .microphone }
         if !state.accessibility { return .accessibility }
+        // Both questions before the download, because the first one decides
+        // what gets downloaded: 620 MB of the fast transcriber or 1.6 GB of
+        // the one that speaks ninety-nine languages. Asking afterwards would
+        // mean fetching the wrong one first.
+        if !state.modelChosen { return .languages }
+        if !state.cleanupChosen { return .rewriting }
         if !state.modelPresent { return .download }
         if !state.setupCompleted { return .prepare }
         return .done
@@ -130,6 +166,36 @@ public enum SetupFlow {
                     + "on its own when macOS reports it — a restart is only "
                     + "needed if the hotkey stays dead.",
                 button: "Restart Ara")
+        case .languages:
+            // No model is named. Someone installing a dictation app knows
+            // which languages they speak and does not know what a Parakeet
+            // is, so the question is asked in the only terms they have.
+            //
+            // The 25 are not listed either: a wall of language names is worse
+            // to read than the one thing that distinguishes them, which is
+            // that they are European.
+            return Copy(
+                title: "Which languages do you dictate in?",
+                detail: "Ara's fast setting covers English and 24 other "
+                    + "European languages. Everything else — Japanese, "
+                    + "Chinese, Arabic, Hindi and about sixty more — needs the "
+                    + "slower one, which is roughly five times the wait per "
+                    + "sentence.",
+                button: "European languages",
+                alternative: "I need the others")
+        case .rewriting:
+            // "Rewrite" rather than "cleanup" or "intelligence": it names what
+            // actually happens to the words, which is the thing a user might
+            // not want.
+            return Copy(
+                title: "Should Ara rewrite what you say?",
+                detail: "Ara always types what you said, with punctuation. It "
+                    + "can also tidy it — dropping filler words, repairing "
+                    + "half-finished sentences, and matching the tone of the "
+                    + "app you are dictating into. That costs about a second "
+                    + "per sentence and a gigabyte of memory.",
+                button: "Just type it",
+                alternative: "Tidy it up")
         case .download:
             return Copy(
                 title: "Downloading the speech model",
