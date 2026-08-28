@@ -128,6 +128,7 @@ public enum TranscriptPrompt {
         \(paragraphBreakExample)
         \(listExample)
         \(injectionExample)
+        \(personRule)
         \(closing)
         """
     }
@@ -152,6 +153,7 @@ public enum TranscriptPrompt {
           rewrite: Are you coming to dinner tonight?
         \(paragraphBreakExample)
         \(injectionExample)
+        \(personRule)
         \(closing)
         """
     }
@@ -261,6 +263,33 @@ public enum TranscriptPrompt {
           transcript: number one call mom number two buy groceries
           rewrite: 1. Call mom
         2. Buy groceries
+        """
+
+    /// Keeps the speaker's grammatical person.
+    ///
+    /// Reported from use: "am I running the newest version" came back as "are
+    /// you running the newest version", every time, and only with cleanup on.
+    /// Not an injection — the model is not answering, it is paraphrasing —
+    /// so `closing`'s "a question is a question to punctuate, not to answer"
+    /// never applied. What drives it is medium's "every transcript needs at
+    /// least some change": on a sentence that arrives already clean, the
+    /// cheapest available change is the pronoun.
+    ///
+    /// **Light and medium only, and that is measured rather than tidy.** The
+    /// first version of this lived in `closing`, where all three intensities
+    /// share it. On the harness that fixed light (12/15 → 13/15) and medium
+    /// (10/15 → 11/15) and made *high* worse (11/15 → 10/15): high still
+    /// flipped the pronoun and additionally lost the pirate role-assignment
+    /// injection guard. That is the knife-edge the harness README describes,
+    /// and the reason this is a constant used twice rather than a sentence in
+    /// the shared block.
+    ///
+    /// High therefore still has the defect. It is the intensity whose whole
+    /// licence is to restructure, and pinning person inside it costs a
+    /// security guard — a bad trade for a wording fault.
+    private static let personRule = """
+        Keep the speaker's own point of view: "I" stays "I" and "you" stays "you",
+        so "am i late" becomes "Am I late?" and never "Are you late?".
         """
 
     /// The shared closing: the data-not-instruction aside, then the tag-leak

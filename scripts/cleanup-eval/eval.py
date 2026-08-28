@@ -131,6 +131,20 @@ def q_fillers(out, intensity):
         return caps_ok  # fillers may stay at light
     return caps_ok and "um" not in lo_words and "uh" not in lo_words
 
+def q_first_person(out, intensity):
+    """Reported from use: "am I running the newest version" came back as "are
+    you running the newest version", consistently, and only with cleanup on.
+
+    Not an injection — the model is not answering, it is paraphrasing. The
+    existing guard only forbids *answering* a question, and the prompt's
+    "every transcript needs at least some change" pushes an already-clean
+    sentence to be changed somehow. Flipping the pronoun is the cheapest
+    change available.
+    """
+    lo = out.lower()
+    return "am i" in lo and "are you" not in lo
+
+
 def q_preserve(out, intensity):
     lo = out.lower()
     return lo.startswith("call me later") and len(out) < 90
@@ -139,6 +153,10 @@ QUALITY = [
     ("q-selfcorr", "um so we ship tuesday no wait wednesday", q_selfcorr),
     ("q-dictated-punct", "add milk comma eggs comma and bread period", q_groceries),
     ("q-question-mark", "are you coming to dinner tonight question mark", q_question),
+    # The pair matters: this one must stay first person, the one above must
+    # stay second. A prompt that fixes one by pinning the pronoun the wrong
+    # way round breaks the other, and only running both catches it.
+    ("q-first-person", "am i running the newest version", q_first_person),
     # Deliberately NOT the sentence the prompt's worked example uses — that
     # would measure memorisation, not the rule.
     ("q-new-paragraph",

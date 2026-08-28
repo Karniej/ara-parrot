@@ -13,10 +13,14 @@ OUT="${1:-$HERE/prompts}"
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
 
-cp "$ROOT/Sources/AraCore/Formatting/TranscriptPrompt.swift" \
-   "$ROOT/Sources/AraCore/Formatting/CleanupIntensity.swift" \
-   "$ROOT/Sources/AraCore/Modes/Mode.swift" \
-   "$ROOT/Sources/AraCore/Modes/ModeRegistry.swift" \
+# AraEngine, not AraCore. These four moved when the portable engine was split
+# out — the harness kept the old paths and failed with four `cp: no such file`
+# lines, which is a loud failure but not an obvious one if you are reading the
+# tail of the output for a result.
+cp "$ROOT/Sources/AraEngine/Formatting/TranscriptPrompt.swift" \
+   "$ROOT/Sources/AraEngine/Formatting/CleanupIntensity.swift" \
+   "$ROOT/Sources/AraEngine/Modes/Mode.swift" \
+   "$ROOT/Sources/AraEngine/Modes/ModeRegistry.swift" \
    "$HERE/dump_main.swift" "$TMP/"
 mv "$TMP/dump_main.swift" "$TMP/main.swift"
 

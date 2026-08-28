@@ -6,6 +6,26 @@ merge-blocking. Each was triaged by a whole-branch review; none is speculative.
 Nothing here loses a transcript. That property was traced end to end and holds
 on every path.
 
+
+## Cleanup flips the speaker's pronoun at `cleanup: high`
+
+Dictating "am I running the newest version" comes back as "are you running the
+newest version" — the model paraphrases rather than answers, so the prompt's
+"a question is a question to punctuate, not to answer" guard never applies.
+What drives it is the instruction that every transcript needs at least some
+change: on a sentence that arrives already clean, the cheapest change available
+is the pronoun.
+
+Fixed at `light` and `medium` by `TranscriptPrompt.personRule`. **Not fixed at
+`high`**, and deliberately so: the same sentence placed where all three
+intensities share it left high still flipping the pronoun *and* cost it the
+pirate role-assignment injection guard (11/15 → 10/15 on
+`scripts/cleanup-eval`). High is the intensity whose whole licence is to
+restructure, and buying a wording fix with a security guard is the wrong trade.
+
+Workaround: use `"cleanup": "medium"`, which is what the first-run window
+offers anyway.
+
 ## Unverified, not defective
 
 These are not bugs — they are things no automated test in this repo can reach.
