@@ -277,15 +277,19 @@ struct PipelineTests {
     func frontmostAppSelectsMode() async {
         var config = llmConfig()
         config.engine = .apple
-        // Four words out for four words in: a bare mode id would be discarded by
-        // the chain's plausibility guard before it could be asserted on.
+        // The stub echoes its input alongside the mode id, because the chain's
+        // plausibility guard judges the rewrite against the transcript: a
+        // reply sharing none of the speaker's words is how a translation looks
+        // (`OutputGuard.abandonsVocabulary`), and a bare mode id is also too
+        // short for the length ratio. Echoing keeps this a test of *routing*
+        // rather than an accidental test of the guard.
         let out = await session(config,
-                                apple: PipelineStub { _, mode in
-                                    "formatted for \(mode.id) mode"
+                                apple: PipelineStub { text, mode in
+                                    "\(mode.id) mode: \(text)"
                                 })
             .process(Self.filler, override: nil, manual: nil,
                      frontmostBundleID: "com.apple.dt.Xcode")
-        #expect(out == "formatted for code mode")
+        #expect(out.hasPrefix("code mode: "))
     }
 
     // MARK: - dictionary

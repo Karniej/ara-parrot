@@ -101,6 +101,9 @@ enum OutputGuard {
         // Person flip: the speaker's sentence, moved out of their mouth.
         if flipsPerson(input: inputLower, output: outputLower) { return false }
 
+        // Translation: the speaker's sentence, in a language they did not use.
+        if abandonsVocabulary(input: inputLower, output: outputLower) { return false }
+
         // Short utterances legitimately change length a lot ("ok" -> "OK."),
         // so only the upper bound is meaningful there.
         if inWords < 4 { return outWords <= max(12, inWords * 4) }
@@ -165,6 +168,73 @@ enum OutputGuard {
         }
         return pronounCount(secondPerson, in: output)
             > pronounCount(secondPerson, in: input)
+    }
+
+    /// Whether the rewrite kept so few of the speaker's own words that it is a
+    /// translation rather than a tidy-up.
+    ///
+    /// Reported from use: dictating in Polish produced English. Measured on
+    /// the shipped model, "czy ja uzywam najnowszej wersji" comes back as "Am
+    /// I using the latest version?" while two longer Polish sentences survive
+    /// — it is short utterances that get pulled into the language the
+    /// instructions are written in.
+    ///
+    /// ## Why not ask the model
+    ///
+    /// Asking made it worse, and that is measured. Adding "write the rewrite
+    /// in the same language the transcript is in; never translate" to the
+    /// prompt turned one translated case into three and one of those into an
+    /// *answer*: "no dobra teraz dyktuje ten sam prompt..." came back as "No,
+    /// you're not doing well with this prompt. Let's try again." The line was
+    /// reverted; this replaced it.
+    ///
+    /// ## Why word overlap
+    ///
+    /// It is the one thing that separates the two operations in any language
+    /// pair, without knowing either language: a cleanup keeps the speaker's
+    /// words and changes their punctuation and order; a translation keeps
+    /// almost none of them. No language identification, no model, no table of
+    /// languages to keep up to date.
+    ///
+    /// Diacritics are folded before comparing, because cleanup legitimately
+    /// *restores* them — a transcriber that writes "wlasciwie" and a rewrite
+    /// that writes "właściwie" are the same word, and an exact match would
+    /// read a correction as a replacement.
+    ///
+    /// ## Which direction the overlap is measured in
+    ///
+    /// How much of the **input** survives, not how much of the output is
+    /// borrowed. The other direction fails on expansion, and that was caught
+    /// by an existing test rather than reasoned out: "reminder meeting 3pm" →
+    /// "Reminder: the meeting is at 3pm this afternoon, please don't be late."
+    /// keeps every word the speaker said and still shares only 23% of the
+    /// output, because the rewrite is four times longer. Measured this way it
+    /// scores 100%, which is the truth about it.
+    ///
+    /// The threshold sits far below any legitimate rewrite. A translation
+    /// keeps 0–10% of the speaker's words (proper nouns and numbers survive);
+    /// the harness's own cases measure 50–100%, including `high`
+    /// restructuring, self-correction collapse, and filler removal.
+    ///
+    /// Short inputs are exempt. Three words carry too little signal, and an
+    /// utterance that short is already covered by the length-ratio check.
+    private static let vocabularyFloor = 0.25
+    private static let shortestJudgeableInput = 4
+
+    private static func abandonsVocabulary(input: String, output: String) -> Bool {
+        let inputWords = Set(comparableWords(input))
+        let outputWords = Set(comparableWords(output))
+        guard inputWords.count >= shortestJudgeableInput else { return false }
+        let survived = inputWords.filter { outputWords.contains($0) }.count
+        return Double(survived) / Double(inputWords.count) < vocabularyFloor
+    }
+
+    /// Words with their diacritics folded away, so "właściwie" and
+    /// "wlasciwie" compare equal.
+    private static func comparableWords(_ text: String) -> [String] {
+        text.folding(options: [.diacriticInsensitive], locale: nil)
+            .split(whereSeparator: { !$0.isLetter && !$0.isNumber })
+            .map(String.init)
     }
 
     /// Matched as whole words, so "island" is not a first-person "i" and

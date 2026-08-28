@@ -239,3 +239,75 @@ struct OutputGuardPersonTests {
             output: "I told you the deploy went out."))
     }
 }
+
+/// The fifth failure shape: the model translated instead of tidying.
+///
+/// Reported from use — dictating in Polish produced English. Measured on the
+/// shipped model: "czy ja uzywam najnowszej wersji" comes back as "Am I using
+/// the latest version?", while two longer Polish sentences survive intact. It
+/// is short utterances that get pulled into the instructions' language.
+///
+/// Prompt wording made it *worse*, and that is measured too. Adding "write the
+/// rewrite in the same language the transcript is in; never translate" turned
+/// one translated case into three, and one of them into an answer: "no dobra
+/// teraz dyktuje ten sam prompt..." came back as "No, you're not doing well
+/// with this prompt. Let's try again." The line was reverted.
+///
+/// So this is checked rather than requested, and the check is the one thing
+/// that separates a cleanup from a translation in any language pair: a cleanup
+/// keeps the speaker's words, a translation keeps almost none of them.
+@Suite("Translation")
+struct OutputGuardTranslationTests {
+    @Test("a Polish transcript returned in English is rejected")
+    func translationRejected() {
+        #expect(!OutputGuard.isPlausible(
+            input: "czy ja uzywam najnowszej wersji",
+            output: "Am I using the latest version?"))
+        #expect(!OutputGuard.isPlausible(
+            input: "musze jutro zadzwonic do ksiegowej w sprawie faktury za lipiec",
+            output: "I must call the accountant tomorrow about the invoice for July."))
+    }
+
+    /// The same sentences, cleaned rather than translated, must survive — and
+    /// the first one restores diacritics the transcriber may not have, so the
+    /// comparison cannot be a plain string match.
+    @Test("Polish cleaned as Polish is kept")
+    func polishCleanupKept() {
+        #expect(OutputGuard.isPlausible(
+            input: "no dobra teraz dyktuje ten sam prompt wlasciwie po polsku",
+            output: "No, dobra, teraz dyktuję ten sam prompt, właściwie po polsku."))
+        #expect(OutputGuard.isPlausible(
+            input: "musze jutro zadzwonic do ksiegowej w sprawie faktury za lipiec",
+            output: "Muszę jutro zadzwonić do księgowej w sprawie faktury za lipiec."))
+    }
+
+    /// `high` restructures and `email` expands. Both keep the speaker's
+    /// content words, which is what the check keys on — it must not mistake a
+    /// legitimate rewrite for a translation.
+    @Test("restructuring and expansion are not translation")
+    func rewritesKept() {
+        #expect(OutputGuard.isPlausible(
+            input: "ok so the thing is uh basically we need to we need to fix the login bug",
+            output: "We need to fix the login bug."))
+        #expect(OutputGuard.isPlausible(
+            input: "hi anna the deploy went out this morning can you check it",
+            output: "Hi Anna, the deploy went out this morning. Could you check it when you get a moment?"))
+    }
+
+    /// Short inputs are exempt: three words carry too little signal, and an
+    /// utterance that short is already covered by the length-ratio check.
+    @Test("a very short utterance is left to the other checks")
+    func shortInputsExempt() {
+        #expect(OutputGuard.isPlausible(input: "tak zgadzam sie", output: "Tak."))
+    }
+
+    /// The case that decided which direction the overlap is measured in. Every
+    /// word the speaker said survives; the rewrite is four times longer. Read
+    /// from the output's side it shares 23% and looks like a translation.
+    @Test("a terse note expanded fourfold keeps all of the speaker's words")
+    func expansionIsNotTranslation() {
+        #expect(OutputGuard.isPlausible(
+            input: "reminder meeting 3pm",
+            output: "Reminder: the meeting is at 3pm this afternoon, please don't be late."))
+    }
+}
