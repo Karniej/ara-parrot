@@ -16,8 +16,9 @@
 #                              builds). Fallback: no Info.plist, so the process
 #                              runs under the identity of its launcher.
 #
-# Either way the quarantine xattr is stripped, because builds are unsigned and
-# Gatekeeper otherwise refuses them outright.
+# The quarantine xattr is stripped only from the bare CLI binary, which carries
+# no notarization of its own. The .app keeps it: it is signed and notarized, so
+# the check passes offline and is worth having.
 #
 # Apple Silicon only — WhisperKit uses the Apple Neural Engine via CoreML,
 # which only ships on M-series chips.
@@ -182,8 +183,13 @@ if [ -n "$DMG_URL" ]; then
     hdiutil detach "$MOUNT" -quiet
     MOUNT=""
 
-    # Unsigned + quarantined is the combination Gatekeeper refuses outright.
-    as_owner "$APP_DIR" xattr -dr com.apple.quarantine "$APP_DIR/Ara.app" 2>/dev/null || true
+    # The quarantine flag is deliberately LEFT ON. It used to be stripped here,
+    # because an unsigned app plus quarantine is the combination Gatekeeper
+    # refuses outright — but builds have been signed with a Developer ID and
+    # notarized since v0.4.1, and the ticket is stapled to both the image and
+    # the app. So the check now passes on its own, offline, and stripping the
+    # flag would only throw away the verification the user is entitled to:
+    # Gatekeeper would never look at a tampered copy.
 
     # The bundle's CLI is the same binary; put it on PATH so `ara …` works,
     # and so `ara install --launch-at-login` points the agent at the bundle.
@@ -217,6 +223,9 @@ else
     fi
 
     chmod +x "$TMP/${BIN_NAME}"
+    # The tarball is a bare executable with no notarization of its own — unlike
+    # the .app above, there is no ticket for Gatekeeper to find, so quarantine
+    # here is refusal rather than verification.
     xattr -d com.apple.quarantine "$TMP/${BIN_NAME}" 2>/dev/null || true
 
     if [ ! -d "$INSTALL_DIR" ]; then

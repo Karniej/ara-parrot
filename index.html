@@ -6,7 +6,7 @@
         <title>Ara · free, on-device dictation for macOS</title>
         <meta
             name="description"
-            content="Free, MIT-licensed push-to-talk dictation for macOS. Whisper on the Neural Engine, cleanup on a local open model. No account, no subscription, no server."
+            content="Free, MIT-licensed push-to-talk dictation for macOS. Parakeet on the Neural Engine, transcribing faster than you can read. No account, no subscription, no server."
         />
 
         <!-- Open Graph / link previews -->
@@ -18,7 +18,7 @@
         />
         <meta
             property="og:description"
-            content="Free, MIT-licensed push-to-talk dictation for macOS. Whisper on the Neural Engine, cleanup on a local open model. No account, no subscription, no server."
+            content="Free, MIT-licensed push-to-talk dictation for macOS. Parakeet on the Neural Engine, transcribing faster than you can read. No account, no subscription, no server."
         />
         <meta
             property="og:image"
@@ -37,7 +37,7 @@
         />
         <meta
             name="twitter:description"
-            content="Free, MIT-licensed push-to-talk dictation for macOS. Whisper on the Neural Engine, cleanup on a local open model. No account, no subscription, no server."
+            content="Free, MIT-licensed push-to-talk dictation for macOS. Parakeet on the Neural Engine, transcribing faster than you can read. No account, no subscription, no server."
         />
         <meta
             name="twitter:image"
@@ -522,9 +522,9 @@
                     Hold <strong>fn</strong>, speak, release — the text lands at
                     your cursor, cleaned up.
                     <span class="muted"
-                        >Whisper transcribes on the Apple Neural Engine, an open
-                        1.5B model does the editing, both on your machine. Free,
-                        MIT, no account, no subscription, no server.</span
+                        >Parakeet transcribes on the Apple Neural Engine — a
+                        34-second paragraph in 0.38&nbsp;seconds, punctuated.
+                        Free, MIT, no account, no subscription, no server.</span
                     >
                 </p>
 
@@ -552,17 +552,17 @@
                         >.
                     </p>
                     <p class="caption">
-                        First launch with a large model spends a few minutes
-                        letting macOS prepare it for your Mac's Neural Engine —
-                        once per macOS version. Let it finish; quitting starts
-                        it over. On the default model that step takes about
-                        11&nbsp;seconds.
+                        First launch downloads the speech model and lets
+                        macOS prepare it for your Mac — a setup window walks
+                        you through it. On the default model that is seconds.
+                        The Whisper models take a few minutes; let that finish,
+                        because quitting starts it over.
                     </p>
                     <p class="caption build">
-                        Builds are <strong>unsigned</strong> — no Apple
-                        Developer ID — so the first launch needs
-                        right-click&nbsp;→&nbsp;Open. Cleanup runs on a local
-                        model that is a separate one-time ~900&nbsp;MB download.
+                        Builds are <strong>signed and notarized</strong>, so it
+                        opens with a double-click. Optional AI cleanup runs on a
+                        local model that is a separate one-time
+                        ~900&nbsp;MB download — off by default.
                     </p>
                     <p class="caption requirements">
                         macOS 14+ · Apple Silicon
@@ -583,10 +583,11 @@
                     <h2>Free, local, open</h2>
                     <p class="body">
                         Everything that touches your voice runs on your machine,
-                        on open-weights models, at no cost. Whisper transcribes
-                        through WhisperKit on the Apple Neural Engine; Qwen 2.5
-                        1.5B — Apache-licensed — strips fillers, punctuates and
-                        capitalises on MLX.
+                        on open-weights models, at no cost. Parakeet
+                        transcribes on the Apple Neural Engine and punctuates
+                        its own output; Whisper is still there for the 99
+                        languages Parakeet does not cover. Optional cleanup
+                        rewrites on Qwen 2.5 1.5B — Apache-licensed — on MLX.
                         <strong>No audio and no transcript leaves the Mac.</strong>
                     </p>
                     <p class="body">
@@ -617,37 +618,31 @@
                                 <span class="dim">$</span> ara
                                 --echo-transcripts
                             </p>
+                            <p class="dim">loading parakeet-tdt-0.6b-v3...</p>
                             <p class="dim">
-                                loading mlx-community/Qwen2.5-1.5B-Instruct-4bit
-                                (formatting)...
-                            </p>
-                            <p class="ok">
-                                ✓ mlx-community/Qwen2.5-1.5B-Instruct-4bit ready
-                                (1.0s)
-                            </p>
-                            <p class="dim">
-                                listening on fn hold · model: whisper-base.en ·
+                                listening on fn hold · model: parakeet-tdt-0.6b-v3 ·
                                 ^C to quit
                             </p>
                             <p class="rec pad-top">● recording</p>
-                            <p class="dim">○ captured 3.90s · rms 0.041</p>
-                            <p>
-                                → 1.08s · um so we ship tuesday no wait
-                                wednesday
-                            </p>
-                            <p>↦ 1.62s · We ship Wednesday.</p>
-                            <p class="rec pad-top">● recording</p>
                             <p class="dim">○ captured 2.30s · rms 0.036</p>
                             <p>
-                                → 0.71s · lets ship it in krakuf on friday
+                                → 0.14s · Let's ship it in krakuf on Friday.
                             </p>
-                            <p>↦ 0.98s · Let's ship it in Kraków on Friday.</p>
+                            <p>↦ 0.14s · Let's ship it in Kraków on Friday.</p>
+                            <p class="rec pad-top">● recording</p>
+                            <p class="dim">○ captured 34.58s · rms 0.014</p>
+                            <p>
+                                → 0.38s · I'm dictating right now to test this
+                                new engine, because we wait slightly too long
+                                for the output to appear.
+                            </p>
                         </div>
                     </div>
                     <p class="terminal-note">
                         <code>○</code> audio captured, <code>→</code> raw
                         transcript, <code>↦</code> after the dictionary and
-                        cleanup — printed only when they changed something.
+                        cleanup — printed only when they changed something. The long one
+                        has no ↦ line because nothing needed to change it.
                         Illustrative session;
                         times depend on the machine and the utterance. Without
                         <code>--echo-transcripts</code> — the default, and
@@ -659,7 +654,7 @@
         </section>
 
         <section class="features">
-            <h2>Speed is not the argument. This is.</h2>
+            <h2>Speed is no longer the only argument. This is.</h2>
             <p class="lede">
                 Ara is a fork of
                 <a href="https://github.com/digimata/parrot">digimata/parrot</a>
@@ -668,20 +663,23 @@
             </p>
             <div class="grid">
                 <div>
-                    <h3>Cleanup on a local model</h3>
+                    <h3>Optional cleanup, on a local model</h3>
                     <p>
                         Fillers out, punctuation and capitalisation in, spoken
                         self-corrections collapsed — “we ship Tuesday, no wait,
                         Wednesday” becomes “We ship Wednesday.” Qwen 2.5 1.5B on
                         MLX, on your Mac. No API key, no account, no request.
+                        Off by default since Parakeet punctuates its own
+                        output — turn it on in the menu bar and it applies to
+                        your next sentence.
                     </p>
                 </div>
                 <div>
                     <h3>A cleanup dial, not a switch</h3>
                     <p>
-                        <code>none</code> strips fillers only. <code>light</code>
+                        <code>none</code> (default) strips fillers with no language model at all. <code>light</code>
                         punctuates and keeps every spoken word.
-                        <code>medium</code> (default) removes fillers and obeys
+                        <code>medium</code> removes fillers and obeys
                         dictated “comma”, “period”, “question mark”.
                         <code>high</code> restructures fragments into sentences
                         and turns spoken enumerations into numbered lists.
@@ -769,9 +767,9 @@
                 projects stay MIT.
             </p>
             <p>
-                Builds are unsigned: there is no Apple Developer ID behind them,
-                so the first launch of a downloaded app needs
-                <strong>right-click → Open</strong>. What is honestly imperfect
+                Builds are signed with a Developer ID and notarized by Apple,
+                so a downloaded copy opens with a
+                <strong>double-click</strong>. What is honestly imperfect
                 is written down rather than hidden —
                 <a
                     href="https://github.com/Karniej/ara-parrot/blob/master/docs/KNOWN-ISSUES.md"
