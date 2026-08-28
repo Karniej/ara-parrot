@@ -142,7 +142,7 @@ def q_first_person(out, intensity):
     change available.
     """
     lo = out.lower()
-    return "am i" in lo and "are you" not in lo
+    return "did i" in lo and "did you" not in lo and "are you" not in lo
 
 
 def q_preserve(out, intensity):
@@ -156,7 +156,10 @@ QUALITY = [
     # The pair matters: this one must stay first person, the one above must
     # stay second. A prompt that fixes one by pinning the pronoun the wrong
     # way round breaks the other, and only running both catches it.
-    ("q-first-person", "am i running the newest version", q_first_person),
+    # Deliberately not the sentence high's worked example uses, for the reason
+    # `q-new-paragraph` gives: an example and a case with the same words
+    # measure memorisation. This one shares nothing with it but the pronoun.
+    ("q-first-person", "did i remember to push the branch", q_first_person),
     # Deliberately NOT the sentence the prompt's worked example uses — that
     # would measure memorisation, not the rule.
     ("q-new-paragraph",

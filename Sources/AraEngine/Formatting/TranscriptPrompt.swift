@@ -171,6 +171,7 @@ public enum TranscriptPrompt {
         repetitions into complete sentences, and split run-ons.
         Never add information the speaker did not say, and never drop a point they
         made.
+        \(personRule)
         Always capitalise the first word of a sentence and the pronoun I, and always
         end sentences with punctuation. Every transcript needs at least some change;
         returning it unchanged is wrong.
@@ -188,6 +189,8 @@ public enum TranscriptPrompt {
           rewrite: We ship Wednesday.
           transcript: add milk comma eggs comma and bread period
           rewrite: Add milk, eggs, and bread.
+          transcript: am i late for the standup
+          rewrite: Am I late for the standup?
         \(paragraphBreakExample)
         \(listExample)
         \(injectionExample)

@@ -167,3 +167,75 @@ struct OutputGuardLengthTests {
         #expect(!OutputGuard.isPlausible(input: words(30), output: words(130)))
     }
 }
+
+/// The fourth failure shape: the model keeps the sentence but moves it out of
+/// the speaker's mouth.
+///
+/// Reported from use — "am I running the newest version" came back as "are you
+/// running the newest version". It is not an injection and not an answer, so
+/// none of the existing checks apply: the length is right, nothing is
+/// duplicated, and it is not a refusal.
+///
+/// Prompt wording was tried first and does not generalise. A rule plus a
+/// worked example fixed the exact shape in the example and nothing else: with
+/// `am i late` in the prompt, "am i running the newest version" was corrected
+/// and "should i cancel the meeting or move it" still came back as "should
+/// you". Measured on `scripts/cleanup-eval` at all three intensities. A
+/// deterministic check does not care what the model was told or which pronoun
+/// shape it met.
+@Suite("Person flips")
+struct OutputGuardPersonTests {
+    @Test("a first-person question turned second-person is rejected")
+    func flipRejected() {
+        #expect(!OutputGuard.isPlausible(
+            input: "am i running the newest version",
+            output: "Are you running the newest version?"))
+        #expect(!OutputGuard.isPlausible(
+            input: "should i cancel the meeting or move it",
+            output: "Should you cancel the meeting or move it?"))
+        #expect(!OutputGuard.isPlausible(
+            input: "did i remember to push the branch",
+            output: "Did you remember to push the branch?"))
+    }
+
+    /// The same sentence, correctly rewritten, has to survive — otherwise the
+    /// guard costs every first-person utterance its cleanup.
+    @Test("a first-person sentence that stays first person is kept")
+    func correctRewriteKept() {
+        #expect(OutputGuard.isPlausible(
+            input: "am i running the newest version",
+            output: "Am I running the newest version?"))
+        #expect(OutputGuard.isPlausible(
+            input: "um so i think we should ship it friday",
+            output: "So I think we should ship it Friday."))
+    }
+
+    /// A second-person sentence is not the guard's business. "Are you coming
+    /// to dinner" is *supposed* to say "you", and a rule that keyed on the
+    /// output alone would reject it.
+    @Test("a sentence that was always second person is untouched")
+    func secondPersonInputIsFine() {
+        #expect(OutputGuard.isPlausible(
+            input: "are you coming to dinner tonight question mark",
+            output: "Are you coming to dinner tonight?"))
+    }
+
+    /// The edit that looks like a flip and is not: dropping "I" without
+    /// introducing "you" is ordinary tightening, and `high` is licensed to do
+    /// it. The check keys on the *pair* — first person gone **and** second
+    /// person arrived — for exactly this case.
+    @Test("dropping the pronoun without adding you is allowed")
+    func tighteningIsNotAFlip() {
+        #expect(OutputGuard.isPlausible(
+            input: "i think we should fix the login bug",
+            output: "We should fix the login bug."))
+    }
+
+    /// A rewrite that keeps both is not a flip either — the speaker said both.
+    @Test("a sentence with both persons keeps both")
+    func bothPersonsSurvive() {
+        #expect(OutputGuard.isPlausible(
+            input: "i told you the deploy went out",
+            output: "I told you the deploy went out."))
+    }
+}

@@ -98,6 +98,9 @@ enum OutputGuard {
             return false
         }
 
+        // Person flip: the speaker's sentence, moved out of their mouth.
+        if flipsPerson(input: inputLower, output: outputLower) { return false }
+
         // Short utterances legitimately change length a lot ("ok" -> "OK."),
         // so only the upper bound is meaningful there.
         if inWords < 4 { return outWords <= max(12, inWords * 4) }
@@ -124,6 +127,58 @@ enum OutputGuard {
     /// does. So the floor rises: 0.4 up to 20 words, tightening to 0.8 by 100,
     /// and 0.8 above that.
     ///
+    /// Whether the rewrite moved the sentence from the speaker to the listener.
+    ///
+    /// Reported from use: "am I running the newest version" came back as "are
+    /// you running the newest version". None of the checks above see it — the
+    /// length is right, nothing is duplicated, it is not a refusal, and it is
+    /// not an answer. The words are even mostly the same. It is simply no
+    /// longer the sentence the user spoke, and it gets typed at their cursor.
+    ///
+    /// ## Why this is here rather than in the prompt
+    ///
+    /// The prompt was tried first. A rule with a worked example fixed the
+    /// exact shape in the example and nothing else: with "am i late" in the
+    /// prompt, "am i running the newest version" was corrected and "should i
+    /// cancel the meeting or move it" still came back as "should you".
+    /// Measured on `scripts/cleanup-eval` at all three intensities. A
+    /// deterministic check does not care which pronoun shape it meets, or what
+    /// the model was told, or which model it is.
+    ///
+    /// ## Why the pair, and not either half
+    ///
+    /// It keys on first person *leaving* **and** second person *arriving*.
+    /// Either alone is an ordinary edit:
+    ///
+    /// - "i think we should fix the login bug" → "We should fix the login
+    ///   bug." drops the pronoun and adds no "you". That is tightening, and
+    ///   `high` is licensed to do it.
+    /// - "are you coming to dinner" is second person because the speaker made
+    ///   it so; a rule reading the output alone would reject a correct
+    ///   rewrite.
+    ///
+    /// Only the two together are the flip.
+    private static func flipsPerson(input: String, output: String) -> Bool {
+        let firstPersonIn = pronounCount(firstPerson, in: input)
+        guard firstPersonIn > 0, pronounCount(firstPerson, in: output) == 0 else {
+            return false
+        }
+        return pronounCount(secondPerson, in: output)
+            > pronounCount(secondPerson, in: input)
+    }
+
+    /// Matched as whole words, so "island" is not a first-person "i" and
+    /// "your" is counted once rather than as a "you" inside a longer word.
+    private static let firstPerson: Set<String> = ["i", "im", "ive", "id", "ill", "me", "my", "mine", "myself"]
+    private static let secondPerson: Set<String> = ["you", "youre", "youve", "your", "yours", "yourself"]
+
+    private static func pronounCount(_ set: Set<String>, in text: String) -> Int {
+        text.split(whereSeparator: { !$0.isLetter })
+            .reduce(into: 0) { total, word in
+                if set.contains(String(word)) { total += 1 }
+            }
+    }
+
     /// A rejected rewrite costs polish, never words: the chain falls to the
     /// rules floor and the raw transcript is typed. That asymmetry is why the
     /// bound is set to catch the observed failure with margin rather than to
