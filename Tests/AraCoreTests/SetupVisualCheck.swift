@@ -35,6 +35,8 @@ struct SetupVisualCheck {
     @MainActor
     static var cases: [(String, SetupFlow.Step, SetupWindow.Activity)] {
         [
+            ("languages", .languages, .idle),
+            ("rewriting", .rewriting, .idle),
             ("microphone", .microphone, .idle),
             ("accessibility", .accessibility, .idle),
             ("restart", .restart, .idle),
@@ -51,6 +53,11 @@ struct SetupVisualCheck {
         model.step = step
         model.copy = SetupFlow.copy(for: step)
         model.activity = activity
+        // Past the launch moment. `SetupModel` starts in it — the window opens
+        // there — so a step rendered from a fresh model draws the parrot and
+        // none of the step, which is what the first render of the questions
+        // showed.
+        model.launching = false
         return model
     }
 
@@ -209,6 +216,11 @@ struct MarkVisualCheck {
     @Test("render the status-item mark")
     func renderMark() throws {
         guard let directory = SetupVisualCheck.directory else { return }
+        // Created here too: this suite runs independently of the one that
+        // renders the setup steps, so `--filter MarkVisual` used to fail on a
+        // missing directory rather than on anything about the mark.
+        try FileManager.default.createDirectory(
+            atPath: directory, withIntermediateDirectories: true)
         // At 1× and at 2×. The menu bar on any current Mac is 2×, and a 1×
         // rasterisation of a 16-point mark is not what anybody sees — the
         // first look at this judged a grey smear that only existed in the
@@ -268,6 +280,8 @@ struct MarkVisualCheck {
             print("icon-master: → \(master)")
         }
         guard let directory = SetupVisualCheck.directory else { return }
+        try FileManager.default.createDirectory(
+            atPath: directory, withIntermediateDirectories: true)
         let image = AraMarkImage.appIcon(size: 512)
         guard let tiff = image.tiffRepresentation,
               let bitmap = NSBitmapImageRep(data: tiff),

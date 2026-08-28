@@ -234,10 +234,14 @@ public final class SetupWindow {
         self.window = window
     }
 
-    /// Sized for the longest step — accessibility, whose detail runs to three
-    /// lines because it has to explain the restart. `SetupVisualCheck` pins
-    /// every step against this.
-    public static let contentSize = CGSize(width: 480, height: 300)
+    /// Sized for the longest step, which is now one of the two questions: four
+    /// lines of explanation plus a stacked pair of answers.
+    ///
+    /// 340 rather than the 300 it was. At 300 the question steps measured 297
+    /// — three points of margin, which is not a margin, it is a near miss that
+    /// the next word added to the copy would turn into a clipped button.
+    /// `SetupVisualCheck` pins every step against this.
+    public static let contentSize = CGSize(width: 480, height: 340)
 }
 
 /// The observable half of the window.
@@ -338,6 +342,38 @@ struct SetupContent: View {
 
             Spacer(minLength: 0)
 
+            footer
+        }
+        .padding(Brand.gutter)
+        .background(Brand.background)
+    }
+
+    /// The bottom of the window.
+    ///
+    /// A step that asks a question stacks its answers, because that is what
+    /// the iOS app does with a primary call to action and what the style is
+    /// built for: full width, cream on graphite, with the other answer as
+    /// plain text under it. Squeezed into a row beside a second button it
+    /// reads as a slab crammed into a corner — which is exactly how the first
+    /// version of this looked.
+    ///
+    /// A step with one action keeps the row, where the button is small enough
+    /// to sit beside the "on device" mark without either crowding the other.
+    @ViewBuilder
+    private var footer: some View {
+        if let alternative = model.copy.alternative, let button = model.copy.button {
+            VStack(spacing: 10) {
+                Button(button) { action(model.step, .primary) }
+                    .buttonStyle(BrandButtonStyle(fullWidth: true))
+                    .keyboardShortcut(.defaultAction)
+                Button { action(model.step, .alternative) } label: {
+                    Text(alternative)
+                        .font(Brand.bodyFont)
+                        .foregroundStyle(Brand.textSecondary)
+                }
+                .buttonStyle(.plain)
+            }
+        } else {
             HStack(alignment: .bottom) {
                 Text("on device")
                     .font(Brand.silkFont)
@@ -345,16 +381,6 @@ struct SetupContent: View {
                     .textCase(.uppercase)
                     .foregroundStyle(Brand.textTertiary)
                 Spacer()
-                // The alternative sits left of the primary and reads as
-                // text, not a button. Both are real answers, but one of them
-                // is what most people want, and a pair of identical buttons
-                // makes a user stop and decide which is safe.
-                if let alternative = model.copy.alternative {
-                    Button(alternative) { action(model.step, .alternative) }
-                        .buttonStyle(.plain)
-                        .font(Brand.labelFont)
-                        .foregroundStyle(Brand.textSecondary)
-                }
                 if let button = model.copy.button {
                     Button(button) { action(model.step, .primary) }
                         .buttonStyle(BrandButtonStyle())
@@ -362,8 +388,6 @@ struct SetupContent: View {
                 }
             }
         }
-        .padding(Brand.gutter)
-        .background(Brand.background)
     }
 
     /// The wordmark left of the mark, never stacked — the icon rule the iOS
@@ -440,12 +464,18 @@ struct SetupContent: View {
 /// amber button would spend the one hue the product has on a thing that is not
 /// a microphone.
 struct BrandButtonStyle: ButtonStyle {
+    /// Full width for a question's primary answer, hugging otherwise. iOS
+    /// only ever draws this style full width; at button size the cream fill
+    /// stops reading as a call to action and starts reading as a slab.
+    var fullWidth = false
+
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
             .font(Brand.labelFont)
             .foregroundStyle(Brand.background)
+            .frame(maxWidth: fullWidth ? .infinity : nil)
             .padding(.horizontal, 18)
-            .padding(.vertical, 10)
+            .padding(.vertical, fullWidth ? 12 : 10)
             .background(
                 RoundedRectangle(cornerRadius: Brand.buttonCornerRadius, style: .continuous)
                     .fill(Brand.textPrimary))
