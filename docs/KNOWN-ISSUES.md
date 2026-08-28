@@ -7,24 +7,24 @@ Nothing here loses a transcript. That property was traced end to end and holds
 on every path.
 
 
-## Cleanup flips the speaker's pronoun at `cleanup: high`
+## Cleanup can still flip the speaker's pronoun — but it no longer reaches you
 
-Dictating "am I running the newest version" comes back as "are you running the
-newest version" — the model paraphrases rather than answers, so the prompt's
-"a question is a question to punctuate, not to answer" guard never applies.
-What drives it is the instruction that every transcript needs at least some
-change: on a sentence that arrives already clean, the cheapest change available
-is the pronoun.
+Dictating "should I cancel the meeting or move it" comes back from the model
+as "should you cancel the meeting or move it" at `medium` and `high`. The model
+is not answering — it is paraphrasing — so the prompt's "a question is a
+question to punctuate, not to answer" guard never applied.
 
-Fixed at `light` and `medium` by `TranscriptPrompt.personRule`. **Not fixed at
-`high`**, and deliberately so: the same sentence placed where all three
-intensities share it left high still flipping the pronoun *and* cost it the
-pirate role-assignment injection guard (11/15 → 10/15 on
-`scripts/cleanup-eval`). High is the intensity whose whole licence is to
-restructure, and buying a wording fix with a security guard is the wrong trade.
+Prompt wording does not fix it. A rule with a worked example fixes the exact
+shape in the example and nothing else, measured on `scripts/cleanup-eval` at
+all three intensities.
 
-Workaround: use `"cleanup": "medium"`, which is what the first-run window
-offers anyway.
+`OutputGuard.flipsPerson` catches it instead: a rewrite that loses the
+speaker's first person and gains a second person is discarded, and the raw
+transcript is injected. So the visible behaviour is that the occasional
+first-person sentence arrives unpolished rather than reattributed.
+
+What that costs: that utterance gets no cleanup. What it buys: ara never types
+a sentence the user did not say.
 
 ## Unverified, not defective
 
