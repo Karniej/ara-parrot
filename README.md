@@ -10,6 +10,9 @@ models. A fork of [digimata/parrot](https://github.com/digimata/parrot),
 building toward [feature parity](#feature-parity) with the paid dictation apps
 while staying free, local, and open.
 
+**Want Ara on iPhone or iPad?**
+[Download Voice to Text Keyboard: ARA from the App Store](https://apps.apple.com/us/app/voice-to-text-keyboard-ara/id6801895141).
+
 ## The open-model approach
 
 Everything that touches your voice runs on your machine, on open-weights
@@ -850,7 +853,7 @@ both move fast, so treat the paid columns as a snapshot.
 | User-defined modes | ✅ | ✅ | 🔜 planned |
 | Streaming preview while speaking | ✅ | ✅ | not yet |
 | Meeting recording + speaker separation | ✅ | ❌ | not planned |
-| iPhone | ✅ | ✅ | someday |
+| iPhone and iPad | ✅ | ✅ | ✅ [App Store](https://apps.apple.com/us/app/voice-to-text-keyboard-ara/id6801895141) |
 | Sends your screen contents to a server | no | **yes, unless Privacy Mode** | **never — there is no server** |
 
 ## Stack
