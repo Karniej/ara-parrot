@@ -396,6 +396,7 @@ effect:
 | **Edit dictionary…** / **Edit snippets…** | opens the file in your default JSON editor, writing a one-entry starter first if it does not exist. An existing file — even a broken one — is never touched | next utterance |
 | **Start at Login** | installs or removes the LaunchAgent; the checkmark is a fresh read of the plist on disk. Enabling *starts the login copy immediately*, and says so — quit a terminal-run daemon after enabling, or two daemons answer the hotkey | immediately |
 | **Run Diagnostics…** | `ara doctor`'s report in a window, monospaced, with a **Copy report** button | — |
+| **Ara for iPhone and iPad…** | opens the [iOS app on the App Store](https://apps.apple.com/us/app/voice-to-text-keyboard-ara/id6801895141) | immediately |
 | **Quit Ara** | quits (⌘Q) | immediately |
 
 Every submenu whose pick is not immediate states its timing in a caption
