@@ -5,6 +5,10 @@ import AppKit
 /// (since we run as `.accessory` — no dock icon, no main window).
 @MainActor
 public final class MenuBarController {
+    private static let iOSAppStoreURL = URL(
+        string: "https://apps.apple.com/us/app/voice-to-text-keyboard-ara/id6801895141"
+    )!
+
     private let statusItem: NSStatusItem
     private let modelLabel: NSMenuItem
     private let modeLabel: NSMenuItem
@@ -203,6 +207,14 @@ public final class MenuBarController {
         )
         diagnostics.target = self
         menu.addItem(diagnostics)
+
+        let iOSApp = NSMenuItem(
+            title: "Ara for iPhone and iPad…",
+            action: #selector(openIOSAppClicked),
+            keyEquivalent: ""
+        )
+        iOSApp.target = self
+        menu.addItem(iOSApp)
 
         menu.addItem(.separator())
 
@@ -540,6 +552,10 @@ public final class MenuBarController {
 
     @objc private func runDiagnosticsClicked() {
         onRunDiagnostics?()
+    }
+
+    @objc private func openIOSAppClicked() {
+        NSWorkspace.shared.open(Self.iOSAppStoreURL)
     }
 
     /// The menu cannot fetch 0.9 GB itself — the download is deliberately a
